@@ -6,7 +6,7 @@ pub enum BinaryMut<'a> {
     UByte(&'a mut Option<u8>),
     Short(&'a mut Option<i16>),
     Integer(&'a mut Option<i32>),
-    String(&'a mut Option<String>)
+    String(&'a mut Option<String>),
 }
 
 pub enum Binary<'b> {
@@ -15,7 +15,7 @@ pub enum Binary<'b> {
     UByte(&'b Option<u8>),
     Short(&'b Option<i16>),
     Integer(&'b Option<i32>),
-    String(&'b Option<String>)
+    String(&'b Option<String>),
 }
 
 macro_rules! create_iterable_struct {
@@ -89,18 +89,68 @@ create_iterable_struct!(
     ]
 );
 
-create_iterable_struct!(
-    Note,
-    [   
-        (tick: i32: Integer): 127,
-        (layer: i32: Integer): 127,
-        (instrument: i8: Byte): 0,
-        (key: i8: Byte): 0,
-        (velocity: i8: Byte): 4,
-        (panning: u8: UByte): 4,
-        (pitch: i16: Short): 4
-    ]
-);
+#[derive(Debug)]
+pub struct Note {
+    pub tick: Option<i32>,
+    pub layer: Option<i32>,
+    pub instrument: Option<i8>,
+    pub key: Option<i8>,
+    pub velocity: Option<i8>,
+    pub panning: Option<u8>,
+    pub pitch: Option<i16>,
+}
+
+// Implement PartialEq separately, ignoring tick and layer fields, i.e., ignoring the note's position
+impl PartialEq for Note {
+    fn eq(&self, other: &Self) -> bool {
+        self.instrument == other.instrument
+            && self.key == other.key
+            && self.velocity == other.velocity
+            && self.panning == other.panning
+            && self.pitch == other.pitch
+    }
+}
+
+impl Note {
+    paste::item! {
+        pub fn as_mut_vec(&mut self, version: u8) -> Vec<(BinaryMut, u8)> {
+            vec![
+                (BinaryMut::Integer(&mut self.tick), 127),
+                (BinaryMut::Integer(&mut self.layer), 127),
+                (BinaryMut::Byte(&mut self.instrument), 0),
+                (BinaryMut::Byte(&mut self.key), 0),
+                (BinaryMut::Byte(&mut self.velocity), 4),
+                (BinaryMut::UByte(&mut self.panning), 4),
+                (BinaryMut::Short(&mut self.pitch), 4),
+            ].into_iter().filter(|x| x.1 <= version).collect()
+        }
+        pub fn as_ref_vec(&self, version: u8) -> Vec<(Binary, u8)> {
+            vec![
+                (Binary::Integer(&self.tick), 127),
+                (Binary::Integer(&self.layer), 127),
+                (Binary::Byte(&self.instrument), 0),
+                (Binary::Byte(&self.key), 0),
+                (Binary::Byte(&self.velocity), 4),
+                (Binary::UByte(&self.panning), 4),
+                (Binary::Short(&self.pitch), 4),
+            ].into_iter().filter(|x| x.1 <= version).collect()
+        }
+    }
+}
+
+impl Default for Note {
+    fn default() -> Self {
+        Self {
+            tick: None,
+            layer: None,
+            instrument: None,
+            key: None,
+            velocity: None,
+            panning: None,
+            pitch: None,
+        }
+    }
+}
 
 create_iterable_struct!(
     Layer,
