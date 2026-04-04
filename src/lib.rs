@@ -1,34 +1,31 @@
 mod fields;
-use fields::{Header, Note, Layer, Instrument, Binary, BinaryMut};
+mod tests;
+mod writer;
+
+pub mod parser;
+pub use fields::{Binary, BinaryMut, Header, Instrument, Layer, Note};
+pub use parser::read_nbs;
 
 #[derive(Debug, PartialEq)]
 pub struct Song {
     pub header: Header,
-
     pub notes: Vec<Note>,
-    
     pub layers: Vec<Layer>,
-    
-    pub instruments: Vec<Instrument>
+    pub instruments: Vec<Instrument>,
 }
-
-pub mod parser;
-pub use parser::read_nbs;
-
-mod tests;
-
-mod writer;
 
 impl Default for Song {
     fn default() -> Self {
         return Song {
             header: Header::default(),
-            notes: vec!(),
-            layers: vec!(Layer {
-                name: Some(String::new()), lock: Some(false), 
-                volume: Some(1), stereo: Some(0)
-            }),
-            instruments: vec!()
-        }
+            notes: vec![],
+            layers: vec![Layer {
+                name: Some(String::new()),
+                lock: Some(false),
+                volume: Some(1),
+                stereo: Some(0),
+            }],
+            instruments: vec![],
+        };
     }
 }
