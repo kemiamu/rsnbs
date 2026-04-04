@@ -4,7 +4,7 @@ mod writer;
 
 pub mod parser;
 pub use fields::{Binary, BinaryMut, Header, Instrument, Layer, Note};
-pub use parser::read_nbs;
+pub use parser::{read_nbs, read_nbs_from_stdin};
 
 #[derive(Debug, PartialEq)]
 pub struct Song {
