@@ -26,10 +26,11 @@ use rsnbs::*;
 
 let mut song = Song::new();
 song.header.is_loop = true;
+
 for i in 0..25u8 {
     song.notes.push({
         Note::new(i.into(), 0, 0, i + 33)
     })
 }
-song.save_nbs("test_song.nbs");
+song.save_nbs("test_song.nbs").unwrap();
 ```

@@ -9,7 +9,7 @@ fn generating_and_load() {
             Note::new(i.into(), 0, 0, i + 33)
         })
     }
-    song.save_nbs("evil_cat_world_ruling_scheme/test_song.nbs");
+    song.save_nbs("evil_cat_world_ruling_scheme/test_song.nbs").unwrap();
 
     let song = Song::open_nbs("evil_cat_world_ruling_scheme/test_song.nbs").unwrap();
     for note in song.notes {
