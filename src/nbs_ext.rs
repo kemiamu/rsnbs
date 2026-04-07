@@ -1,5 +1,6 @@
 //! Provides extension traits for reading and writing NBS format data.
 
+use encoding_rs::WINDOWS_1252;
 use std::{io, num::NonZeroU32};
 
 /// Provides methods for reading NBS format data (little-endian) for Read types.
@@ -44,7 +45,9 @@ pub trait NBSReadExt: io::Read {
         let mut buf = vec![0; len as usize];
         self.read_exact(&mut buf)?;
         // 可恶的欧洲人！
-        Ok(String::from_utf8_lossy(&buf).to_string())
+        // Decode Windows-1252 encoded string
+        let (decoded, _, _) = WINDOWS_1252.decode(&buf);
+        Ok(decoded.into())
     }
 
     /// Reads a jump time (stored as u16 where 0 = no jump).
@@ -84,9 +87,12 @@ pub trait NBSWriteExt: io::Write {
 
     /// Writes a length-prefixed string.
     fn write_string(&mut self, s: &str) -> io::Result<()> {
-        self.write_u32(s.len() as u32)?;
         // 可恶的欧洲人！
-        self.write_all(s.as_bytes())
+        // Encode string to Windows-1252
+        let (bytes, _, _) = WINDOWS_1252.encode(s);
+        let len: u32 = bytes.len().saturating_into();
+        self.write_u32(len)?;
+        self.write_all(&bytes[..len as usize])
     }
 
     /// Writes a jump time (stored as u16 where 0 = no jump).
@@ -104,8 +110,17 @@ pub trait SaturatingCast<T> {
     fn saturating_into(self) -> T;
 }
 
-impl SaturatingCast<u16> for u32 {
-    fn saturating_into(self) -> u16 {
-        self.min(u16::MAX.into()) as u16
-    }
+macro_rules! impl_saturating_cast {
+    ($from:ty => $to:ty) => {
+        impl SaturatingCast<$to> for $from {
+            fn saturating_into(self) -> $to {
+                self.try_into().unwrap_or(<$to>::MAX)
+            }
+        }
+    };
 }
+
+impl_saturating_cast!(u32 => u8);
+impl_saturating_cast!(u32 => u16);
+impl_saturating_cast!(usize => u8);
+impl_saturating_cast!(usize => u32);

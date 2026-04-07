@@ -1,12 +1,12 @@
 //! NBS (Note Block Studio) file format parser and writer
 
-use crate::nbs_ext::{NBSReadExt, NBSWriteExt};
+use crate::nbs_ext::{NBSReadExt, NBSWriteExt, SaturatingCast};
 use crate::{Header, Instrument, Layer, Note, Panning, Result, Song, Version, Volume};
 use std::num::NonZeroU32;
 use std::{io, u16};
 
 /// Data that can be parsed without state
-pub(crate) trait Parser {
+pub(super) trait Parser {
     /// Parse data from a reader
     fn parse<R: io::Read>(reader: &mut R) -> Result<Self>
     where
@@ -14,13 +14,13 @@ pub(crate) trait Parser {
 }
 
 /// Data that can be written without state
-pub(crate) trait Writer {
+pub(super) trait Writer {
     /// Write data to a writer
     fn write<W: io::Write>(&self, writer: &mut W) -> Result<()>;
 }
 
 /// Data that can be parsed with state
-pub(crate) trait StatefulParser<'a> {
+pub(super) trait StatefulParser<'a> {
     /// State type for parsing
     type ParseState;
 
@@ -31,7 +31,7 @@ pub(crate) trait StatefulParser<'a> {
 }
 
 /// Data that can be written with state
-pub(crate) trait StatefulWriter<'a> {
+pub(super) trait StatefulWriter<'a> {
     /// State type for writing
     type WriteState;
 
@@ -39,58 +39,61 @@ pub(crate) trait StatefulWriter<'a> {
     fn write<W: io::Write>(&self, writer: &mut W, state: Self::WriteState) -> Result<()>;
 }
 
-// Basic Types
+// Song
 //
 //
 
-// impl Parser for Key {
-//     fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
-//         Key::new(reader.read_u8()?)
-//     }
-// }
-
-// impl Writer for Key {
-//     fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
-//         Ok(writer.write_u8(self.get())?)
-//     }
-// }
-
-impl Parser for Version {
+impl Parser for Song {
+    /// Parses a complete Song from a reader
     fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
-        Version::new(reader.read_u8()?)
+        let mut song = Self::default();
+
+        // 头部分
+        song.header = Header::parse(reader)?;
+
+        // 音符部分
+        song.notes = Vec::<Note>::parse(reader, &song.header.version)?;
+
+        // 层部分
+        for i in 0..song.header.song_layers {
+            let layer = Layer::parse(reader, (&song.header.version, i))?;
+            song.layers.push(layer);
+        }
+
+        // 自定义乐器部分
+        let instrument_count = reader.read_u8()?;
+        for i in 0..instrument_count {
+            let instrument = Instrument::parse(reader, i)?;
+            song.instruments.push(instrument);
+        }
+
+        Ok(song)
     }
 }
 
-impl Writer for Version {
+impl Writer for Song {
+    /// Writes the song to a writer.
+    ///
+    /// **Warning:** Call `update()` before writing to ensure data consistency.
     fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
-        Ok(writer.write_u8(self.get())?)
-    }
-}
+        // 头部分
+        self.header.write(writer)?;
 
-impl Parser for Volume {
-    fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
-        Volume::new(reader.read_u8()?)
-    }
-}
+        // 音符部分
+        self.notes.write(writer, &self.header.version)?;
 
-impl Writer for Volume {
-    fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
-        Ok(writer.write_u8(self.get())?)
-    }
-}
+        // 层部分
+        for layer in &self.layers {
+            layer.write(writer, &self.header.version)?;
+        }
 
-impl Parser for Panning {
-    fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
-        let raw = reader.read_u8()?;
-        // Convert from file representation (0-200) to internal (-100..100)
-        Panning::new(raw.wrapping_sub(100) as i8)
-    }
-}
+        // 自定义乐器部分
+        writer.write_u8(self.instruments.len().saturating_into())?;
+        for instrument in self.instruments.iter().take(u8::MAX.into()) {
+            instrument.write(writer)?;
+        }
 
-impl Writer for Panning {
-    fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
-        // Convert from internal (-100..100) to file representation (0-200)
-        Ok(writer.write_u8((self.get() as u8).wrapping_add(100))?)
+        Ok(())
     }
 }
 
@@ -118,17 +121,17 @@ impl Parser for Header {
         header.song_length = match header.version.get() >= 3 {
             true => reader.read_u16()?,
             false => song_length,
-        };
+        } as _;
 
         // 头部分
-        header.song_layers = reader.read_u16()?;
+        header.song_layers = reader.read_u16()? as _;
         header.song_name = reader.read_string()?;
         header.song_author = reader.read_string()?;
         header.original_author = reader.read_string()?;
         header.description = reader.read_string()?;
-        header.tempo = reader.read_u16()? as f32 / 100.0;
+        header.tempo = f32::parse(reader)?;
         header.auto_save = reader.read_bool()?;
-        header.auto_save_duration = reader.read_u8()?;
+        header.auto_save_duration = reader.read_u8()? as _;
         header.time_signature = reader.read_u8()?;
         header.minutes_spent = reader.read_u32()?;
         header.left_clicks = reader.read_u32()?;
@@ -140,8 +143,8 @@ impl Parser for Header {
         // 循环部分
         if header.version.get() >= 4 {
             header.is_loop = reader.read_bool()?;
-            header.max_loop_count = reader.read_u8()?;
-            header.loop_start = reader.read_u16()?;
+            header.max_loop_count = reader.read_u8()? as _;
+            header.loop_start = reader.read_u16()? as _;
         }
 
         Ok(header)
@@ -157,22 +160,22 @@ impl Writer for Header {
             self.version.write(writer)?;
             writer.write_u8(self.default_instruments)?;
         } else {
-            writer.write_u16(self.song_length)?;
+            writer.write_u16(self.song_length.saturating_into())?;
         }
 
         if self.version.get() >= 3 {
-            writer.write_u16(self.song_length)?;
+            writer.write_u16(self.song_length.saturating_into())?;
         }
 
         // 头部分
-        writer.write_u16(self.song_layers)?;
+        writer.write_u16(self.song_layers.saturating_into())?;
         writer.write_string(&self.song_name)?;
         writer.write_string(&self.song_author)?;
         writer.write_string(&self.original_author)?;
         writer.write_string(&self.description)?;
-        writer.write_u16((self.tempo * 100.0) as u16)?;
+        self.tempo.write(writer)?;
         writer.write_bool(self.auto_save)?;
-        writer.write_u8(self.auto_save_duration)?;
+        writer.write_u8(self.auto_save_duration.saturating_into())?;
         writer.write_u8(self.time_signature)?;
         writer.write_u32(self.minutes_spent)?;
         writer.write_u32(self.left_clicks)?;
@@ -184,129 +187,8 @@ impl Writer for Header {
         // 循环部分
         if self.version.get() >= 4 {
             writer.write_bool(self.is_loop)?;
-            writer.write_u8(self.max_loop_count)?;
-            writer.write_u16(self.loop_start)?;
-        }
-
-        Ok(())
-    }
-}
-
-// Instrument
-//
-//
-
-impl Parser for Instrument {
-    /// Parses an Instrument from a reader
-    fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
-        let mut instrument = Self::default();
-        instrument.name = reader.read_string()?;
-        instrument.file = reader.read_string()?;
-        instrument.pitch = reader.read_u8()?;
-        instrument.press_key = reader.read_bool()?;
-        Ok(instrument)
-    }
-}
-
-impl Writer for Instrument {
-    /// Writes an Instrument to a writer
-    fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
-        writer.write_string(&self.name)?;
-        writer.write_string(&self.file)?;
-        writer.write_u8(self.pitch)?;
-        writer.write_bool(self.press_key)?;
-        Ok(())
-    }
-}
-
-// Note
-//
-//
-
-impl<'a> StatefulParser<'a> for Note {
-    type ParseState = (&'a Version, u32, u32);
-
-    /// Parses a Note from a reader with version, tick and layer state
-    fn parse<R: io::Read>(reader: &mut R, state: Self::ParseState) -> Result<Self> {
-        let (version, tick, layer) = state;
-        let mut note = Self::default();
-
-        note.instrument = reader.read_u8()?;
-        note.key = reader.read_u8()?;
-        note.tick = tick;
-        note.layer = layer;
-
-        if version.get() >= 4 {
-            note.velocity = Volume::parse(reader)?;
-            note.panning = Panning::parse(reader)?;
-            note.pitch = reader.read_i16()?;
-        }
-
-        Ok(note)
-    }
-}
-
-impl<'a> StatefulWriter<'a> for Note {
-    type WriteState = &'a Version;
-
-    /// Writes a Note to a writer with version state
-    fn write<W: io::Write>(&self, writer: &mut W, version: Self::WriteState) -> Result<()> {
-        writer.write_u8(self.instrument)?;
-        writer.write_u8(self.key)?;
-
-        if version.get() >= 4 {
-            self.velocity.write(writer)?;
-            self.panning.write(writer)?;
-            writer.write_i16(self.pitch)?;
-        }
-
-        Ok(())
-    }
-}
-
-// Layer
-//
-//
-
-impl<'a> StatefulParser<'a> for Layer {
-    type ParseState = (&'a Version, u16);
-
-    /// Parses a Layer from a reader with version and id state
-    fn parse<R: io::Read>(reader: &mut R, state: Self::ParseState) -> Result<Self> {
-        let (version, id) = state;
-        let mut layer = Self::default();
-        layer.id = id;
-        layer.name = reader.read_string()?;
-
-        if version.get() >= 4 {
-            layer.lock = reader.read_bool()?;
-        }
-
-        layer.volume = Volume::parse(reader)?;
-
-        if version.get() >= 2 {
-            layer.panning = Panning::parse(reader)?;
-        }
-
-        Ok(layer)
-    }
-}
-
-impl<'a> StatefulWriter<'a> for Layer {
-    type WriteState = &'a Version;
-
-    /// Writes a Layer to a writer with version state
-    fn write<W: io::Write>(&self, writer: &mut W, version: Self::WriteState) -> Result<()> {
-        writer.write_string(&self.name)?;
-
-        if version.get() >= 4 {
-            writer.write_bool(self.lock)?;
-        }
-
-        self.volume.write(writer)?;
-
-        if version.get() >= 2 {
-            self.panning.write(writer)?;
+            writer.write_u8(self.max_loop_count.saturating_into())?;
+            writer.write_u16(self.loop_start.saturating_into())?;
         }
 
         Ok(())
@@ -373,60 +255,195 @@ impl<'a> StatefulWriter<'a> for Vec<Note> {
     }
 }
 
-// Song
+// Note
 //
 //
 
-impl Parser for Song {
-    /// Parses a complete Song from a reader
-    fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
-        let mut song = Self::default();
+impl<'a> StatefulParser<'a> for Note {
+    type ParseState = (&'a Version, u32, u32);
 
-        // 头部分
-        song.header = Header::parse(reader)?;
+    /// Parses a Note from a reader with version, tick and layer state
+    fn parse<R: io::Read>(reader: &mut R, state: Self::ParseState) -> Result<Self> {
+        let (version, tick, layer) = state;
+        let mut note = Self::default();
 
-        // 音符部分
-        song.notes = Vec::<Note>::parse(reader, &song.header.version)?;
+        note.instrument = reader.read_u8()?;
+        note.key = reader.read_u8()?;
+        note.tick = tick;
+        note.layer = layer;
 
-        // 层部分
-        for i in 0..song.header.song_layers {
-            let layer = Layer::parse(reader, (&song.header.version, i))?;
-            song.layers.push(layer);
+        if version.get() >= 4 {
+            note.velocity = Volume::parse(reader)?;
+            note.panning = Panning::parse(reader)?;
+            note.pitch = reader.read_i16()?;
         }
 
-        // 自定义乐器部分
-        let instrument_count = reader.read_u8()?;
-        for _ in 0..instrument_count {
-            let instrument = Instrument::parse(reader)?;
-            song.instruments.push(instrument);
-        }
-
-        Ok(song)
+        Ok(note)
     }
 }
 
-impl Writer for Song {
-    /// Writes the song to a writer.
-    ///
-    /// **Warning:** Call `update()` before writing to ensure data consistency.
-    fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
-        // 头部分
-        self.header.write(writer)?;
+impl<'a> StatefulWriter<'a> for Note {
+    type WriteState = &'a Version;
 
-        // 音符部分
-        self.notes.write(writer, &self.header.version)?;
+    /// Writes a Note to a writer with version state
+    fn write<W: io::Write>(&self, writer: &mut W, version: Self::WriteState) -> Result<()> {
+        writer.write_u8(self.instrument)?;
+        writer.write_u8(self.key)?;
 
-        // 层部分
-        for layer in &self.layers {
-            layer.write(writer, &self.header.version)?;
-        }
-
-        // 自定义乐器部分
-        writer.write_u8(self.instruments.len() as u8)?;
-        for instrument in &self.instruments {
-            instrument.write(writer)?;
+        if version.get() >= 4 {
+            self.velocity.write(writer)?;
+            self.panning.write(writer)?;
+            writer.write_i16(self.pitch)?;
         }
 
         Ok(())
+    }
+}
+
+// Layer
+//
+//
+
+impl<'a> StatefulParser<'a> for Layer {
+    type ParseState = (&'a Version, u32);
+
+    /// Parses a Layer from a reader with version and id state
+    fn parse<R: io::Read>(reader: &mut R, state: Self::ParseState) -> Result<Self> {
+        let (version, id) = state;
+        let mut layer = Self::default();
+        layer.id = id;
+        layer.name = reader.read_string()?;
+
+        if version.get() >= 4 {
+            layer.lock = reader.read_bool()?;
+        }
+
+        layer.volume = Volume::parse(reader)?;
+
+        if version.get() >= 2 {
+            layer.panning = Panning::parse(reader)?;
+        }
+
+        Ok(layer)
+    }
+}
+
+impl<'a> StatefulWriter<'a> for Layer {
+    type WriteState = &'a Version;
+
+    /// Writes a Layer to a writer with version state
+    fn write<W: io::Write>(&self, writer: &mut W, version: Self::WriteState) -> Result<()> {
+        writer.write_string(&self.name)?;
+
+        if version.get() >= 4 {
+            writer.write_bool(self.lock)?;
+        }
+
+        self.volume.write(writer)?;
+
+        if version.get() >= 2 {
+            self.panning.write(writer)?;
+        }
+
+        Ok(())
+    }
+}
+
+// Instrument
+//
+//
+
+impl<'a> StatefulParser<'a> for Instrument {
+    type ParseState = u8;
+
+    /// Parses an Instrument from a reader
+    fn parse<R: io::Read>(reader: &mut R, id: Self::ParseState) -> Result<Self> {
+        let mut instrument = Self::default();
+        instrument.id = id;
+        instrument.name = reader.read_string()?;
+        instrument.file = reader.read_string()?;
+        instrument.pitch = reader.read_u8()?;
+        instrument.press_key = reader.read_bool()?;
+        Ok(instrument)
+    }
+}
+
+impl Writer for Instrument {
+    /// Writes an Instrument to a writer
+    fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
+        writer.write_string(&self.name)?;
+        writer.write_string(&self.file)?;
+        writer.write_u8(self.pitch)?;
+        writer.write_bool(self.press_key)?;
+        Ok(())
+    }
+}
+
+// Basic Types
+//
+//
+
+// impl Parser for Key {
+//     fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
+//         Key::new(reader.read_u8()?)
+//     }
+// }
+
+// impl Writer for Key {
+//     fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
+//         Ok(writer.write_u8(self.get())?)
+//     }
+// }
+
+impl Parser for Version {
+    fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
+        Version::new(reader.read_u8()?)
+    }
+}
+
+impl Writer for Version {
+    fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
+        Ok(writer.write_u8(self.get())?)
+    }
+}
+
+impl Parser for Volume {
+    fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
+        Volume::new(reader.read_u8()?)
+    }
+}
+
+impl Writer for Volume {
+    fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
+        Ok(writer.write_u8(self.get())?)
+    }
+}
+
+impl Parser for Panning {
+    fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
+        let raw = reader.read_u8()?;
+        // Convert from file representation (0-200) to internal (-100..100)
+        Panning::new(raw.wrapping_sub(100) as i8)
+    }
+}
+
+impl Writer for Panning {
+    fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
+        // Convert from internal (-100..100) to file representation (0-200)
+        Ok(writer.write_u8((self.get() as u8).wrapping_add(100))?)
+    }
+}
+
+impl Parser for f32 {
+    fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
+        // Convert from u16 to f32 and divide by 100.0
+        Ok(reader.read_u16()? as f32 / 100.0)
+    }
+}
+
+impl Writer for f32 {
+    fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
+        // Convert f32 to u16 by multiplying by 100.0
+        Ok(writer.write_u16((self * 100.0) as u16)?)
     }
 }

@@ -1,11 +1,11 @@
 //! NBS (Note Block Studio) file format library for Rust.
+
 mod codec;
 mod error;
 mod nbs_ext;
 #[cfg(test)]
 mod tests;
 use crate::codec::{Parser, Writer};
-use nbs_ext::SaturatingCast;
 
 pub use crate::error::{Error, Result};
 
@@ -44,15 +44,20 @@ impl Song {
     /// Refreshes and updates the song to ensure data consistency
     pub fn refresh(&mut self) {
         // 从音符计算歌曲长度
-        if let Some(last_note) = self.notes.iter().max_by_key(|n| n.tick) {
-            self.header.song_length = last_note.tick.saturating_into();
+        match self.notes.iter().max_by_key(|n| n.tick) {
+            Some(last_note) => self.header.song_length = last_note.tick,
+            None => self.header.song_length = 1,
         }
 
         // 更新 layer 数量
-        self.header.song_layers = self.layers.len() as u16;
+        self.header.song_layers = self.layers.len() as _;
 
         // 对音符进行排序，先按 tick，再按 layer
         self.notes.sort();
+        // 对层按 id 排序
+        self.layers.sort_by_key(|layer| layer.id);
+        // 对乐器按 id 排序
+        self.instruments.sort_by_key(|instrument| instrument.id);
     }
 }
 
@@ -65,15 +70,15 @@ impl Song {
 pub struct Header {
     pub version: Version,
     pub default_instruments: u8,
-    pub song_length: u16,
-    pub song_layers: u16,
+    pub song_length: u32,
+    pub song_layers: u32,
     pub song_name: String,
     pub song_author: String,
     pub original_author: String,
     pub description: String,
     pub tempo: f32,
     pub auto_save: bool,
-    pub auto_save_duration: u8,
+    pub auto_save_duration: u32,
     pub time_signature: u8,
     pub minutes_spent: u32,
     pub left_clicks: u32,
@@ -82,8 +87,8 @@ pub struct Header {
     pub blocks_removed: u32,
     pub song_origin: String,
     pub is_loop: bool,
-    pub max_loop_count: u8,
-    pub loop_start: u16,
+    pub max_loop_count: u32,
+    pub loop_start: u32,
 }
 
 impl Default for Header {
@@ -180,7 +185,7 @@ impl Note {
 /// Represents a layer in the song with volume, panning, and lock settings.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Layer {
-    pub id: u16,
+    pub id: u32,
     pub name: String,
     pub lock: bool,
     pub volume: Volume,

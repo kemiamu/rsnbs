@@ -5,11 +5,10 @@ fn generating_and_load() {
     let mut song = Song::new();
     song.header.is_loop = true;
     for i in 0..25u8 {
-        song.notes.push({
-            Note::new(i.into(), 0, 0, i + 33)
-        })
+        song.notes.push(Note::new(i.into(), 0, 0, i + 33))
     }
-    song.save_nbs("evil_cat_world_ruling_scheme/test_song.nbs").unwrap();
+    song.save_nbs("evil_cat_world_ruling_scheme/test_song.nbs")
+        .unwrap();
 
     let song = Song::open_nbs("evil_cat_world_ruling_scheme/test_song.nbs").unwrap();
     for note in song.notes {
