@@ -1,7 +1,9 @@
 //! NBS (Note Block Studio) file format parser and writer
 
-use crate::nbs_ext::{NBSReadExt, NBSWriteExt, SaturatingCast};
-use crate::{Header, Instrument, Layer, Note, Panning, Result, Song, Version, Volume};
+use crate::nbs_ext::{NbsReadExt, NbsWriteExt, SaturatingCast};
+use crate::{
+    Header, Index, Instrument, Layer, Note, Notes, Panning, Result, Song, Version, Volume,
+};
 use std::num::NonZeroU32;
 use std::{io, u16};
 
@@ -52,18 +54,18 @@ impl Parser for Song {
         song.header = Header::parse(reader)?;
 
         // 音符部分
-        song.notes = Vec::<Note>::parse(reader, &song.header.version)?;
+        song.notes = Notes::parse(reader, &song.header.version)?;
 
         // 层部分
-        for i in 0..song.header.song_layers {
-            let layer = Layer::parse(reader, (&song.header.version, i))?;
+        for _ in 0..song.header.song_layers {
+            let layer = Layer::parse(reader, &song.header.version)?;
             song.layers.push(layer);
         }
 
         // 自定义乐器部分
         let instrument_count = reader.read_u8()?;
-        for i in 0..instrument_count {
-            let instrument = Instrument::parse(reader, i)?;
+        for _ in 0..instrument_count {
+            let instrument = Instrument::parse(reader)?;
             song.instruments.push(instrument);
         }
 
@@ -74,7 +76,7 @@ impl Parser for Song {
 impl Writer for Song {
     /// Writes the song to a writer.
     ///
-    /// **Warning:** Call `update()` before writing to ensure data consistency.
+    /// **Warning:** Call `refresh()` before writing to ensure data consistency.
     fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
         // 头部分
         self.header.write(writer)?;
@@ -119,9 +121,9 @@ impl Parser for Header {
         };
 
         header.song_length = match header.version.get() >= 3 {
-            true => reader.read_u16()?,
-            false => song_length,
-        } as _;
+            true => reader.read_u16()? as _,
+            false => song_length as _,
+        };
 
         // 头部分
         header.song_layers = reader.read_u16()? as _;
@@ -195,28 +197,28 @@ impl Writer for Header {
     }
 }
 
-// Vec<Note>
+// Notes
 //
 //
 
-impl<'a> StatefulParser<'a> for Vec<Note> {
+impl<'a> StatefulParser<'a> for Notes {
     type ParseState = &'a Version;
 
-    /// Parses a note vector from a reader with version state
+    /// Parses notes from a reader with version state
     fn parse<R: io::Read>(reader: &mut R, version: Self::ParseState) -> Result<Self> {
-        let mut notes = Vec::new();
+        let mut notes = Notes::new();
 
         // tick
-        let mut tick_cursor = u32::MAX;
+        let mut tick_cursor = Index::MAX;
         while let Some(tick_jump) = reader.read_jump()? {
             tick_cursor = tick_cursor.wrapping_add(tick_jump.get());
 
             // layer
-            let mut layer_cursor = u32::MAX;
+            let mut layer_cursor = Index::MAX;
             while let Some(layer_jump) = reader.read_jump()? {
                 layer_cursor = layer_cursor.wrapping_add(layer_jump.get());
 
-                notes.push(Note::parse(reader, (version, tick_cursor, layer_cursor))?);
+                notes.insert(Note::parse(reader, (version, tick_cursor, layer_cursor))?);
             }
         }
 
@@ -224,31 +226,39 @@ impl<'a> StatefulParser<'a> for Vec<Note> {
     }
 }
 
-impl<'a> StatefulWriter<'a> for Vec<Note> {
+impl<'a> StatefulWriter<'a> for Notes {
     type WriteState = &'a Version;
 
-    /// Writes a note vector to a writer with version state
+    /// Writes notes to a writer with version state
+    ///
+    /// # Assumptions
+    /// - The notes are ordered by `(tick, layer)` (the natural order of `Note`).
+    /// - No two notes share the same `(tick, layer)` pair.
     fn write<W: io::Write>(&self, writer: &mut W, version: Self::WriteState) -> Result<()> {
-        // tick start
-        let mut prev_tick = u32::MAX;
-        for chord in self.chunk_by(|a, b| a.tick == b.tick) {
-            let tick_jump = chord[0].tick.wrapping_sub(prev_tick);
-            writer.write_jump(NonZeroU32::new(tick_jump))?;
-            prev_tick = chord[0].tick;
+        let mut iter = self.iter().peekable();
+        let mut prev_tick = Index::MAX;
+        let mut prev_layer = Index::MAX;
 
-            // layer start
-            let mut prev_layer = u32::MAX;
-            for note in chord {
-                let layer_jump = note.layer.wrapping_sub(prev_layer);
-                writer.write_jump(NonZeroU32::new(layer_jump))?;
-                prev_layer = note.layer;
-
-                note.write(writer, version)?;
+        while let Some(note) = iter.next() {
+            // tick 上升沿
+            if note.tick != prev_tick {
+                let tick_jump = note.tick.wrapping_sub(prev_tick);
+                writer.write_jump(NonZeroU32::new(tick_jump))?;
             }
-            // layer end
-            writer.write_jump(None)?;
+            // layer 上升沿
+            let layer_jump = note.layer.wrapping_sub(prev_layer);
+            writer.write_jump(NonZeroU32::new(layer_jump))?;
+
+            note.write(writer, version)?;
+            prev_tick = note.tick;
+            prev_layer = note.layer;
+            // layer 下降沿
+            if iter.peek().map_or(true, |next| next.tick != note.tick) {
+                writer.write_jump(None)?;
+                prev_layer = Index::MAX;
+            }
         }
-        // tick end
+        // tick 下降沿
         writer.write_jump(None)?;
 
         Ok(())
@@ -260,7 +270,7 @@ impl<'a> StatefulWriter<'a> for Vec<Note> {
 //
 
 impl<'a> StatefulParser<'a> for Note {
-    type ParseState = (&'a Version, u32, u32);
+    type ParseState = (&'a Version, Index, Index);
 
     /// Parses a Note from a reader with version, tick and layer state
     fn parse<R: io::Read>(reader: &mut R, state: Self::ParseState) -> Result<Self> {
@@ -305,13 +315,12 @@ impl<'a> StatefulWriter<'a> for Note {
 //
 
 impl<'a> StatefulParser<'a> for Layer {
-    type ParseState = (&'a Version, u32);
+    type ParseState = &'a Version;
 
     /// Parses a Layer from a reader with version and id state
     fn parse<R: io::Read>(reader: &mut R, state: Self::ParseState) -> Result<Self> {
-        let (version, id) = state;
+        let version = state;
         let mut layer = Self::default();
-        layer.id = id;
         layer.name = reader.read_string()?;
 
         if version.get() >= 4 {
@@ -353,13 +362,10 @@ impl<'a> StatefulWriter<'a> for Layer {
 //
 //
 
-impl<'a> StatefulParser<'a> for Instrument {
-    type ParseState = u8;
-
+impl Parser for Instrument {
     /// Parses an Instrument from a reader
-    fn parse<R: io::Read>(reader: &mut R, id: Self::ParseState) -> Result<Self> {
+    fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
         let mut instrument = Self::default();
-        instrument.id = id;
         instrument.name = reader.read_string()?;
         instrument.file = reader.read_string()?;
         instrument.pitch = reader.read_u8()?;
@@ -382,18 +388,6 @@ impl Writer for Instrument {
 // Basic Types
 //
 //
-
-// impl Parser for Key {
-//     fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
-//         Key::new(reader.read_u8()?)
-//     }
-// }
-
-// impl Writer for Key {
-//     fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
-//         Ok(writer.write_u8(self.get())?)
-//     }
-// }
 
 impl Parser for Version {
     fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {

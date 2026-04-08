@@ -1,13 +1,16 @@
 //! NBS (Note Block Studio) file format library for Rust.
 
+pub mod util;
+pub use crate::error::{Error, Result};
+
 mod codec;
 mod error;
 mod nbs_ext;
 #[cfg(test)]
 mod tests;
 use crate::codec::{Parser, Writer};
-
-pub use crate::error::{Error, Result};
+use crate::util::Refreshable;
+use std::collections::BTreeMap;
 
 // song
 //
@@ -17,9 +20,9 @@ pub use crate::error::{Error, Result};
 #[derive(Debug, Default, Clone, PartialEq, PartialOrd)]
 pub struct Song {
     pub header: Header,
-    pub notes: Vec<Note>,
-    pub layers: Vec<Layer>,
-    pub instruments: Vec<Instrument>,
+    pub notes: Notes,
+    pub layers: Layers,
+    pub instruments: Instruments,
 }
 
 impl Song {
@@ -40,25 +43,6 @@ impl Song {
         let mut file = std::fs::File::create(path)?;
         self.write(&mut file)
     }
-
-    /// Refreshes and updates the song to ensure data consistency
-    pub fn refresh(&mut self) {
-        // 从音符计算歌曲长度
-        match self.notes.iter().max_by_key(|n| n.tick) {
-            Some(last_note) => self.header.song_length = last_note.tick,
-            None => self.header.song_length = 1,
-        }
-
-        // 更新 layer 数量
-        self.header.song_layers = self.layers.len() as _;
-
-        // 对音符进行排序，先按 tick，再按 layer
-        self.notes.sort();
-        // 对层按 id 排序
-        self.layers.sort_by_key(|layer| layer.id);
-        // 对乐器按 id 排序
-        self.instruments.sort_by_key(|instrument| instrument.id);
-    }
 }
 
 // header
@@ -70,8 +54,8 @@ impl Song {
 pub struct Header {
     pub version: Version,
     pub default_instruments: u8,
-    pub song_length: u32,
-    pub song_layers: u32,
+    pub song_length: Index,
+    pub song_layers: Index,
     pub song_name: String,
     pub song_author: String,
     pub original_author: String,
@@ -88,7 +72,7 @@ pub struct Header {
     pub song_origin: String,
     pub is_loop: bool,
     pub max_loop_count: u32,
-    pub loop_start: u32,
+    pub loop_start: Index,
 }
 
 impl Default for Header {
@@ -123,20 +107,58 @@ impl Default for Header {
 //
 //
 
+/// A collection of notes in a song, indexed by their position (tick, layer).
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Notes(BTreeMap<(Index, Index), Note>);
+
+impl Notes {
+    /// Creates a new empty Notes collection.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Insert or replace the `Note` that already exists at that position
+    pub fn insert(&mut self, note: Note) {
+        self.0.insert((note.tick, note.layer), note);
+    }
+
+    /// Returns an iterator over the notes in the collection.
+    pub fn iter(&self) -> impl Iterator<Item = &Note> {
+        self.0.values()
+    }
+}
+
+impl IntoIterator for Notes {
+    type Item = Note;
+    type IntoIter = std::collections::btree_map::IntoValues<(Index, Index), Note>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_values()
+    }
+}
+
+impl<'a> IntoIterator for &'a Notes {
+    type Item = &'a Note;
+    type IntoIter = std::collections::btree_map::Values<'a, (Index, Index), Note>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.values()
+    }
+}
+
 /// Represents a single note in the song with timing, instrument, and modulation data.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Note {
     // Position data is stored redundantly due to incremental encoding
     // I don't know why the header's song_length is only u16 :(
-    pub tick: u32,
-    pub layer: u32,
+    pub tick: Index,
+    pub layer: Index,
     pub instrument: u8,
     pub key: u8,
     pub velocity: Volume,
     pub panning: Panning,
     pub pitch: i16,
 }
-
 impl Default for Note {
     fn default() -> Self {
         Self {
@@ -153,7 +175,7 @@ impl Default for Note {
 
 impl Note {
     /// Creates a new note with the specified position and tone parameters.
-    pub fn new(tick: u32, layer: u32, instrument: u8, key: u8) -> Self {
+    pub fn new(tick: Index, layer: Index, instrument: u8, key: u8) -> Self {
         let mut note = Self::default();
         note.tick = tick;
         note.layer = layer;
@@ -163,7 +185,7 @@ impl Note {
     }
 
     /// Returns the position of the note as a tuple (tick, layer)
-    pub fn position(&self) -> (u32, u32) {
+    pub fn position(&self) -> (Index, Index) {
         (self.tick, self.layer)
     }
 
@@ -178,6 +200,26 @@ impl Note {
     }
 }
 
+impl<T1, T2, T3, T4> TryFrom<(T1, T2, T3, T4)> for Note
+where
+    T1: TryInto<Index>,
+    T2: TryInto<Index>,
+    T3: TryInto<u8>,
+    T4: TryInto<u8>,
+    Error: From<T1::Error> + From<T2::Error> + From<T3::Error> + From<T4::Error>,
+{
+    type Error = Error;
+
+    fn try_from((tick, layer, instrument, key): (T1, T2, T3, T4)) -> Result<Self> {
+        let mut note = Self::default();
+        note.tick = tick.try_into()?;
+        note.layer = layer.try_into()?;
+        note.instrument = instrument.try_into()?;
+        note.key = key.try_into()?;
+        Ok(note)
+    }
+}
+
 // layer
 //
 //
@@ -185,17 +227,14 @@ impl Note {
 /// Represents a layer in the song with volume, panning, and lock settings.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Layer {
-    pub id: u32,
     pub name: String,
     pub lock: bool,
     pub volume: Volume,
     pub panning: Panning,
 }
-
 impl Default for Layer {
     fn default() -> Self {
         Self {
-            id: 0,
             name: String::new(),
             lock: false,
             volume: Volume::default(),
@@ -211,17 +250,14 @@ impl Default for Layer {
 /// Represents an instrument with sound file, pitch, and playback settings.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Instrument {
-    pub id: u8,
     pub name: String,
     pub file: String,
     pub pitch: u8,
     pub press_key: bool,
 }
-
 impl Default for Instrument {
     fn default() -> Self {
         Self {
-            id: 0,
             name: String::new(),
             file: String::new(),
             pitch: 45,
@@ -233,29 +269,6 @@ impl Default for Instrument {
 // Basic Types
 //
 //
-
-// /// Represents a MIDI key value in range 0-127
-// #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-// pub struct Key(u8);
-
-// impl Key {
-//     pub fn new(key: u8) -> Result<Self> {
-//         match key {
-//             0..=127 => Ok(Self(key)),
-//             _ => Err(Error::InvalidKey(key.to_string())),
-//         }
-//     }
-
-//     pub fn get(&self) -> u8 {
-//         self.0
-//     }
-// }
-
-// impl Default for Key {
-//     fn default() -> Self {
-//         Self(0)
-//     }
-// }
 
 /// The current NBS (Note Block Studio) file format version.
 const CURRENT_NBS_VERSION: u8 = 5;
@@ -328,3 +341,13 @@ impl Default for Panning {
         Self(0)
     }
 }
+
+// pub type Notes = BTreeSet<Note>;
+pub type Layers = Vec<Layer>;
+pub type Instruments = Vec<Instrument>;
+
+// pub type NotesRef<'a> = Vec<&'a Note>;
+// pub type LayersRef<'a> = Vec<&'a Layer>;
+// pub type InstrumentsRef<'a> = Vec<&'a Instrument>;
+
+pub type Index = u32;
