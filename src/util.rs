@@ -24,7 +24,7 @@ impl Refreshable for Song {
 }
 
 pub trait NotesExt {
-    fn is_cyclic<F, K>(&self, pred: &Note, length: Index, by_key: F) -> Index
+    fn count_cycle<F, K>(&self, pred: &Note, length: Index, by_key: F) -> Index
     where
         F: Fn(&Note) -> K,
         K: Eq;
@@ -40,13 +40,14 @@ where
     T: IntoIterator<Item = Note>,
     for<'a> &'a T: IntoIterator<Item = &'a Note>,
 {
-    /// Returns true if any note other than `pred` shares the same key in the cycle.
-    fn is_cyclic<F, K>(&self, pred: &Note, len: Index, by_key: F) -> Index
+    /// Counts how many notes share the same cyclic pattern as the predicate note.
+    fn count_cycle<F, K>(&self, pred: &Note, len: Index, by_key: F) -> Index
     where
         F: Fn(&Note) -> K,
         K: Eq,
     {
         let key = (pred.tick % len, by_key(pred));
+        // 按循环特征构建层级权重
         let (_, count) = self.into_iter().fold((None, 0), |(tick, count), n| {
             match Some(n.tick) != tick && (n.tick % len, by_key(n)) == key {
                 true => (Some(n.tick), count + 1),
@@ -56,7 +57,7 @@ where
         count
     }
 
-    /// Returns notes that are cyclic and orphan notes in the cycle.
+    /// Separates notes into matching and non-matching groups based on cyclic patterns.
     fn cyclic_matches<F, K>(self, len: Index, pow: Index, by_key: F) -> (Vec<Note>, Vec<Note>)
     where
         F: Fn(&Note) -> K,
@@ -64,15 +65,18 @@ where
     {
         let mut matches = vec![];
         let mut orphan: Vec<Note> = self.into_iter().collect();
+
         loop {
-            let match_flags: Vec<usize> = orphan
-                .iter()
-                .enumerate()
-                .filter_map(|(i, note)| (orphan.is_cyclic(note, len, &by_key) >= pow).then_some(i))
-                .collect();
+            // 分层
+            let match_flags = orphan.iter().enumerate().filter_map(|(i, note)| {
+                (orphan.count_cycle(note, len, &by_key) >= pow).then_some(i)
+            });
+            let match_flags: Vec<usize> = match_flags.collect();
+            // 空层
             if match_flags.is_empty() {
                 return (matches, orphan);
             }
+            // 同步该层
             for flag in match_flags.into_iter().rev() {
                 matches.push(orphan.remove(flag));
             }
