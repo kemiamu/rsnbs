@@ -1,11 +1,11 @@
 //! NBS (Note Block Studio) file format parser and writer
 
-use crate::nbs_ext::{NbsReadExt, NbsWriteExt, SaturatingCast};
-use crate::{
-    Header, Index, Instrument, Layer, Note, Notes, Panning, Result, Song, Version, Volume,
-};
+use crate::nbs_ext::{NbsReadExt, NbsWriteExt};
+use crate::util::Refreshable;
+use crate::{Header, Instrument, Layer, Note, Notes, Song};
+use crate::{Index, Panning, Result, Version, Volume};
 use std::num::NonZeroU32;
-use std::{io, u16};
+use std::{io, u8, u16};
 
 /// Data that can be parsed without state
 pub(super) trait Parser {
@@ -45,9 +45,9 @@ pub(super) trait StatefulWriter<'a> {
 //
 //
 
-impl Parser for Song {
+impl Song {
     /// Parses a complete Song from a reader
-    fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
+    pub fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
         let mut song = Self::default();
 
         // 头部分
@@ -71,13 +71,11 @@ impl Parser for Song {
 
         Ok(song)
     }
-}
 
-impl Writer for Song {
-    /// Writes the song to a writer.
-    ///
-    /// **Warning:** Call `refresh()` before writing to ensure data consistency.
-    fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
+    /// Writes the song to a writer after refreshing song data for consistency.
+    pub fn write<W: io::Write>(&mut self, writer: &mut W) -> Result<()> {
+        self.refresh();
+
         // 头部分
         self.header.write(writer)?;
 
@@ -90,7 +88,7 @@ impl Writer for Song {
         }
 
         // 自定义乐器部分
-        writer.write_u8(self.instruments.len().saturating_into())?;
+        writer.write_u8(self.instruments.len().try_into().unwrap_or(u8::MAX))?;
         for instrument in self.instruments.iter().take(u8::MAX.into()) {
             instrument.write(writer)?;
         }
@@ -162,22 +160,22 @@ impl Writer for Header {
             self.version.write(writer)?;
             writer.write_u8(self.default_instruments)?;
         } else {
-            writer.write_u16(self.song_length.saturating_into())?;
+            writer.write_u16(self.song_length.try_into().unwrap_or(u16::MAX))?;
         }
 
         if self.version.get() >= 3 {
-            writer.write_u16(self.song_length.saturating_into())?;
+            writer.write_u16(self.song_length.try_into().unwrap_or(u16::MAX))?;
         }
 
         // 头部分
-        writer.write_u16(self.song_layers.saturating_into())?;
+        writer.write_u16(self.song_layers.try_into().unwrap_or(u16::MAX))?;
         writer.write_string(&self.song_name)?;
         writer.write_string(&self.song_author)?;
         writer.write_string(&self.original_author)?;
         writer.write_string(&self.description)?;
         self.tempo.write(writer)?;
         writer.write_bool(self.auto_save)?;
-        writer.write_u8(self.auto_save_duration.saturating_into())?;
+        writer.write_u8(self.auto_save_duration.try_into().unwrap_or(u8::MAX))?;
         writer.write_u8(self.time_signature)?;
         writer.write_u32(self.minutes_spent)?;
         writer.write_u32(self.left_clicks)?;
@@ -189,8 +187,8 @@ impl Writer for Header {
         // 循环部分
         if self.version.get() >= 4 {
             writer.write_bool(self.is_loop)?;
-            writer.write_u8(self.max_loop_count.saturating_into())?;
-            writer.write_u16(self.loop_start.saturating_into())?;
+            writer.write_u8(self.max_loop_count.try_into().unwrap_or(u8::MAX))?;
+            writer.write_u16(self.loop_start.try_into().unwrap_or(u16::MAX))?;
         }
 
         Ok(())
@@ -201,12 +199,12 @@ impl Writer for Header {
 //
 //
 
-impl<'a> StatefulParser<'a> for Notes {
+impl<'a, T: Default + Extend<Note>> StatefulParser<'a> for T {
     type ParseState = &'a Version;
 
     /// Parses notes from a reader with version state
     fn parse<R: io::Read>(reader: &mut R, version: Self::ParseState) -> Result<Self> {
-        let mut notes = Notes::new();
+        let mut notes = T::default();
 
         // tick
         let mut tick_cursor = Index::MAX;
@@ -218,7 +216,8 @@ impl<'a> StatefulParser<'a> for Notes {
             while let Some(layer_jump) = reader.read_jump()? {
                 layer_cursor = layer_cursor.wrapping_add(layer_jump.get());
 
-                notes.insert(Note::parse(reader, (version, tick_cursor, layer_cursor))?);
+                let note = Note::parse(reader, (version, tick_cursor, layer_cursor))?;
+                notes.extend(std::iter::once(note));
             }
         }
 
@@ -226,7 +225,10 @@ impl<'a> StatefulParser<'a> for Notes {
     }
 }
 
-impl<'a> StatefulWriter<'a> for Notes {
+impl<'a, T> StatefulWriter<'a> for T
+where
+    for<'b> &'b T: IntoIterator<Item = &'b Note>,
+{
     type WriteState = &'a Version;
 
     /// Writes notes to a writer with version state
@@ -235,7 +237,7 @@ impl<'a> StatefulWriter<'a> for Notes {
     /// - The notes are ordered by `(tick, layer)` (the natural order of `Note`).
     /// - No two notes share the same `(tick, layer)` pair.
     fn write<W: io::Write>(&self, writer: &mut W, version: Self::WriteState) -> Result<()> {
-        let mut iter = self.iter().peekable();
+        let mut iter = self.into_iter().peekable();
         let mut prev_tick = Index::MAX;
         let mut prev_layer = Index::MAX;
 

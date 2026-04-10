@@ -1,15 +1,14 @@
 //! NBS (Note Block Studio) file format library for Rust.
 
-pub mod util;
-pub use crate::error::{Error, Result};
+pub use crate::error::*;
+pub use crate::util::*;
 
 mod codec;
 mod error;
 mod nbs_ext;
 #[cfg(test)]
 mod tests;
-use crate::codec::{Parser, Writer};
-use crate::util::Refreshable;
+mod util;
 use std::collections::BTreeMap;
 
 // song
@@ -37,11 +36,22 @@ impl Song {
         Self::parse(&mut file)
     }
 
+    /// Parses an NBS file from standard input
+    pub fn from_stdin() -> Result<Self> {
+        let mut stdin = std::io::stdin();
+        Self::parse(&mut stdin)
+    }
+
     /// Saves the song to an NBS file at the specified path
     pub fn save_nbs<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<()> {
-        self.refresh();
         let mut file = std::fs::File::create(path)?;
         self.write(&mut file)
+    }
+
+    /// Writes the song to standard output
+    pub fn to_stdout(&mut self) -> Result<()> {
+        let mut stdout = std::io::stdout();
+        self.write(&mut stdout)
     }
 }
 
@@ -103,7 +113,7 @@ impl Default for Header {
     }
 }
 
-// note
+// notes
 //
 //
 
@@ -117,6 +127,14 @@ impl Notes {
         Self::default()
     }
 
+    /// Returns a collection of references to all notes in the song.
+    ///
+    /// The return type can be any type that implements `FromIterator<&'a Note>`,
+    /// such as `Vec<&Note>`, `HashSet<&Note>`, etc.
+    pub fn get<'a, T: FromIterator<&'a Note>>(&'a self) -> T {
+        self.0.values().collect()
+    }
+
     /// Insert or replace the `Note` that already exists at that position
     pub fn insert(&mut self, note: Note) {
         self.0.insert((note.tick, note.layer), note);
@@ -125,6 +143,11 @@ impl Notes {
     /// Returns an iterator over the notes in the collection.
     pub fn iter(&self) -> impl Iterator<Item = &Note> {
         self.0.values()
+    }
+
+    /// Returns a mutable iterator over the notes in the collection.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Note> {
+        self.0.values_mut()
     }
 }
 
@@ -145,6 +168,65 @@ impl<'a> IntoIterator for &'a Notes {
         self.0.values()
     }
 }
+
+impl<'a> IntoIterator for &'a mut Notes {
+    type Item = &'a mut Note;
+    type IntoIter = std::collections::btree_map::ValuesMut<'a, (Index, Index), Note>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.values_mut()
+    }
+}
+
+impl FromIterator<Note> for Notes {
+    fn from_iter<T: IntoIterator<Item = Note>>(iter: T) -> Self {
+        let mut notes = Notes::new();
+        notes.extend(iter);
+        notes
+    }
+}
+
+impl Extend<Note> for Notes {
+    /// Extends the collection with the contents of an iterator.
+    ///
+    /// This method adds all notes from the iterator to the collection.
+    /// If multiple notes have the same position (tick, layer), the last one
+    /// from the iterator will overwrite any previous ones.
+    fn extend<T: IntoIterator<Item = Note>>(&mut self, iter: T) {
+        for note in iter {
+            self.insert(note);
+        }
+    }
+}
+
+impl From<Vec<Note>> for Notes {
+    fn from(vec: Vec<Note>) -> Self {
+        vec.into_iter().collect()
+    }
+}
+
+impl From<Notes> for Vec<Note> {
+    fn from(notes: Notes) -> Self {
+        notes.into_iter().collect()
+    }
+}
+
+// impl<'a> Extend<&'a Note> for Notes {
+//     /// Extends the collection with references to notes from an iterator.
+//     ///
+//     /// This method clones all notes from the iterator and adds them to the collection.
+//     /// If multiple notes have the same position (tick, layer), the last one
+//     /// from the iterator will overwrite any previous ones.
+//     fn extend<T: IntoIterator<Item = &'a Note>>(&mut self, iter: T) {
+//         for note in iter {
+//             self.insert(note.clone());
+//         }
+//     }
+// }
+
+// note
+//
+//
 
 /// Represents a single note in the song with timing, instrument, and modulation data.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]

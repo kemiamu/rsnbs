@@ -4,7 +4,7 @@ use encoding_rs::WINDOWS_1252;
 use std::{io, num::NonZeroU32};
 
 /// Provides methods for reading NBS format data (little-endian) for Read types.
-pub trait NbsReadExt: io::Read {
+pub(super) trait NbsReadExt: io::Read {
     /// Reads a bool (stored as u8 where 1 = true, 0 = false).
     fn read_bool(&mut self) -> io::Result<bool> {
         let value = self.read_u8()?;
@@ -59,7 +59,7 @@ pub trait NbsReadExt: io::Read {
 impl<R: io::Read + ?Sized> NbsReadExt for R {}
 
 /// Provides methods for writing NBS format data (little-endian) for Write types.
-pub trait NbsWriteExt: io::Write {
+pub(super) trait NbsWriteExt: io::Write {
     /// Writes a bool (stored as u8 where 1 = true, 0 = false).
     fn write_bool(&mut self, value: bool) -> io::Result<()> {
         self.write_u8(if value { 1 } else { 0 })
@@ -90,7 +90,7 @@ pub trait NbsWriteExt: io::Write {
         // 可恶的欧洲人！
         // Encode string to Windows-1252
         let (bytes, _, _) = WINDOWS_1252.encode(s);
-        let len: u32 = bytes.len().saturating_into();
+        let len: u32 = bytes.len().try_into().unwrap_or(u32::MAX);
         self.write_u32(len)?;
         self.write_all(&bytes[..len as usize])
     }
@@ -98,29 +98,10 @@ pub trait NbsWriteExt: io::Write {
     /// Writes a jump time (stored as u16 where 0 = no jump).
     fn write_jump(&mut self, time: Option<NonZeroU32>) -> io::Result<()> {
         match time {
-            Some(time) => self.write_u16(time.get().saturating_into()),
+            Some(time) => self.write_u16(time.get().try_into().unwrap_or(u16::MAX)),
             None => self.write_u16(0),
         }
     }
 }
 
 impl<W: io::Write + ?Sized> NbsWriteExt for W {}
-
-pub trait SaturatingCast<T> {
-    fn saturating_into(self) -> T;
-}
-
-macro_rules! impl_saturating_cast {
-    ($from:ty => $to:ty) => {
-        impl SaturatingCast<$to> for $from {
-            fn saturating_into(self) -> $to {
-                self.try_into().unwrap_or(<$to>::MAX)
-            }
-        }
-    };
-}
-
-impl_saturating_cast!(u32 => u8);
-impl_saturating_cast!(u32 => u16);
-impl_saturating_cast!(usize => u8);
-impl_saturating_cast!(usize => u32);

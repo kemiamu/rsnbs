@@ -1,4 +1,4 @@
-use crate::{Index, Note, Notes, Song};
+use crate::{Index, Note, Song};
 
 /// A trait for types that can be refreshed to ensure data consistency.
 pub trait Refreshable {
@@ -23,38 +23,78 @@ impl Refreshable for Song {
     }
 }
 
-impl Notes {
-    /// Finds notes matching `pred` in cycle and `f`-value, deduped by tick.
-    ///
-    /// **Assumes:** notes sorted by tick.
-    pub fn cyclic_at<F, T>(&self, pred: &Note, length: Index, f: F) -> Vec<&Note>
+pub trait NotesExt {
+    fn is_cyclic<F, K>(&self, pred: &Note, length: Index, by_key: F) -> Index
     where
-        F: Fn(&Note) -> T,
-        T: Eq,
+        F: Fn(&Note) -> K,
+        K: Eq;
+
+    fn cyclic_matches<F, K>(self, len: Index, pow: Index, by_key: F) -> (Vec<Note>, Vec<Note>)
+    where
+        F: Fn(&Note) -> K,
+        K: Eq;
+}
+
+impl<T> NotesExt for T
+where
+    T: IntoIterator<Item = Note>,
+    for<'a> &'a T: IntoIterator<Item = &'a Note>,
+{
+    /// Returns true if any note other than `pred` shares the same key in the cycle.
+    fn is_cyclic<F, K>(&self, pred: &Note, len: Index, by_key: F) -> Index
+    where
+        F: Fn(&Note) -> K,
+        K: Eq,
     {
-        let key = (pred.tick % length, f(pred));
-        let mut matches: Vec<_> = self
-            .iter()
-            .filter(|&n| (n.tick % length, f(n)) == key)
-            .collect();
-        // matches.sort();
-        matches.dedup_by_key(|n| n.tick);
-        matches
+        let key = (pred.tick % len, by_key(pred));
+        let (_, count) = self.into_iter().fold((None, 0), |(tick, count), n| {
+            match Some(n.tick) != tick && (n.tick % len, by_key(n)) == key {
+                true => (Some(n.tick), count + 1),
+                false => (tick, count),
+            }
+        });
+        count
     }
 
-    /// Finds the first note that has cyclic matches and returns them.
-    ///
-    /// Iterates through all notes in `self`, calling `cyclic_at` for each note.
-    /// Returns `Some(matches)` for the first note that has cyclic matches,
-    /// or `None` if no note has any cyclic matches.
-    pub fn cyclic_matches<F, T>(&self, length: Index, f: F) -> Option<Vec<&Note>>
+    /// Returns notes that are cyclic and orphan notes in the cycle.
+    fn cyclic_matches<F, K>(self, len: Index, pow: Index, by_key: F) -> (Vec<Note>, Vec<Note>)
     where
-        F: Fn(&Note) -> T + Copy,
-        T: Eq,
+        F: Fn(&Note) -> K,
+        K: Eq,
     {
-        self.iter().find_map(|note| {
-            let matches = self.cyclic_at(note, length, f);
-            matches.len().gt(&1).then_some(matches)
-        })
+        let mut matches = vec![];
+        let mut orphan: Vec<Note> = self.into_iter().collect();
+        loop {
+            let match_flags: Vec<usize> = orphan
+                .iter()
+                .enumerate()
+                .filter_map(|(i, note)| (orphan.is_cyclic(note, len, &by_key) >= pow).then_some(i))
+                .collect();
+            if match_flags.is_empty() {
+                return (matches, orphan);
+            }
+            for flag in match_flags.into_iter().rev() {
+                matches.push(orphan.remove(flag));
+            }
+        }
     }
 }
+
+// pub trait SaturatingCast<T> {
+//     fn saturating_into(self) -> T;
+// }
+
+// macro_rules! impl_saturating_cast {
+//     ($from:ty => $to:ty) => {
+//         impl SaturatingCast<$to> for $from {
+//             fn saturating_into(self) -> $to {
+//                 self.try_into().unwrap_or(<$to>::MAX)
+//             }
+//         }
+//     };
+// }
+
+// impl_saturating_cast!(u32 => u8);
+// impl_saturating_cast!(u32 => u16);
+// impl_saturating_cast!(usize => u8);
+// impl_saturating_cast!(usize => u32);
