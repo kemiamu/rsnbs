@@ -50,19 +50,16 @@ where
             let base = notes[i].0.tick;
             let result = pattern.iter().try_fold(vec![], |mut indices, &p| {
                 let target = (base + p) % song_length;
-                notes
-                    .iter()
-                    .enumerate()
-                    .find(|(_, (note, is_matched))| {
-                        !is_matched && note.tick == target && f(note, &notes[i].0)
-                    })
-                    .map(|(idx, _)| {
-                        indices.push(idx);
-                        indices
-                    })
+                let found = notes.iter().enumerate().find(|(_, (note, is_matched))| {
+                    !is_matched && note.tick == target && f(note, &notes[i].0)
+                });
+                found.map(|(idx, _)| {
+                    indices.push(idx);
+                    indices
+                })
             });
 
-            // 匹配组成立时选中
+            // 在匹配组成立时选中
             if let Some(indices) = result {
                 for &idx in &indices {
                     notes[idx].1 = true;
