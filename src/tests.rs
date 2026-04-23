@@ -1,13 +1,15 @@
 use super::*;
+use std::collections::HashMap;
 
 #[test]
 fn test() {
     let mut song = Song::open_nbs("evil_cat_world_ruling_scheme/source.nbs").unwrap();
     let mut notes = Vec::from(song.notes);
+    notes.sort_by_key(|n| (n.tick, n.tone()));
 
     let patterns: Vec<Vec<Index>> = vec![
         vec![0, 3, 6, 72, 75, 78],
-        // vec![0, 3, 6],
+        vec![0, 3, 6],
         // vec![0, 18, 54, 90, 126, 36, 108, 72],
         // vec![0, 36, 108, 72],
         vec![0, 72],
@@ -27,6 +29,29 @@ fn test() {
         // notes.sort();
     }
 
+    song.notes = reassign_layers(slices).into();
+    song.header.is_loop = true;
+    song.save_nbs("evil_cat_world_ruling_scheme/out.nbs")
+        .unwrap();
+}
+
+#[test]
+fn analyze_tones() {
+    let mut song = Song::open_nbs("evil_cat_world_ruling_scheme/source.nbs").unwrap();
+    let mut by_tone: HashMap<(u8, u8), Vec<Note>> = HashMap::new();
+    for note in &song.notes {
+        by_tone.entry(note.tone()).or_default().push(note.clone());
+    }
+    let slices: Vec<Vec<Note>> = by_tone.into_values().collect();
+
+    song.notes = reassign_layers(slices).into();
+    song.header.is_loop = true;
+    song.save_nbs("evil_cat_world_ruling_scheme/analyzed.nbs")
+        .unwrap();
+}
+
+// 按照列表重新分配层级
+fn reassign_layers(slices: Vec<Vec<Note>>) -> Vec<Note> {
     let mut base_layer: Index = Default::default();
     let mut result: Vec<Note> = Default::default();
 
@@ -49,10 +74,7 @@ fn test() {
         base_layer += max_layer;
     }
 
-    song.notes = result.into();
-    song.header.is_loop = true;
-    song.save_nbs("evil_cat_world_ruling_scheme/out.nbs")
-        .unwrap();
+    result
 }
 
 #[test]
