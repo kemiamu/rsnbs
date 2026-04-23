@@ -1,19 +1,82 @@
 use super::*;
 
-#[test]
-fn generating_and_load() {
-    let mut song = Song::new();
-    song.header.is_loop = true;
-    for i in 0..25 {
-        song.notes.insert((i, 0, 0, i + 33).try_into().unwrap());
-    }
-    song.save_nbs("evil_cat_world_ruling_scheme/test_song.nbs")
-        .unwrap();
+// #[test]
+// fn generating_and_load() {
+//     let mut song = Song::new();
+//     song.header.is_loop = true;
+//     for i in 0..25 {
+//         song.notes.insert((i, 0, 0, i + 33).try_into().unwrap());
+//     }
+//     song.save_nbs("evil_cat_world_ruling_scheme/test_song.nbs")
+//         .unwrap();
 
-    let song = Song::open_nbs("evil_cat_world_ruling_scheme/test_song.nbs").unwrap();
-    for note in song.notes {
-        println!("tick: {}, key: {}", note.tick, note.key)
+//     let song = Song::open_nbs("evil_cat_world_ruling_scheme/test_song.nbs").unwrap();
+//     for note in song.notes {
+//         println!("tick: {}, key: {}", note.tick, note.key)
+//     }
+// }
+
+#[test]
+fn test() {
+    let mut song = Song::open_nbs("evil_cat_world_ruling_scheme/source.nbs").unwrap();
+    let mut notes = Vec::from(song.notes);
+    // let song_length: Index = notes
+    //     .iter()
+    //     .map(|n| n.tick + 1)
+    //     .max()
+    //     .unwrap_or_default()
+    //     .next_power_of_two();
+
+    let rules: [(Index, Index); _] = [
+        // (6, 16),
+        // (12, 8),
+        // (24, 4),
+        // (48, 2),
+        // (4, 32),
+        (3, 12),
+        (9, 16),
+        (18, 8),
+        (36, 4),
+        (72, 2),
+        (36, 2),
+        (1, 1),
+    ];
+    let mut slices: Vec<Vec<Note>> = Default::default();
+    for (stride, freq) in rules {
+        let (matches, orphan) = notes.cyclic_matches(stride, freq, Note::tone);
+
+        slices.push(matches.clone());
+        notes = orphan;
+        // notes.append(&mut matches);
+        // notes.sort();
     }
+
+    let mut base_layer: Index = Default::default();
+    let mut result: Vec<Note> = Default::default();
+
+    for notes in slices {
+        let mut current_layer: Index = Default::default();
+        let mut max_layer: Index = Default::default();
+
+        let mut notes = notes.into_iter().peekable();
+        while let Some(mut note) = notes.next() {
+            note.layer = base_layer + current_layer;
+
+            max_layer = max_layer.max(current_layer + 2);
+            match notes.peek().map(|n| n.tick) == Some(note.tick) {
+                true => current_layer += 1,
+                false => current_layer = 0,
+            }
+
+            result.push(note);
+        }
+        base_layer += max_layer;
+    }
+
+    song.notes = result.into();
+    song.header.is_loop = true;
+    song.save_nbs("evil_cat_world_ruling_scheme/out.nbs")
+        .unwrap();
 }
 
 // #[test]

@@ -1,3 +1,5 @@
+use std::{collections::HashMap, hash::Hash, vec};
+
 use crate::{Index, Note, Song};
 
 /// A trait for types that can be refreshed to ensure data consistency.
@@ -24,15 +26,15 @@ impl Refreshable for Song {
 }
 
 pub trait NotesExt {
-    fn count_cycle<F, K>(&self, pred: &Note, length: Index, by_key: F) -> Index
-    where
-        F: Fn(&Note) -> K,
-        K: Eq;
+    // fn count_cycle<F, K>(&self, pred: &Note, length: Index, by_key: F) -> Index
+    // where
+    //     F: Fn(&Note) -> K,
+    //     K: Eq;
 
     fn cyclic_matches<F, K>(self, len: Index, pow: Index, by_key: F) -> (Vec<Note>, Vec<Note>)
     where
         F: Fn(&Note) -> K,
-        K: Eq;
+        K: Eq + Ord + Hash;
 }
 
 impl<T> NotesExt for T
@@ -40,47 +42,87 @@ where
     T: IntoIterator<Item = Note>,
     for<'a> &'a T: IntoIterator<Item = &'a Note>,
 {
-    /// Counts how many notes share the same cyclic pattern as the predicate note.
-    fn count_cycle<F, K>(&self, pred: &Note, len: Index, by_key: F) -> Index
-    where
-        F: Fn(&Note) -> K,
-        K: Eq,
-    {
-        let key = (pred.tick % len, by_key(pred));
-        // 按循环特征构建层级权重
-        let (_, count) = self.into_iter().fold((None, 0), |(tick, count), n| {
-            match Some(n.tick) != tick && (n.tick % len, by_key(n)) == key {
-                true => (Some(n.tick), count + 1),
-                false => (tick, count),
-            }
-        });
-        count
-    }
+    // /// Counts how many notes share the same cyclic pattern as the predicate note.
+    // fn count_cycle<F, K>(&self, pred: &Note, len: Index, by_key: F) -> Index
+    // where
+    //     F: Fn(&Note) -> K,
+    //     K: Eq,
+    // {
+    //     let notes: BTreeSet<&Note> = self.into_iter().collect();
+    //     let key = (pred.tick % len, by_key(pred));
+    //     // 按循环特征构建层级权重
+    //     let (_, count) = notes.into_iter().fold((None, 0), |(tick, count), n| {
+    //         match Some(n.tick) != tick && (n.tick % len, by_key(n)) == key {
+    //             true => (Some(n.tick), count + 1),
+    //             false => (tick, count),
+    //         }
+    //     });
+    //     count
+    // }
 
     /// Separates notes into matching and non-matching groups based on cyclic patterns.
-    fn cyclic_matches<F, K>(self, len: Index, pow: Index, by_key: F) -> (Vec<Note>, Vec<Note>)
+    fn cyclic_matches<F, K>(self, len: Index, freq: Index, by_key: F) -> (Vec<Note>, Vec<Note>)
     where
         F: Fn(&Note) -> K,
-        K: Eq,
+        K: Eq + Ord + Hash,
     {
-        let mut matches = vec![];
-        let mut orphan: Vec<Note> = self.into_iter().collect();
+        // (note, index)
+        let notes_with_index: Vec<(Note, Index)> = {
+            let mut notes: Vec<Note> = self.into_iter().collect();
+            notes.sort_by_key(|n| (n.tick, by_key(n)));
 
-        loop {
-            // 分层
-            let match_flags = orphan.iter().enumerate().filter_map(|(i, note)| {
-                (orphan.count_cycle(note, len, &by_key) >= pow).then_some(i)
-            });
-            let match_flags: Vec<usize> = match_flags.collect();
-            // 空层
-            if match_flags.is_empty() {
-                return (matches, orphan);
+            let mut result: Vec<(Note, Index)> = vec![];
+            let mut prev_key: Option<(Index, K)> = None;
+            let mut index = Index::default();
+
+            for note in notes {
+                let key = (note.tick, by_key(&note));
+                match Some(&key) == prev_key.as_ref() {
+                    true => index += 1,
+                    false => {
+                        index = Index::default();
+                        prev_key = Some(key)
+                    }
+                }
+                result.push((note, index));
             }
-            // 同步该层
-            for flag in match_flags.into_iter().rev() {
-                matches.push(orphan.remove(flag));
+            result
+        };
+
+        // (note, freq)
+        let notes_freq: Vec<(Note, Index)> = {
+            let make_key = |note: &Note, index: Index| (index, note.tick % len, by_key(note));
+            let mut freq = HashMap::new();
+            for (note, index) in &notes_with_index {
+                *freq
+                    .entry(make_key(note, *index))
+                    .or_insert(Index::default()) += 1;
             }
-        }
+
+            notes_with_index
+                .into_iter()
+                .map(|(note, index)| {
+                    let key = make_key(&note, index);
+                    (note, freq[&key])
+                })
+                .collect()
+        };
+
+        // if freq >= pow
+        let (matches, orphan) = {
+            let mut matches = Vec::new();
+            let mut orphan = Vec::new();
+
+            for (note, note_freq) in notes_freq {
+                match note_freq >= freq {
+                    true => matches.push(note),
+                    false => orphan.push(note),
+                }
+            }
+            (matches, orphan)
+        };
+
+        (matches, orphan)
     }
 }
 
