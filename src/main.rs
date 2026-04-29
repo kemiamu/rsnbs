@@ -212,7 +212,7 @@ impl Track {
 
         for (tick, mut notes) in timed_notes {
             // 延迟
-            let mut delay = current_tick.map(|t| tick - t).unwrap_or(1);
+            let mut delay = current_tick.map(|t| tick - t).unwrap_or(tick + 1);
             while delay > coarse * 2 {
                 groups.push(Group::DelayOnly);
                 delay -= coarse * 2;
