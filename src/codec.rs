@@ -2,7 +2,7 @@
 
 use crate::nbs_ext::{NbsReadExt, NbsWriteExt};
 use crate::util::Refreshable;
-use crate::{Header, Instrument, Layer, Note, Notes, Song};
+use crate::{CustomInstrument, Header, Instrument, Layer, Note, Notes, Song};
 use crate::{Index, Panning, Result, Version, Volume};
 use std::num::NonZeroU32;
 use std::{io, u8, u16};
@@ -65,7 +65,7 @@ impl Song {
         // 自定义乐器部分
         let instrument_count = reader.read_u8()?;
         for _ in 0..instrument_count {
-            let instrument = Instrument::parse(reader)?;
+            let instrument = CustomInstrument::parse(reader)?;
             song.instruments.push(instrument);
         }
 
@@ -279,7 +279,7 @@ impl<'a> StatefulParser<'a> for Note {
         let (version, tick, layer) = state;
         let mut note = Self::default();
 
-        note.instrument = reader.read_u8()?;
+        note.instrument = Instrument::parse(reader)?;
         note.key = reader.read_u8()?;
         note.tick = tick;
         note.layer = layer;
@@ -299,7 +299,7 @@ impl<'a> StatefulWriter<'a> for Note {
 
     /// Writes a Note to a writer with version state
     fn write<W: io::Write>(&self, writer: &mut W, version: Self::WriteState) -> Result<()> {
-        writer.write_u8(self.instrument)?;
+        self.instrument.write(writer)?;
         writer.write_u8(self.key)?;
 
         if version.get() >= 4 {
@@ -308,6 +308,23 @@ impl<'a> StatefulWriter<'a> for Note {
             writer.write_i16(self.pitch)?;
         }
 
+        Ok(())
+    }
+}
+
+// Instrument
+//
+//
+
+impl Parser for Instrument {
+    fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
+        Ok(Instrument::from(reader.read_u8()?))
+    }
+}
+
+impl Writer for Instrument {
+    fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
+        writer.write_u8((*self).into())?;
         Ok(())
     }
 }
@@ -360,11 +377,11 @@ impl<'a> StatefulWriter<'a> for Layer {
     }
 }
 
-// Instrument
+// Custom Instrument
 //
 //
 
-impl Parser for Instrument {
+impl Parser for CustomInstrument {
     /// Parses an Instrument from a reader
     fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
         let mut instrument = Self::default();
@@ -376,7 +393,7 @@ impl Parser for Instrument {
     }
 }
 
-impl Writer for Instrument {
+impl Writer for CustomInstrument {
     /// Writes an Instrument to a writer
     fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_string(&self.name)?;

@@ -1,5 +1,7 @@
 //! NBS (Note Block Studio) file format library for Rust.
 
+use mcdata::GenericBlockState;
+
 pub use crate::error::*;
 pub use crate::util::*;
 
@@ -9,7 +11,9 @@ mod nbs_ext;
 #[cfg(test)]
 mod tests;
 mod util;
+use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 // song
 //
@@ -21,7 +25,7 @@ pub struct Song {
     pub header: Header,
     pub notes: Notes,
     pub layers: Layers,
-    pub instruments: Instruments,
+    pub instruments: CustomInstruments,
 }
 
 impl Song {
@@ -235,7 +239,7 @@ pub struct Note {
     // I don't know why the header's song_length is only u16 :(
     pub tick: Index,
     pub layer: Index,
-    pub instrument: u8,
+    pub instrument: Instrument,
     pub key: u8,
     pub velocity: Volume,
     pub panning: Panning,
@@ -246,7 +250,7 @@ impl Default for Note {
         Self {
             tick: 0,
             layer: 0,
-            instrument: 0,
+            instrument: Instrument::default(),
             key: 33, // G3 #0
             velocity: Volume::default(),
             panning: Panning::default(),
@@ -257,7 +261,7 @@ impl Default for Note {
 
 impl Note {
     /// Creates a new note with the specified position and tone parameters.
-    pub fn new(tick: Index, layer: Index, instrument: u8, key: u8) -> Self {
+    pub fn new(tick: Index, layer: Index, instrument: Instrument, key: u8) -> Self {
         let mut note = Self::default();
         note.tick = tick;
         note.layer = layer;
@@ -272,7 +276,7 @@ impl Note {
     }
 
     /// Returns the tone of the note as a tuple (instrument, key)
-    pub fn tone(&self) -> (u8, u8) {
+    pub fn tone(&self) -> (Instrument, u8) {
         (self.instrument, self.key)
     }
 
@@ -280,6 +284,37 @@ impl Note {
     pub fn modulation(&self) -> (u8, i8, i16) {
         (self.velocity.get(), self.panning.get(), self.pitch)
     }
+
+    /// Returns the Minecraft note block block state for this note.
+    pub fn note_block_state(&self) -> Option<GenericBlockState> {
+        // Minecraft note block note range: 0 (F#3) to 24 (F#5)
+        // NBS default key 33 = G3 = Minecraft note 0
+        let note = self.key.checked_sub(33).filter(|&n| n <= 24)?;
+        let properties = HashMap::from([
+            (Cow::Borrowed("note"), Cow::Owned(note.to_string())),
+            (Cow::Borrowed("powered"), Cow::Borrowed("false")),
+            (
+                Cow::Borrowed("instrument"),
+                Cow::Borrowed(self.instrument.instrument_property()),
+            ),
+        ]);
+        Some(GenericBlockState {
+            name: Cow::Borrowed("minecraft:note_block"),
+            properties,
+        })
+    }
+
+    // /// Returns the block under the note block that determines the instrument's sound.
+    // /// Returns `None` for custom instruments or mob head instruments.
+    // pub fn instrument_block(&self) -> Option<GenericBlockState> {
+    //     self.instrument.instrument_block()
+    // }
+
+    // /// Returns the mob head block for imitate (mob head) instruments.
+    // /// Returns `None` for non-imitate instruments.
+    // pub fn head_block(&self) -> Option<GenericBlockState> {
+    //     self.instrument.head_block()
+    // }
 }
 
 impl<T1, T2, T3, T4> TryFrom<(T1, T2, T3, T4)> for Note
@@ -296,9 +331,295 @@ where
         let mut note = Self::default();
         note.tick = tick.try_into()?;
         note.layer = layer.try_into()?;
-        note.instrument = instrument.try_into()?;
+        note.instrument = instrument.try_into()?.into();
         note.key = key.try_into()?;
         Ok(note)
+    }
+}
+
+// instrument
+//
+//
+
+/// Built-in Minecraft note block instruments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Instrument {
+    Harp,
+    DoubleBass,
+    BassDrum,
+    SnareDrum,
+    Click,
+    Guitar,
+    Flute,
+    Bell,
+    Chime,
+    Xylophone,
+    IronXylophone,
+    CowBell,
+    Didgeridoo,
+    Bit,
+    Banjo,
+    Pling,
+    Trumpet,
+    TrumpetExposed,
+    TrumpetWeathered,
+    TrumpetOxidized,
+    // Mob head instruments
+    Imitate(ImitateInstrument),
+    // Other custom instruments
+    Other(u8),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ImitateInstrument {
+    Creeper,
+    Skeleton,
+    Dragon,
+    WitherSkeleton,
+    Piglin,
+    Zombie,
+    CustomHead,
+}
+
+impl Default for Instrument {
+    fn default() -> Self {
+        Self::Harp
+    }
+}
+
+impl Instrument {
+    pub const TABLE: &'static [(Instrument, &'static str, &'static str)] = &[
+        (
+            //Harp
+            Instrument::Harp,
+            "harp",
+            "minecraft:dirt",
+        ),
+        (
+            //Double Bass
+            Instrument::DoubleBass,
+            "bass",
+            "minecraft:oak_planks",
+        ),
+        (
+            //Bass Drum
+            Instrument::BassDrum,
+            "basedrum",
+            "minecraft:stone",
+        ),
+        (
+            //Snare Drum
+            Instrument::SnareDrum,
+            "snare",
+            "minecraft:sand",
+        ),
+        (
+            //Click
+            Instrument::Click,
+            "hat",
+            "minecraft:glass",
+        ),
+        (
+            //Guitar
+            Instrument::Guitar,
+            "guitar",
+            "minecraft:white_wool",
+        ),
+        (
+            //Flute
+            Instrument::Flute,
+            "flute",
+            "minecraft:clay",
+        ),
+        (
+            //Bell
+            Instrument::Bell,
+            "bell",
+            "minecraft:gold_block",
+        ),
+        (
+            //Chime
+            Instrument::Chime,
+            "chime",
+            "minecraft:packed_ice",
+        ),
+        (
+            //Xylophone
+            Instrument::Xylophone,
+            "xylophone",
+            "minecraft:bone_block",
+        ),
+        (
+            //Iron Xylophone
+            Instrument::IronXylophone,
+            "iron_xylophone",
+            "minecraft:iron_block",
+        ),
+        (
+            //Cow Bell
+            Instrument::CowBell,
+            "cow_bell",
+            "minecraft:soul_sand",
+        ),
+        (
+            //Didgeridoo
+            Instrument::Didgeridoo,
+            "didgeridoo",
+            "minecraft:pumpkin",
+        ),
+        (
+            //Bit
+            Instrument::Bit,
+            "bit",
+            "minecraft:emerald_block",
+        ),
+        (
+            //Banjo
+            Instrument::Banjo,
+            "banjo",
+            "minecraft:hay_block",
+        ),
+        (
+            //Pling
+            Instrument::Pling,
+            "pling",
+            "minecraft:glowstone",
+        ),
+        (
+            //Trumpet
+            Instrument::Trumpet,
+            "trumpet",
+            "minecraft:waxed_copper_block",
+        ),
+        (
+            //Trumpet Exposed
+            Instrument::TrumpetExposed,
+            "trumpet_exposed",
+            "minecraft:waxed_exposed_copper",
+        ),
+        (
+            //Trumpet Weathered
+            Instrument::TrumpetWeathered,
+            "trumpet_weathered",
+            "minecraft:waxed_weathered_copper",
+        ),
+        (
+            //Trumpet Oxidized
+            Instrument::TrumpetOxidized,
+            "trumpet_oxidized",
+            "minecraft:waxed_oxidized_copper",
+        ),
+        (
+            //Creeper
+            Instrument::Imitate(ImitateInstrument::Creeper),
+            "creeper",
+            "minecraft:creeper_head",
+        ),
+        (
+            //Skeleton
+            Instrument::Imitate(ImitateInstrument::Skeleton),
+            "skeleton",
+            "minecraft:skeleton_skull",
+        ),
+        (
+            //Dragon
+            Instrument::Imitate(ImitateInstrument::Dragon),
+            "ender_dragon",
+            "minecraft:dragon_head",
+        ),
+        (
+            //Wither Skeleton
+            Instrument::Imitate(ImitateInstrument::WitherSkeleton),
+            "wither_skeleton",
+            "minecraft:wither_skeleton_skull",
+        ),
+        (
+            //Piglin
+            Instrument::Imitate(ImitateInstrument::Piglin),
+            "piglin",
+            "minecraft:piglin_head",
+        ),
+        (
+            //Zombie
+            Instrument::Imitate(ImitateInstrument::Zombie),
+            "zombie",
+            "minecraft:zombie_head",
+        ),
+        (
+            //Custom Head
+            Instrument::Imitate(ImitateInstrument::CustomHead),
+            "custom_head",
+            "minecraft:player_head",
+        ),
+    ];
+
+    /// Returns the instrument property string used in Minecraft's note block block state.
+    pub fn instrument_property(&self) -> &'static str {
+        Self::TABLE
+            .iter()
+            .find(|(inst, _, _)| inst == self)
+            .map(|(_, prop, _)| *prop)
+            .unwrap_or("custom")
+    }
+
+    /// Returns the block under the note block for this instrument's sound.
+    pub fn instrument_block(&self) -> Option<GenericBlockState> {
+        if matches!(self, Self::Imitate(_)) {
+            return None;
+        }
+        let block = Self::TABLE
+            .iter()
+            .find(|(inst, _, _)| inst == self)
+            .map(|(_, _, block)| *block)?;
+        Some(GenericBlockState {
+            name: Cow::Borrowed(block),
+            properties: HashMap::new(),
+        })
+    }
+
+    /// Returns the mob head block for this instrument, if it is a mob head instrument.
+    pub fn head_block(&self) -> Option<GenericBlockState> {
+        if !matches!(self, Self::Imitate(_)) {
+            return None;
+        }
+        let block = Self::TABLE
+            .iter()
+            .find(|(inst, _, _)| inst == self)
+            .map(|(_, _, block)| *block)?;
+        Some(GenericBlockState {
+            name: Cow::Borrowed(block),
+            properties: HashMap::new(),
+        })
+    }
+
+    fn from_u8(value: u8) -> Self {
+        Self::TABLE
+            .get(value as usize)
+            .map(|(inst, _, _)| *inst)
+            .unwrap_or(Self::Other(value))
+    }
+
+    fn to_u8(self) -> u8 {
+        Self::TABLE
+            .iter()
+            .position(|(inst, _, _)| *inst == self)
+            .map(|i| i as u8)
+            .unwrap_or_else(|| match self {
+                Self::Other(v) => v,
+                _ => unreachable!(),
+            })
+    }
+}
+
+impl From<u8> for Instrument {
+    fn from(value: u8) -> Self {
+        Instrument::from_u8(value)
+    }
+}
+
+impl From<Instrument> for u8 {
+    fn from(instrument: Instrument) -> Self {
+        Instrument::to_u8(instrument)
     }
 }
 
@@ -325,19 +646,19 @@ impl Default for Layer {
     }
 }
 
-// instrument
+// custom instrument
 //
 //
 
 /// Represents an instrument with sound file, pitch, and playback settings.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Instrument {
+pub struct CustomInstrument {
     pub name: String,
     pub file: String,
     pub pitch: u8,
     pub press_key: bool,
 }
-impl Default for Instrument {
+impl Default for CustomInstrument {
     fn default() -> Self {
         Self {
             name: String::new(),
@@ -426,7 +747,7 @@ impl Default for Panning {
 
 // pub type Notes = BTreeSet<Note>;
 pub type Layers = Vec<Layer>;
-pub type Instruments = Vec<Instrument>;
+pub type CustomInstruments = Vec<CustomInstrument>;
 
 // pub type NotesRef<'a> = Vec<&'a Note>;
 // pub type LayersRef<'a> = Vec<&'a Layer>;

@@ -1,5 +1,5 @@
 use super::*;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 #[test]
 fn test() {
@@ -38,8 +38,10 @@ fn test() {
 #[test]
 fn analyze_tones() {
     let mut song = Song::open_nbs("evil_cat_world_ruling_scheme/source.nbs").unwrap();
-    let mut by_tone: HashMap<(u8, u8), Vec<Note>> = HashMap::new();
-    for note in &song.notes {
+    let mut notes = Vec::from(song.notes);
+    notes.sort_by_key(|n| (n.tick, n.tone()));
+    let mut by_tone: BTreeMap<_, Vec<Note>> = BTreeMap::new();
+    for note in &notes {
         by_tone.entry(note.tone()).or_default().push(note.clone());
     }
     let slices: Vec<Vec<Note>> = by_tone.into_values().collect();
