@@ -7,19 +7,12 @@ fn test() {
     let mut notes = Vec::from(song.notes);
     notes.sort_by_key(|n| (n.tick, n.tone()));
 
-    let patterns: Vec<Vec<Index>> = vec![
-        vec![0, 3, 6, 72, 75, 78],
-        vec![0, 3, 6],
-        // vec![0, 18, 54, 90, 126, 36, 108, 72],
-        // vec![0, 36, 108, 72],
-        vec![0, 72],
-        vec![0],
-    ];
+    let patterns = PATTERNS;
     // let song_length: Index = 144;
     let song_length: Index = notes.iter().map(|n| n.tick).max().unwrap() + 1;
 
     let mut slices: Vec<Vec<Note>> = Default::default();
-    for pattern in patterns {
+    for &pattern in patterns {
         let (matched, unmatched) =
             notes.matches_by(pattern, song_length, |a, b| a.tone() == b.tone());
 

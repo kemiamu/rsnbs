@@ -1,11 +1,8 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    iter::repeat,
-};
-
 use mcdata::{BlockState, GenericBlockState, util::BlockPos};
 use rsnbs::*;
 use rustmatica::Region;
+use std::collections::{BTreeMap, HashMap};
+use std::iter::repeat;
 
 fn main() {
     work();
@@ -43,7 +40,7 @@ impl Group {
     }
 
     /// Returns a white concrete block state.
-    fn white_concrete() -> GenericBlockState {
+    fn floor_block() -> GenericBlockState {
         GenericBlockState {
             name: "minecraft:white_concrete".into(),
             properties: HashMap::new(),
@@ -51,9 +48,9 @@ impl Group {
     }
 
     /// Returns a light blue concrete block state.
-    fn light_blue_concrete() -> GenericBlockState {
+    fn chain_block() -> GenericBlockState {
         GenericBlockState {
-            name: "minecraft:light_blue_concrete".into(),
+            name: "minecraft:smooth_stone".into(),
             properties: HashMap::new(),
         }
     }
@@ -114,8 +111,8 @@ impl Group {
     /// Builds the layout for `DelayOnly`
     fn delay_only_layout(pos: usize) -> GenericBlockState {
         match pos {
-            0 | 1 | 2 | 12 | 13 | 14 => Self::white_concrete(),
-            4 | 16 => Self::light_blue_concrete(),
+            0 | 1 | 2 | 12 | 13 | 14 => Self::floor_block(),
+            4 | 16 => Self::chain_block(),
             7 | 19 => Self::repeater(4),
             _ => Self::air(),
         }
@@ -130,14 +127,14 @@ impl Group {
         right: &Option<Note>,
     ) -> GenericBlockState {
         match pos {
-            0 | 1 | 2 | 12 | 13 | 14 => Self::white_concrete(),
-            4 => Self::light_blue_concrete(),
+            0 | 1 | 2 | 12 | 13 | 14 => Self::floor_block(),
+            4 => Self::chain_block(),
             7 => Self::repeater(delay),
             15 => Self::instrument_block_or_else(left, Self::air),
-            16 => Self::instrument_block_or_else(center, Self::light_blue_concrete),
+            16 => Self::instrument_block_or_else(center, Self::chain_block),
             17 => Self::instrument_block_or_else(right, Self::air),
             18 => Self::note_block_or_else(left, Self::air),
-            19 => Self::note_block_or_else(center, Self::light_blue_concrete),
+            19 => Self::note_block_or_else(center, Self::chain_block),
             20 => Self::note_block_or_else(right, Self::air),
             _ => Self::air(),
         }
@@ -146,14 +143,14 @@ impl Group {
     /// Builds the layout for `Sustain`
     fn sustain_layout(pos: usize, left: &Option<Note>, right: &Option<Note>) -> GenericBlockState {
         match pos {
-            0 | 1 | 2 | 12 | 13 | 14 => Self::white_concrete(),
-            4 => Self::light_blue_concrete(),
+            0 | 1 | 2 | 12 | 13 | 14 => Self::floor_block(),
+            4 => Self::chain_block(),
             7 => Self::redstone_wire(),
             15 => Self::instrument_block_or_else(left, Self::air),
-            16 => Self::light_blue_concrete(),
+            16 => Self::chain_block(),
             17 => Self::instrument_block_or_else(right, Self::air),
             18 => Self::note_block_or_else(left, Self::air),
-            19 => Self::light_blue_concrete(),
+            19 => Self::chain_block(),
             20 => Self::note_block_or_else(right, Self::air),
             22 => Self::redstone_wire(),
             _ => Self::air(),
@@ -168,14 +165,14 @@ impl Group {
         right: &Option<Note>,
     ) -> GenericBlockState {
         match pos {
-            0 | 1 | 2 | 12 | 13 | 14 => Self::white_concrete(),
-            4 => Self::light_blue_concrete(),
+            0 | 1 | 2 | 12 | 13 | 14 => Self::floor_block(),
+            4 => Self::chain_block(),
             7 => Self::redstone_wire(),
             15 => Self::instrument_block_or_else(left, Self::air),
-            16 => Self::instrument_block_or_else(center, Self::light_blue_concrete),
+            16 => Self::instrument_block_or_else(center, Self::chain_block),
             17 => Self::instrument_block_or_else(right, Self::air),
             18 => Self::note_block_or_else(left, Self::air),
-            19 => Self::note_block_or_else(center, Self::light_blue_concrete),
+            19 => Self::note_block_or_else(center, Self::chain_block),
             20 => Self::note_block_or_else(right, Self::air),
             _ => Self::air(),
         }
@@ -299,21 +296,14 @@ fn work() {
 
     // 参数
 
-    let patterns: Vec<Vec<Index>> = vec![
-        vec![0, 3, 6, 72, 75, 78],
-        vec![0, 3, 6],
-        // vec![0, 18, 54, 90, 126, 36, 108, 72],
-        // vec![0, 36, 108, 72],
-        vec![0, 72],
-        vec![0],
-    ];
+    let patterns = rsnbs::PATTERNS;
     let song_length: Index = notes.iter().map(|n| n.tick).max().unwrap() + 1;
     let coarse: Index = 4;
 
     // 按照匹配规则分簇
 
     let mut clusters: Vec<Vec<Note>> = Default::default();
-    for pattern in patterns {
+    for &pattern in patterns {
         let (matched, unmatched) =
             notes.matches_by(pattern, song_length, |a, b| a.tone() == b.tone());
 

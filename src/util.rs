@@ -24,7 +24,7 @@ impl Refreshable for Song {
 }
 
 pub trait NotesExt {
-    fn matches_by<F>(self, pattern: Vec<Index>, song_length: Index, f: F) -> (Vec<Note>, Vec<Note>)
+    fn matches_by<F>(self, pattern: &[Index], length: Index, f: F) -> (Vec<Note>, Vec<Note>)
     where
         F: Fn(&Note, &Note) -> bool;
 }
@@ -35,7 +35,7 @@ where
     for<'a> &'a T: IntoIterator<Item = &'a Note>,
 {
     /// Separates notes into matching and non-matching groups based on pattern matching.
-    fn matches_by<F>(self, pattern: Vec<Index>, song_length: Index, f: F) -> (Vec<Note>, Vec<Note>)
+    fn matches_by<F>(self, pattern: &[Index], song_length: Index, f: F) -> (Vec<Note>, Vec<Note>)
     where
         F: Fn(&Note, &Note) -> bool,
     {
@@ -48,7 +48,7 @@ where
 
             // 按偏移模式检查匹配
             let base = notes[i].0.tick;
-            let result = pattern.iter().try_fold(vec![], |mut indices, &p| {
+            let result = pattern.into_iter().try_fold(vec![], |mut indices, p| {
                 let target = (base + p) % song_length;
                 let found = notes.iter().enumerate().find(|(_, (note, is_matched))| {
                     !is_matched && note.tick == target && f(note, &notes[i].0)

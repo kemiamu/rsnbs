@@ -15,6 +15,15 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
+// TEST
+/// Pre-defined patterns for note block arrangement.
+pub const PATTERNS: &[&[Index]] = &[
+    &[0, 64, 128, 192, 32, 96, 160, 224],
+    &[0, 64, 128, 192],
+    &[0, 128],
+    &[0],
+];
+
 // song
 //
 //
