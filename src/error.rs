@@ -2,6 +2,7 @@
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    // #[error("Invalid key: {0}")]
     // InvalidKey(String),
     #[error("Invalid or unsupported version: {0}")]
     InvalidVersion(String),

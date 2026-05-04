@@ -196,20 +196,20 @@ impl Group {
 pub struct Track(Vec<Group>);
 
 impl Track {
-    pub fn new(mut cluster: Vec<Note>, coarse: Index) -> Self {
-        cluster.sort_by_key(|note| (note.tick, note.instrument, note.key));
+    pub fn new(cluster: BTreeMap<Position, Note>, coarse: Index) -> Self {
+        let mut timed_notes: BTreeMap<Index, Vec<Note>> = BTreeMap::new();
+        for (pos, note) in cluster {
+            timed_notes.entry(pos.tick()).or_default().push(note);
+        }
 
-        let timed_notes: BTreeMap<Index, Vec<Note>> =
-            cluster.into_iter().fold(BTreeMap::new(), |mut map, note| {
-                map.entry(note.tick).or_default().push(note);
-                map
-            });
         let mut groups: Vec<Group> = Default::default();
         let mut current_tick: Option<Index> = Default::default();
 
         for (tick, mut notes) in timed_notes {
-            // 延迟
-            let mut delay = current_tick.map(|t| tick - t).unwrap_or(tick + 1);
+            let mut delay = current_tick.map_or(tick + 1, |t| tick - t);
+            let mut remaining = notes.len();
+
+            // 纯延迟组
             while delay > coarse * 2 {
                 groups.push(Group::DelayOnly);
                 delay -= coarse * 2;
@@ -219,19 +219,24 @@ impl Track {
                 delay -= coarse;
             }
 
-            // 音符组
-            let mut len = notes.len();
+            // 终端组
             groups.push(Group::Delayed(delay, notes.pop(), notes.pop(), notes.pop()));
-            if len > 3 {
+            remaining = remaining.saturating_sub(3);
+
+            // 牵引组
+            if remaining > 0 {
                 groups.push(Group::Sustain(notes.pop(), notes.pop()));
+                remaining = remaining.saturating_sub(2);
             }
-            while len > 5 {
-                if len <= 8 {
+
+            // 重复牵引或结束
+            while remaining > 0 {
+                if remaining <= 3 {
                     groups.push(Group::SustainEnd(notes.pop(), notes.pop(), notes.pop()));
-                    len -= 3;
+                    remaining = 0;
                 } else {
                     groups.push(Group::Sustain(notes.pop(), notes.pop()));
-                    len -= 2;
+                    remaining -= 2;
                 }
             }
 
@@ -243,10 +248,6 @@ impl Track {
     pub fn len(&self) -> usize {
         self.0.len() * 2
     }
-
-    // pub fn volume(&self) -> BlockPos {
-    //     BlockPos::new(4, 4, (self.0.len() * 2) as _)
-    // }
 }
 
 const GROUP_VOLUME: usize = 24;
@@ -291,18 +292,17 @@ impl<'a> Iterator for TrackIterator<'a> {
 
 fn work() {
     let song = Song::open_nbs("evil_cat_world_ruling_scheme/source.nbs").unwrap();
-    let mut notes = Vec::from(song.notes);
-    notes.sort_by_key(|n| (n.tick, n.tone()));
+    let mut notes = song.notes;
 
     // 参数
 
     let patterns = rsnbs::PATTERNS;
-    let song_length: Index = notes.iter().map(|n| n.tick).max().unwrap() + 1;
+    let song_length: Index = notes.iter().map(|(p, _)| p.tick()).max().unwrap() + 1;
     let coarse: Index = 4;
 
     // 按照匹配规则分簇
 
-    let mut clusters: Vec<Vec<Note>> = Default::default();
+    let mut clusters: Vec<BTreeMap<Position, Note>> = Default::default();
     for &pattern in patterns {
         let (matched, unmatched) =
             notes.matches_by(pattern, song_length, |a, b| a.tone() == b.tone());

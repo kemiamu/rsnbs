@@ -2,27 +2,26 @@ use super::*;
 use std::collections::BTreeMap;
 
 #[test]
-fn test() {
+fn test_pattern_matching() {
     let mut song = Song::open_nbs("evil_cat_world_ruling_scheme/source.nbs").unwrap();
-    let mut notes = Vec::from(song.notes);
-    notes.sort_by_key(|n| (n.tick, n.tone()));
+    let mut notes = song.notes;
 
     let patterns = PATTERNS;
     // let song_length: Index = 144;
-    let song_length: Index = notes.iter().map(|n| n.tick).max().unwrap() + 1;
+    let song_length: Index = notes.iter().map(|(p, _)| p.tick()).max().unwrap() + 1;
 
-    let mut slices: Vec<Vec<Note>> = Default::default();
+    let mut clusters: Vec<BTreeMap<Position, Note>> = Default::default();
     for &pattern in patterns {
         let (matched, unmatched) =
             notes.matches_by(pattern, song_length, |a, b| a.tone() == b.tone());
 
-        slices.push(matched.clone());
+        clusters.push(matched.clone());
         notes = unmatched;
         // notes.append(&mut matched);
         // notes.sort();
     }
 
-    song.notes = reassign_layers(slices).into();
+    song.notes = reassign_layers(clusters).into();
     song.header.is_loop = true;
     song.save_nbs("evil_cat_world_ruling_scheme/out.nbs")
         .unwrap();
@@ -31,40 +30,42 @@ fn test() {
 #[test]
 fn analyze_tones() {
     let mut song = Song::open_nbs("evil_cat_world_ruling_scheme/source.nbs").unwrap();
-    let mut notes = Vec::from(song.notes);
-    notes.sort_by_key(|n| (n.tick, n.tone()));
-    let mut by_tone: BTreeMap<_, Vec<Note>> = BTreeMap::new();
-    for note in &notes {
-        by_tone.entry(note.tone()).or_default().push(note.clone());
-    }
-    let slices: Vec<Vec<Note>> = by_tone.into_values().collect();
 
-    song.notes = reassign_layers(slices).into();
+    let mut by_tone: BTreeMap<_, Vec<(Position, Note)>> = BTreeMap::new();
+    for (pos, note) in song.notes {
+        by_tone.entry(note.tone()).or_default().push((pos, note));
+    }
+    let slices: Vec<BTreeMap<Position, Note>> = by_tone
+        .into_values()
+        .map(|v| v.into_iter().collect())
+        .collect();
+
+    song.notes = reassign_layers(slices);
     song.header.is_loop = true;
     song.save_nbs("evil_cat_world_ruling_scheme/analyzed.nbs")
         .unwrap();
 }
 
 // 按照列表重新分配层级
-fn reassign_layers(slices: Vec<Vec<Note>>) -> Vec<Note> {
+fn reassign_layers(slices: Vec<BTreeMap<Position, Note>>) -> BTreeMap<Position, Note> {
     let mut base_layer: Index = Default::default();
-    let mut result: Vec<Note> = Default::default();
+    let mut result: BTreeMap<Position, Note> = Default::default();
 
     for notes in slices {
         let mut current_layer: Index = Default::default();
         let mut max_layer: Index = Default::default();
 
         let mut notes = notes.into_iter().peekable();
-        while let Some(mut note) = notes.next() {
-            note.layer = base_layer + current_layer;
+        while let Some((mut pos, note)) = notes.next() {
+            pos.layer = base_layer + current_layer;
 
             max_layer = max_layer.max(current_layer + 2);
-            match notes.peek().map(|n| n.tick) == Some(note.tick) {
+            match notes.peek().map(|(p, _)| p.tick()) == Some(pos.tick()) {
                 true => current_layer += 1,
                 false => current_layer = 0,
             }
 
-            result.push(note);
+            result.insert(pos, note);
         }
         base_layer += max_layer;
     }
@@ -74,16 +75,21 @@ fn reassign_layers(slices: Vec<Vec<Note>>) -> Vec<Note> {
 
 #[test]
 fn generating_and_load() {
+    let song_path = "evil_cat_world_ruling_scheme/test_song.nbs";
+
+    // README.md Example: Generating and loading a song
     let mut song = Song::new();
     song.header.is_loop = true;
     for i in 0..25 {
-        song.notes.insert((i, 0, 0, i + 33).try_into().unwrap());
+        let pos = Position::new(i, 0);
+        let note = Note::new(Instrument::Harp, Key::from_minecraft_note(i).unwrap());
+        song.notes.insert(pos, note);
     }
-    song.save_nbs("evil_cat_world_ruling_scheme/test_song.nbs")
-        .unwrap();
+    song.save_nbs(song_path).unwrap();
 
-    let song = Song::open_nbs("evil_cat_world_ruling_scheme/test_song.nbs").unwrap();
-    for note in song.notes {
-        println!("tick: {}, key: {}", note.tick, note.key)
+    // README.md Example: Iterating over notes
+    let song = Song::open_nbs(song_path).unwrap();
+    for (position, note) in song.notes {
+        println!("tick: {}, key: {}", position.tick, note.key)
     }
 }

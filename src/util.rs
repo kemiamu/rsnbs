@@ -1,4 +1,6 @@
-use crate::{Index, Note, Song};
+use std::collections::BTreeMap;
+
+use crate::{Index, Note, Position, Song};
 
 /// A trait for types that can be refreshed to ensure data consistency.
 pub trait Refreshable {
@@ -12,8 +14,8 @@ pub trait Refreshable {
 impl Refreshable for Song {
     fn refresh(&mut self) {
         // 从音符计算歌曲长度
-        match self.notes.iter().max_by_key(|n| n.tick) {
-            Some(last_note) => self.header.song_length = last_note.tick,
+        match self.notes.iter().map(|(pos, _)| pos.tick).max() {
+            Some(last_tick) => self.header.song_length = last_tick,
             None => self.header.song_length = 1,
         }
         // 更新 layer 数量
@@ -24,34 +26,52 @@ impl Refreshable for Song {
 }
 
 pub trait NotesExt {
-    fn matches_by<F>(self, pattern: &[Index], length: Index, f: F) -> (Vec<Note>, Vec<Note>)
+    fn matches_by<F>(
+        self,
+        pattern: &[Index],
+        song_length: Index,
+        f: F,
+    ) -> (BTreeMap<Position, Note>, BTreeMap<Position, Note>)
     where
         F: Fn(&Note, &Note) -> bool;
 }
 
-impl<T> NotesExt for T
-where
-    T: IntoIterator<Item = Note>,
-    for<'a> &'a T: IntoIterator<Item = &'a Note>,
-{
+impl NotesExt for BTreeMap<Position, Note> {
     /// Separates notes into matching and non-matching groups based on pattern matching.
-    fn matches_by<F>(self, pattern: &[Index], song_length: Index, f: F) -> (Vec<Note>, Vec<Note>)
+    fn matches_by<F>(
+        self,
+        pattern: &[Index],
+        song_length: Index,
+        f: F,
+    ) -> (BTreeMap<Position, Note>, BTreeMap<Position, Note>)
     where
         F: Fn(&Note, &Note) -> bool,
     {
-        let mut notes: Vec<(Note, bool)> = self.into_iter().map(|n| (n, false)).collect();
+        struct NoteWithMatch {
+            pos: Position,
+            note: Note,
+            is_matched: bool,
+        }
+        let mut candidates: Vec<NoteWithMatch> = self
+            .into_iter()
+            .map(|(pos, note)| NoteWithMatch {
+                pos,
+                note,
+                is_matched: false,
+            })
+            .collect();
 
-        for i in 0..notes.len() {
-            if notes[i].1 {
+        for i in 0..candidates.len() {
+            if candidates[i].is_matched {
                 continue;
             }
 
             // 按偏移模式检查匹配
-            let base = notes[i].0.tick;
+            let base = candidates[i].pos.tick();
             let result = pattern.into_iter().try_fold(vec![], |mut indices, p| {
                 let target = (base + p) % song_length;
-                let found = notes.iter().enumerate().find(|(_, (note, is_matched))| {
-                    !is_matched && note.tick == target && f(note, &notes[i].0)
+                let found = candidates.iter().enumerate().find(|(_, p)| {
+                    !p.is_matched && p.pos.tick() == target && f(&p.note, &candidates[i].note)
                 });
                 found.map(|(idx, _)| {
                     indices.push(idx);
@@ -62,17 +82,17 @@ where
             // 在匹配组成立时选中
             if let Some(indices) = result {
                 for &idx in &indices {
-                    notes[idx].1 = true;
+                    candidates[idx].is_matched = true;
                 }
             }
         }
 
-        let (mut matched, mut unmatched) = (Vec::new(), Vec::new());
-        for (note, is_matched) in notes {
-            match is_matched {
-                true => matched.push(note),
-                false => unmatched.push(note),
-            }
+        let (mut matched, mut unmatched) = (BTreeMap::new(), BTreeMap::new());
+        for note in candidates {
+            match note.is_matched {
+                true => matched.insert(note.pos, note.note),
+                false => unmatched.insert(note.pos, note.note),
+            };
         }
         (matched, unmatched)
     }

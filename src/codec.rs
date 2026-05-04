@@ -1,49 +1,30 @@
-//! NBS (Note Block Studio) file format parser and writer
+//! NBS (Note Block Studio) file format parser and writer.
 
 use crate::nbs_ext::{NbsReadExt, NbsWriteExt};
 use crate::util::Refreshable;
-use crate::{CustomInstrument, Header, Instrument, Layer, Note, Notes, Song};
+use crate::{CustomInstrument, Header, Instrument, Key, Layer, Note, Position, Song};
 use crate::{Index, Panning, Result, Version, Volume};
+use std::collections::BTreeMap;
+use std::io;
 use std::num::NonZeroU32;
-use std::{io, u8, u16};
 
-/// Data that can be parsed without state
-pub(super) trait Parser {
-    /// Parse data from a reader
-    fn parse<R: io::Read>(reader: &mut R) -> Result<Self>
+/// Unified trait for both parsing and writing data, optionally with context
+pub(super) trait Codec {
+    /// Context type shared for both parsing and writing (use () when no context is needed)
+    type Context;
+
+    /// Parse data from a reader with context
+    fn parse<R: io::Read>(reader: &mut R, context: &Self::Context) -> Result<Self>
     where
         Self: Sized;
-}
 
-/// Data that can be written without state
-pub(super) trait Writer {
-    /// Write data to a writer
-    fn write<W: io::Write>(&self, writer: &mut W) -> Result<()>;
-}
-
-/// Data that can be parsed with state
-pub(super) trait StatefulParser<'a> {
-    /// State type for parsing
-    type ParseState;
-
-    /// Parse data from a reader with state
-    fn parse<R: io::Read>(reader: &mut R, state: Self::ParseState) -> Result<Self>
-    where
-        Self: Sized;
-}
-
-/// Data that can be written with state
-pub(super) trait StatefulWriter<'a> {
-    /// State type for writing
-    type WriteState;
-
-    /// Write data to a writer with state
-    fn write<W: io::Write>(&self, writer: &mut W, state: Self::WriteState) -> Result<()>;
+    /// Write data to a writer with context
+    fn write<W: io::Write>(&self, writer: &mut W, context: &Self::Context) -> Result<()>;
 }
 
 // Song
 //
-//
+// ============================================================================
 
 impl Song {
     /// Parses a complete Song from a reader
@@ -51,22 +32,22 @@ impl Song {
         let mut song = Self::default();
 
         // 头部分
-        song.header = Header::parse(reader)?;
+        song.header = Codec::parse(reader, &())?;
 
         // 音符部分
-        song.notes = Notes::parse(reader, &song.header.version)?;
+        song.notes = Codec::parse(reader, &song.header.version)?;
 
         // 层部分
         for _ in 0..song.header.song_layers {
-            let layer = Layer::parse(reader, &song.header.version)?;
+            let layer = Codec::parse(reader, &song.header.version)?;
             song.layers.push(layer);
         }
 
         // 自定义乐器部分
-        let instrument_count = reader.read_u8()?;
-        for _ in 0..instrument_count {
-            let instrument = CustomInstrument::parse(reader)?;
-            song.instruments.push(instrument);
+        let instr_count = reader.read_u8()?;
+        for _ in 0..instr_count {
+            let instrument = Codec::parse(reader, &())?;
+            song.custom_instruments.push(instrument);
         }
 
         Ok(song)
@@ -77,7 +58,7 @@ impl Song {
         self.refresh();
 
         // 头部分
-        self.header.write(writer)?;
+        self.header.write(writer, &())?;
 
         // 音符部分
         self.notes.write(writer, &self.header.version)?;
@@ -88,9 +69,9 @@ impl Song {
         }
 
         // 自定义乐器部分
-        writer.write_u8(self.instruments.len().try_into().unwrap_or(u8::MAX))?;
-        for instrument in self.instruments.iter().take(u8::MAX.into()) {
-            instrument.write(writer)?;
+        writer.write_u8(self.custom_instruments.len().try_into().unwrap_or(u8::MAX))?;
+        for instr in self.custom_instruments.iter().take(u8::MAX.into()) {
+            instr.write(writer, &())?;
         }
 
         Ok(())
@@ -99,11 +80,12 @@ impl Song {
 
 // Header
 //
-//
+// ============================================================================
 
-impl Parser for Header {
-    /// Parses a Header from a reader
-    fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
+impl Codec for Header {
+    type Context = ();
+
+    fn parse<R: io::Read>(reader: &mut R, _: &Self::Context) -> Result<Self> {
         let mut header = Self::default();
 
         // 版本
@@ -129,7 +111,7 @@ impl Parser for Header {
         header.song_author = reader.read_string()?;
         header.original_author = reader.read_string()?;
         header.description = reader.read_string()?;
-        header.tempo = f32::parse(reader)?;
+        header.tempo = Codec::parse(reader, &())?;
         header.auto_save = reader.read_bool()?;
         header.auto_save_duration = reader.read_u8()? as _;
         header.time_signature = reader.read_u8()?;
@@ -149,15 +131,12 @@ impl Parser for Header {
 
         Ok(header)
     }
-}
 
-impl Writer for Header {
-    /// Writes a Header to a writer
-    fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
+    fn write<W: io::Write>(&self, writer: &mut W, _: &Self::Context) -> Result<()> {
         // 版本
         if self.version.get() > 0 {
             writer.write_u16(0)?;
-            self.version.write(writer)?;
+            self.version.write(writer, &())?;
             writer.write_u8(self.default_instruments)?;
         } else {
             writer.write_u16(self.song_length.try_into().unwrap_or(u16::MAX))?;
@@ -173,7 +152,7 @@ impl Writer for Header {
         writer.write_string(&self.song_author)?;
         writer.write_string(&self.original_author)?;
         writer.write_string(&self.description)?;
-        self.tempo.write(writer)?;
+        self.tempo.write(writer, &())?;
         writer.write_bool(self.auto_save)?;
         writer.write_u8(self.auto_save_duration.try_into().unwrap_or(u8::MAX))?;
         writer.write_u8(self.time_signature)?;
@@ -197,14 +176,13 @@ impl Writer for Header {
 
 // Notes
 //
-//
+// ============================================================================
 
-impl<'a, T: Default + Extend<Note>> StatefulParser<'a> for T {
-    type ParseState = &'a Version;
+impl Codec for BTreeMap<Position, Note> {
+    type Context = Version;
 
-    /// Parses notes from a reader with version state
-    fn parse<R: io::Read>(reader: &mut R, version: Self::ParseState) -> Result<Self> {
-        let mut notes = T::default();
+    fn parse<R: io::Read>(reader: &mut R, version: &Self::Context) -> Result<Self> {
+        let mut notes = BTreeMap::new();
 
         // tick
         let mut tick_cursor = Index::MAX;
@@ -216,46 +194,35 @@ impl<'a, T: Default + Extend<Note>> StatefulParser<'a> for T {
             while let Some(layer_jump) = reader.read_jump()? {
                 layer_cursor = layer_cursor.wrapping_add(layer_jump.get());
 
-                let note = Note::parse(reader, (version, tick_cursor, layer_cursor))?;
-                notes.extend(std::iter::once(note));
+                let note = Note::parse(reader, version)?;
+                notes.insert(Position::new(tick_cursor, layer_cursor), note);
             }
         }
 
         Ok(notes)
     }
-}
 
-impl<'a, T> StatefulWriter<'a> for T
-where
-    for<'b> &'b T: IntoIterator<Item = &'b Note>,
-{
-    type WriteState = &'a Version;
-
-    /// Writes notes to a writer with version state
-    ///
-    /// # Assumptions
-    /// - The notes are ordered by `(tick, layer)` (the natural order of `Note`).
-    /// - No two notes share the same `(tick, layer)` pair.
-    fn write<W: io::Write>(&self, writer: &mut W, version: Self::WriteState) -> Result<()> {
-        let mut iter = self.into_iter().peekable();
+    fn write<W: io::Write>(&self, writer: &mut W, context: &Self::Context) -> Result<()> {
+        let mut iter = self.iter().peekable();
         let mut prev_tick = Index::MAX;
         let mut prev_layer = Index::MAX;
 
-        while let Some(note) = iter.next() {
+        while let Some((pos, note)) = iter.next() {
             // tick 上升沿
-            if note.tick != prev_tick {
-                let tick_jump = note.tick.wrapping_sub(prev_tick);
+            if pos.tick() != prev_tick {
+                let tick_jump = pos.tick().wrapping_sub(prev_tick);
                 writer.write_jump(NonZeroU32::new(tick_jump))?;
             }
             // layer 上升沿
-            let layer_jump = note.layer.wrapping_sub(prev_layer);
+            let layer_jump = pos.layer().wrapping_sub(prev_layer);
             writer.write_jump(NonZeroU32::new(layer_jump))?;
 
-            note.write(writer, version)?;
-            prev_tick = note.tick;
-            prev_layer = note.layer;
+            note.write(writer, context)?;
+            prev_tick = pos.tick();
+            prev_layer = pos.layer();
             // layer 下降沿
-            if iter.peek().map_or(true, |next| next.tick != note.tick) {
+            let next_tick = iter.peek().map(|(pos, _)| pos.tick());
+            if next_tick.is_none() || next_tick.unwrap() != pos.tick() {
                 writer.write_jump(None)?;
                 prev_layer = Index::MAX;
             }
@@ -269,42 +236,32 @@ where
 
 // Note
 //
-//
+// ============================================================================
 
-impl<'a> StatefulParser<'a> for Note {
-    type ParseState = (&'a Version, Index, Index);
+impl Codec for Note {
+    type Context = Version;
 
-    /// Parses a Note from a reader with version, tick and layer state
-    fn parse<R: io::Read>(reader: &mut R, state: Self::ParseState) -> Result<Self> {
-        let (version, tick, layer) = state;
+    fn parse<R: io::Read>(reader: &mut R, version: &Self::Context) -> Result<Self> {
         let mut note = Self::default();
-
-        note.instrument = Instrument::parse(reader)?;
-        note.key = reader.read_u8()?;
-        note.tick = tick;
-        note.layer = layer;
+        note.instrument = Codec::parse(reader, &())?;
+        note.key = Codec::parse(reader, &())?;
 
         if version.get() >= 4 {
-            note.velocity = Volume::parse(reader)?;
-            note.panning = Panning::parse(reader)?;
+            note.velocity = Codec::parse(reader, &())?;
+            note.panning = Codec::parse(reader, &())?;
             note.pitch = reader.read_i16()?;
         }
 
         Ok(note)
     }
-}
 
-impl<'a> StatefulWriter<'a> for Note {
-    type WriteState = &'a Version;
-
-    /// Writes a Note to a writer with version state
-    fn write<W: io::Write>(&self, writer: &mut W, version: Self::WriteState) -> Result<()> {
-        self.instrument.write(writer)?;
-        writer.write_u8(self.key)?;
+    fn write<W: io::Write>(&self, writer: &mut W, version: &Self::Context) -> Result<()> {
+        self.instrument.write(writer, &())?;
+        writer.write_u8(self.key.into())?;
 
         if version.get() >= 4 {
-            self.velocity.write(writer)?;
-            self.panning.write(writer)?;
+            self.velocity.write(writer, &())?;
+            self.panning.write(writer, &())?;
             writer.write_i16(self.pitch)?;
         }
 
@@ -312,33 +269,15 @@ impl<'a> StatefulWriter<'a> for Note {
     }
 }
 
-// Instrument
-//
-//
-
-impl Parser for Instrument {
-    fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
-        Ok(Instrument::from(reader.read_u8()?))
-    }
-}
-
-impl Writer for Instrument {
-    fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
-        writer.write_u8((*self).into())?;
-        Ok(())
-    }
-}
-
 // Layer
 //
-//
+// ============================================================================
 
-impl<'a> StatefulParser<'a> for Layer {
-    type ParseState = &'a Version;
+impl Codec for Layer {
+    type Context = Version;
 
-    /// Parses a Layer from a reader with version and id state
-    fn parse<R: io::Read>(reader: &mut R, state: Self::ParseState) -> Result<Self> {
-        let version = state;
+    /// Parses a Layer from a reader with version context
+    fn parse<R: io::Read>(reader: &mut R, version: &Self::Context) -> Result<Self> {
         let mut layer = Self::default();
         layer.name = reader.read_string()?;
 
@@ -346,31 +285,27 @@ impl<'a> StatefulParser<'a> for Layer {
             layer.lock = reader.read_bool()?;
         }
 
-        layer.volume = Volume::parse(reader)?;
+        layer.volume = Codec::parse(reader, &())?;
 
         if version.get() >= 2 {
-            layer.panning = Panning::parse(reader)?;
+            layer.panning = Codec::parse(reader, &())?;
         }
 
         Ok(layer)
     }
-}
 
-impl<'a> StatefulWriter<'a> for Layer {
-    type WriteState = &'a Version;
-
-    /// Writes a Layer to a writer with version state
-    fn write<W: io::Write>(&self, writer: &mut W, version: Self::WriteState) -> Result<()> {
+    /// Writes a Layer to a writer with version context
+    fn write<W: io::Write>(&self, writer: &mut W, version: &Self::Context) -> Result<()> {
         writer.write_string(&self.name)?;
 
         if version.get() >= 4 {
             writer.write_bool(self.lock)?;
         }
 
-        self.volume.write(writer)?;
+        self.volume.write(writer, &())?;
 
         if version.get() >= 2 {
-            self.panning.write(writer)?;
+            self.panning.write(writer, &())?;
         }
 
         Ok(())
@@ -379,11 +314,13 @@ impl<'a> StatefulWriter<'a> for Layer {
 
 // Custom Instrument
 //
-//
+// ============================================================================
 
-impl Parser for CustomInstrument {
+impl Codec for CustomInstrument {
+    type Context = ();
+
     /// Parses an Instrument from a reader
-    fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
+    fn parse<R: io::Read>(reader: &mut R, _: &Self::Context) -> Result<Self> {
         let mut instrument = Self::default();
         instrument.name = reader.read_string()?;
         instrument.file = reader.read_string()?;
@@ -391,11 +328,9 @@ impl Parser for CustomInstrument {
         instrument.press_key = reader.read_bool()?;
         Ok(instrument)
     }
-}
 
-impl Writer for CustomInstrument {
     /// Writes an Instrument to a writer
-    fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
+    fn write<W: io::Write>(&self, writer: &mut W, _: &Self::Context) -> Result<()> {
         writer.write_string(&self.name)?;
         writer.write_string(&self.file)?;
         writer.write_u8(self.pitch)?;
@@ -406,56 +341,80 @@ impl Writer for CustomInstrument {
 
 // Basic Types
 //
-//
+// ============================================================================
 
-impl Parser for Version {
-    fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
+impl Codec for Version {
+    type Context = ();
+
+    fn parse<R: io::Read>(reader: &mut R, _: &Self::Context) -> Result<Self> {
         Version::new(reader.read_u8()?)
     }
-}
 
-impl Writer for Version {
-    fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
+    fn write<W: io::Write>(&self, writer: &mut W, _: &Self::Context) -> Result<()> {
         Ok(writer.write_u8(self.get())?)
     }
 }
 
-impl Parser for Volume {
-    fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
+impl Codec for Volume {
+    type Context = ();
+
+    fn parse<R: io::Read>(reader: &mut R, _: &Self::Context) -> Result<Self> {
         Volume::new(reader.read_u8()?)
     }
-}
 
-impl Writer for Volume {
-    fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
+    fn write<W: io::Write>(&self, writer: &mut W, _: &Self::Context) -> Result<()> {
         Ok(writer.write_u8(self.get())?)
     }
 }
 
-impl Parser for Panning {
-    fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
+impl Codec for Instrument {
+    type Context = ();
+
+    fn parse<R: io::Read>(reader: &mut R, _: &Self::Context) -> Result<Self> {
+        Ok(reader.read_u8()?.into())
+    }
+
+    fn write<W: io::Write>(&self, writer: &mut W, _: &Self::Context) -> Result<()> {
+        Ok(writer.write_u8((*self).into())?)
+    }
+}
+
+impl Codec for Key {
+    type Context = ();
+
+    fn parse<R: io::Read>(reader: &mut R, _: &Self::Context) -> Result<Self> {
+        Ok(reader.read_u8()?.into())
+    }
+
+    fn write<W: io::Write>(&self, writer: &mut W, _: &Self::Context) -> Result<()> {
+        Ok(writer.write_u8((*self).into())?)
+    }
+}
+
+impl Codec for Panning {
+    type Context = ();
+
+    fn parse<R: io::Read>(reader: &mut R, _: &Self::Context) -> Result<Self> {
         let raw = reader.read_u8()?;
         // Convert from file representation (0-200) to internal (-100..100)
         Panning::new(raw.wrapping_sub(100) as i8)
     }
-}
 
-impl Writer for Panning {
-    fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
+    fn write<W: io::Write>(&self, writer: &mut W, _: &Self::Context) -> Result<()> {
         // Convert from internal (-100..100) to file representation (0-200)
         Ok(writer.write_u8((self.get() as u8).wrapping_add(100))?)
     }
 }
 
-impl Parser for f32 {
-    fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
+impl Codec for f32 {
+    type Context = ();
+
+    fn parse<R: io::Read>(reader: &mut R, _: &Self::Context) -> Result<Self> {
         // Convert from u16 to f32 and divide by 100.0
         Ok(reader.read_u16()? as f32 / 100.0)
     }
-}
 
-impl Writer for f32 {
-    fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
+    fn write<W: io::Write>(&self, writer: &mut W, _: &Self::Context) -> Result<()> {
         // Convert f32 to u16 by multiplying by 100.0
         Ok(writer.write_u16((self * 100.0) as u16)?)
     }

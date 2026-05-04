@@ -1,40 +1,43 @@
 //! NBS (Note Block Studio) file format library for Rust.
 
-use mcdata::GenericBlockState;
-
-pub use crate::error::*;
-pub use crate::util::*;
-
 mod codec;
 mod error;
 mod nbs_ext;
 #[cfg(test)]
 mod tests;
 mod util;
+use mcdata::GenericBlockState;
 use std::borrow::Cow;
-use std::collections::BTreeMap;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::fmt::{self, Display, Formatter};
 
-// TEST
+pub use crate::error::*;
+pub use crate::util::*;
+
+// TEST: temporary test case
 /// Pre-defined patterns for note block arrangement.
 pub const PATTERNS: &[&[Index]] = &[
-    &[0, 64, 128, 192, 32, 96, 160, 224],
-    &[0, 64, 128, 192],
-    &[0, 128],
+    // &[0, 64, 128, 192, 32, 96, 160, 224],
+    // &[0, 64, 128, 192],
+    // &[0, 128],
+    &[0, 24, 48, 72],
+    &[0, 48],
     &[0],
 ];
 
 // song
 //
-//
+// ============================================================================
 
 /// Represents a complete NBS song with header, notes, layers, and instruments.
 #[derive(Debug, Default, Clone, PartialEq, PartialOrd)]
 pub struct Song {
     pub header: Header,
-    pub notes: Notes,
-    pub layers: Layers,
-    pub instruments: CustomInstruments,
+    // Position data is stored redundantly due to incremental encoding
+    // I don't know why the header's song_length is only u16 :(
+    pub notes: BTreeMap<Position, Note>,
+    pub layers: Vec<Layer>,
+    pub custom_instruments: Vec<CustomInstrument>,
 }
 
 impl Song {
@@ -70,7 +73,7 @@ impl Song {
 
 // header
 //
-//
+// ============================================================================
 
 /// Contains metadata and song information from the NBS file header.
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
@@ -126,166 +129,31 @@ impl Default for Header {
     }
 }
 
-// notes
-//
-//
-
-/// A collection of notes in a song, indexed by their position (tick, layer).
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Notes(BTreeMap<(Index, Index), Note>);
-
-impl Notes {
-    /// Creates a new empty Notes collection.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Returns a collection of references to all notes in the song.
-    ///
-    /// The return type can be any type that implements `FromIterator<&'a Note>`,
-    /// such as `Vec<&Note>`, `HashSet<&Note>`, etc.
-    pub fn get<'a, T: FromIterator<&'a Note>>(&'a self) -> T {
-        self.0.values().collect()
-    }
-
-    /// Insert or replace the `Note` that already exists at that position
-    pub fn insert(&mut self, note: Note) {
-        self.0.insert((note.tick, note.layer), note);
-    }
-
-    /// Returns an iterator over the notes in the collection.
-    pub fn iter(&self) -> impl Iterator<Item = &Note> {
-        self.0.values()
-    }
-
-    /// Returns a mutable iterator over the notes in the collection.
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Note> {
-        self.0.values_mut()
-    }
-}
-
-impl IntoIterator for Notes {
-    type Item = Note;
-    type IntoIter = std::collections::btree_map::IntoValues<(Index, Index), Note>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.into_values()
-    }
-}
-
-impl<'a> IntoIterator for &'a Notes {
-    type Item = &'a Note;
-    type IntoIter = std::collections::btree_map::Values<'a, (Index, Index), Note>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.values()
-    }
-}
-
-impl<'a> IntoIterator for &'a mut Notes {
-    type Item = &'a mut Note;
-    type IntoIter = std::collections::btree_map::ValuesMut<'a, (Index, Index), Note>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.values_mut()
-    }
-}
-
-impl FromIterator<Note> for Notes {
-    fn from_iter<T: IntoIterator<Item = Note>>(iter: T) -> Self {
-        let mut notes = Notes::new();
-        notes.extend(iter);
-        notes
-    }
-}
-
-impl Extend<Note> for Notes {
-    /// Extends the collection with the contents of an iterator.
-    ///
-    /// This method adds all notes from the iterator to the collection.
-    /// If multiple notes have the same position (tick, layer), the last one
-    /// from the iterator will overwrite any previous ones.
-    fn extend<T: IntoIterator<Item = Note>>(&mut self, iter: T) {
-        for note in iter {
-            self.insert(note);
-        }
-    }
-}
-
-impl From<Vec<Note>> for Notes {
-    fn from(vec: Vec<Note>) -> Self {
-        vec.into_iter().collect()
-    }
-}
-
-impl From<Notes> for Vec<Note> {
-    fn from(notes: Notes) -> Self {
-        notes.into_iter().collect()
-    }
-}
-
-// impl<'a> Extend<&'a Note> for Notes {
-//     /// Extends the collection with references to notes from an iterator.
-//     ///
-//     /// This method clones all notes from the iterator and adds them to the collection.
-//     /// If multiple notes have the same position (tick, layer), the last one
-//     /// from the iterator will overwrite any previous ones.
-//     fn extend<T: IntoIterator<Item = &'a Note>>(&mut self, iter: T) {
-//         for note in iter {
-//             self.insert(note.clone());
-//         }
-//     }
-// }
-
 // note
 //
-//
+// ============================================================================
 
 /// Represents a single note in the song with timing, instrument, and modulation data.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Note {
-    // Position data is stored redundantly due to incremental encoding
-    // I don't know why the header's song_length is only u16 :(
-    pub tick: Index,
-    pub layer: Index,
     pub instrument: Instrument,
-    pub key: u8,
+    pub key: Key,
     pub velocity: Volume,
     pub panning: Panning,
     pub pitch: i16,
 }
-impl Default for Note {
-    fn default() -> Self {
-        Self {
-            tick: 0,
-            layer: 0,
-            instrument: Instrument::default(),
-            key: 33, // G3 #0
-            velocity: Volume::default(),
-            panning: Panning::default(),
-            pitch: 0,
-        }
-    }
-}
 
 impl Note {
     /// Creates a new note with the specified position and tone parameters.
-    pub fn new(tick: Index, layer: Index, instrument: Instrument, key: u8) -> Self {
+    pub fn new(instrument: Instrument, key: Key) -> Self {
         let mut note = Self::default();
-        note.tick = tick;
-        note.layer = layer;
         note.instrument = instrument;
         note.key = key;
         note
     }
 
-    /// Returns the position of the note as a tuple (tick, layer)
-    pub fn position(&self) -> (Index, Index) {
-        (self.tick, self.layer)
-    }
-
     /// Returns the tone of the note as a tuple (instrument, key)
-    pub fn tone(&self) -> (Instrument, u8) {
+    pub fn tone(&self) -> (Instrument, Key) {
         (self.instrument, self.key)
     }
 
@@ -296,59 +164,19 @@ impl Note {
 
     /// Returns the Minecraft note block block state for this note.
     pub fn note_block_state(&self) -> Option<GenericBlockState> {
-        // Minecraft note block note range: 0 (F#3) to 24 (F#5)
-        // NBS default key 33 = G3 = Minecraft note 0
-        let note = self.key.checked_sub(33).filter(|&n| n <= 24)?;
+        let note = self.key.minecraft_note()?;
+        let instr = self.instrument.instrument_property();
         let properties = HashMap::from([
-            (Cow::Borrowed("note"), Cow::Owned(note.to_string())),
-            (Cow::Borrowed("powered"), Cow::Borrowed("false")),
-            (
-                Cow::Borrowed("instrument"),
-                Cow::Borrowed(self.instrument.instrument_property()),
-            ),
+            ("note".into(), note.to_string().into()),
+            ("powered".into(), "false".into()),
+            ("instrument".into(), instr.into()),
         ]);
         Some(GenericBlockState {
-            name: Cow::Borrowed("minecraft:note_block"),
+            name: "minecraft:note_block".into(),
             properties,
         })
     }
-
-    // /// Returns the block under the note block that determines the instrument's sound.
-    // /// Returns `None` for custom instruments or mob head instruments.
-    // pub fn instrument_block(&self) -> Option<GenericBlockState> {
-    //     self.instrument.instrument_block()
-    // }
-
-    // /// Returns the mob head block for imitate (mob head) instruments.
-    // /// Returns `None` for non-imitate instruments.
-    // pub fn head_block(&self) -> Option<GenericBlockState> {
-    //     self.instrument.head_block()
-    // }
 }
-
-impl<T1, T2, T3, T4> TryFrom<(T1, T2, T3, T4)> for Note
-where
-    T1: TryInto<Index>,
-    T2: TryInto<Index>,
-    T3: TryInto<u8>,
-    T4: TryInto<u8>,
-    Error: From<T1::Error> + From<T2::Error> + From<T3::Error> + From<T4::Error>,
-{
-    type Error = Error;
-
-    fn try_from((tick, layer, instrument, key): (T1, T2, T3, T4)) -> Result<Self> {
-        let mut note = Self::default();
-        note.tick = tick.try_into()?;
-        note.layer = layer.try_into()?;
-        note.instrument = instrument.try_into()?.into();
-        note.key = key.try_into()?;
-        Ok(note)
-    }
-}
-
-// instrument
-//
-//
 
 /// Built-in Minecraft note block instruments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -600,41 +428,33 @@ impl Instrument {
             properties: HashMap::new(),
         })
     }
+}
 
-    fn from_u8(value: u8) -> Self {
+impl From<u8> for Instrument {
+    fn from(value: u8) -> Self {
         Self::TABLE
             .get(value as usize)
             .map(|(inst, _, _)| *inst)
             .unwrap_or(Self::Other(value))
     }
+}
 
-    fn to_u8(self) -> u8 {
-        Self::TABLE
+impl From<Instrument> for u8 {
+    fn from(instrument: Instrument) -> Self {
+        Instrument::TABLE
             .iter()
-            .position(|(inst, _, _)| *inst == self)
+            .position(|(inst, _, _)| *inst == instrument)
             .map(|i| i as u8)
-            .unwrap_or_else(|| match self {
-                Self::Other(v) => v,
+            .unwrap_or_else(|| match instrument {
+                Instrument::Other(v) => v,
                 _ => unreachable!(),
             })
     }
 }
 
-impl From<u8> for Instrument {
-    fn from(value: u8) -> Self {
-        Instrument::from_u8(value)
-    }
-}
-
-impl From<Instrument> for u8 {
-    fn from(instrument: Instrument) -> Self {
-        Instrument::to_u8(instrument)
-    }
-}
-
 // layer
 //
-//
+// ============================================================================
 
 /// Represents a layer in the song with volume, panning, and lock settings.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -657,7 +477,7 @@ impl Default for Layer {
 
 // custom instrument
 //
-//
+// ============================================================================
 
 /// Represents an instrument with sound file, pitch, and playback settings.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -678,9 +498,9 @@ impl Default for CustomInstrument {
     }
 }
 
-// Basic Types
+// basic types
 //
-//
+// ============================================================================
 
 /// The current NBS (Note Block Studio) file format version.
 const CURRENT_NBS_VERSION: u8 = 5;
@@ -708,9 +528,36 @@ impl Default for Version {
     }
 }
 
+/// Represents a position in the NBS file, with a tick and layer index.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Position {
+    tick: Index,
+    layer: Index,
+}
+
+impl Position {
+    pub fn new(tick: Index, layer: Index) -> Self {
+        Self { tick, layer }
+    }
+
+    pub fn tick(&self) -> Index {
+        self.tick
+    }
+
+    pub fn layer(&self) -> Index {
+        self.layer
+    }
+}
+
 /// Represents Volume value in range 0-100
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Volume(u8);
+
+impl Default for Volume {
+    fn default() -> Self {
+        Self(100)
+    }
+}
 
 impl Volume {
     pub fn new(volume: u8) -> Result<Self> {
@@ -725,15 +572,15 @@ impl Volume {
     }
 }
 
-impl Default for Volume {
-    fn default() -> Self {
-        Self(100)
-    }
-}
-
 /// Represents panning value in range -100 to 100
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Panning(i8);
+
+impl Default for Panning {
+    fn default() -> Self {
+        Self(0)
+    }
+}
 
 impl Panning {
     pub fn new(panning: i8) -> Result<Self> {
@@ -748,18 +595,81 @@ impl Panning {
     }
 }
 
-impl Default for Panning {
+/// Represents a musical key (F#3-F#5)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Key(u8);
+
+impl Default for Key {
     fn default() -> Self {
-        Self(0)
+        Self::FS3
     }
 }
 
-// pub type Notes = BTreeSet<Note>;
-pub type Layers = Vec<Layer>;
-pub type CustomInstruments = Vec<CustomInstrument>;
+impl Key {
+    // F#3 = 33 = note(0)
+    pub const FS3: Key = Key(33);
+    pub const G3: Key = Key(34);
+    pub const GS3: Key = Key(35);
+    pub const A3: Key = Key(36);
+    pub const AS3: Key = Key(37);
+    pub const B3: Key = Key(38);
+    pub const C4: Key = Key(39);
+    pub const CS4: Key = Key(40);
+    pub const D4: Key = Key(41);
+    pub const DS4: Key = Key(42);
+    pub const E4: Key = Key(43);
+    pub const F4: Key = Key(44);
+    pub const FS4: Key = Key(45);
+    pub const G4: Key = Key(46);
+    pub const GS4: Key = Key(47);
+    pub const A4: Key = Key(48);
+    pub const AS4: Key = Key(49);
+    pub const B4: Key = Key(50);
+    pub const C5: Key = Key(51);
+    pub const CS5: Key = Key(52);
+    pub const D5: Key = Key(53);
+    pub const DS5: Key = Key(54);
+    pub const E5: Key = Key(55);
+    pub const F5: Key = Key(56);
+    pub const FS5: Key = Key(57);
 
-// pub type NotesRef<'a> = Vec<&'a Note>;
-// pub type LayersRef<'a> = Vec<&'a Layer>;
-// pub type InstrumentsRef<'a> = Vec<&'a Instrument>;
+    pub fn new(key: u8) -> Self {
+        Self(key)
+    }
+
+    /// Converts a Minecraft note (0-24, F#3-F#5) to the corresponding NBS Key.
+    pub fn from_minecraft_note<T: TryInto<u8>>(note: T) -> Option<Self> {
+        let key = note.try_into().ok()?.checked_add(33)?;
+        if key <= 57 { Some(Self(key)) } else { None }
+    }
+
+    /// Converts the NBS Key to the corresponding Minecraft note (0-24, F#3-F#5).
+    pub fn minecraft_note(&self) -> Option<u8> {
+        self.0.checked_sub(33).filter(|&n| n <= 24)
+    }
+}
+
+impl From<u8> for Key {
+    fn from(value: u8) -> Self {
+        Key(value)
+    }
+}
+
+impl From<Key> for u8 {
+    fn from(value: Key) -> Self {
+        value.0
+    }
+}
+
+impl Display for Key {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        const NOTE_NAMES: &[&str] = &[
+            "A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#",
+        ];
+        let note = NOTE_NAMES[(self.0 % 12) as usize];
+        let octave = self.0 / 12;
+        write!(f, "{note}{octave}")
+    }
+}
 
 pub type Index = u32;
