@@ -3,8 +3,6 @@
 mod codec;
 mod error;
 mod nbs_ext;
-#[cfg(test)]
-mod tests;
 mod util;
 use mcdata::GenericBlockState;
 use std::borrow::Cow;
@@ -14,16 +12,8 @@ use std::fmt::{self, Display, Formatter};
 pub use crate::error::*;
 pub use crate::util::*;
 
-// TEST: temporary test case
-/// Pre-defined patterns for note block arrangement.
-pub const PATTERNS: &[&[Index]] = &[
-    // &[0, 64, 128, 192, 32, 96, 160, 224],
-    // &[0, 64, 128, 192],
-    // &[0, 128],
-    &[0, 24, 48, 72],
-    &[0, 48],
-    &[0],
-];
+#[cfg(test)]
+mod tests;
 
 // song
 //
@@ -177,6 +167,21 @@ impl Note {
         })
     }
 }
+
+impl From<Tone> for Note {
+    fn from((instrument, key): Tone) -> Self {
+        Self::new(instrument, key)
+    }
+}
+
+impl From<&Tone> for Note {
+    fn from(tone: &Tone) -> Self {
+        tone.clone().into()
+    }
+}
+
+/// A tone is a pair of an instrument and a key.
+pub type Tone = (Instrument, Key);
 
 /// Built-in Minecraft note block instruments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -452,6 +457,12 @@ impl From<Instrument> for u8 {
     }
 }
 
+impl Display for Instrument {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.instrument_property())
+    }
+}
+
 // layer
 //
 // ============================================================================
@@ -664,11 +675,15 @@ impl From<Key> for u8 {
 impl Display for Key {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         const NOTE_NAMES: &[&str] = &[
-            "A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#",
+            "A ", "A#", "B ", "C ", "C#", "D ", "D#", "E ", "F ", "F#", "G ", "G#",
         ];
         let note = NOTE_NAMES[(self.0 % 12) as usize];
         let octave = self.0 / 12;
-        write!(f, "{note}{octave}")
+        let clicks = self
+            .minecraft_note()
+            .map(|k| format!("{k:02} clicks"))
+            .unwrap_or("invalid".into());
+        write!(f, "{note}{octave} ({clicks})")
     }
 }
 

@@ -8,29 +8,25 @@ Currently compatible up to version 5. Since this project is quite niche, compati
 
 ## example
 
-iterating over Note Block Studio songs:
-
 ```rust
 use rsnbs::*;
 let song_path = "test_song.nbs";
+
+// iterating over Note Block Studio songs
 
 let song = Song::open_nbs(song_path).unwrap();
 for (position, note) in song.notes {
-    println!("tick: {}, key: {}", position.tick, note.key)
+    println!("tick: {:02}, key: {}", position.tick, note.key)
 }
-```
 
-or generating new songs programmatically
-
-```rust
-use rsnbs::*;
-let song_path = "test_song.nbs";
+// or generating new songs programmatically
 
 let mut song = Song::new();
 song.header.is_loop = true;
 for i in 0..25 {
     let pos = Position::new(i, 0);
-    let note = Note::new(Instrument::Harp, Key::from_minecraft_note(i).unwrap());
+    let key = Key::from_minecraft_note(i).unwrap();
+    let note = Note::new(Instrument::Harp, key);
     song.notes.insert(pos, note);
 }
 song.save_nbs(song_path).unwrap();
