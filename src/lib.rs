@@ -675,7 +675,7 @@ impl From<Key> for u8 {
 impl Display for Key {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         const NOTE_NAMES: &[&str] = &[
-            "A ", "A#", "B ", "C ", "C#", "D ", "D#", "E ", "F ", "F#", "G ", "G#",
+            "A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#",
         ];
         let note = NOTE_NAMES[(self.0 % 12) as usize];
         let octave = self.0 / 12;

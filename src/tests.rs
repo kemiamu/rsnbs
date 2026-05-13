@@ -1,9 +1,10 @@
 use super::*;
+use counter::Counter;
 use mcdata::{BlockState, util::BlockPos};
 use ordered_float::OrderedFloat;
 use rustmatica::Region;
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     iter::repeat,
 };
 
@@ -62,30 +63,48 @@ fn analyze_tones() {
 }
 
 // 按照列表重新分配层级
-fn reassign_layers(slices: Vec<BTreeMap<Position, Note>>) -> BTreeMap<Position, Note> {
+fn reassign_layers_generic<I, J>(slices: I) -> BTreeMap<Position, Note>
+where
+    I: IntoIterator<Item = J>,
+    J: IntoIterator<Item = (Index, Note)>,
+{
     let mut base_layer: Index = Default::default();
     let mut result: BTreeMap<Position, Note> = Default::default();
 
     for notes in slices {
+        // 收集并排序，确保 tick 顺序正确
+        let mut notes: Vec<(Index, Note)> = notes.into_iter().collect();
+        notes.sort_unstable_by_key(|(tick, _)| *tick);
+        let mut notes = notes
+            .into_iter()
+            .map(|(tick, note)| (Position::new(tick, 0), note))
+            .peekable();
+
         let mut current_layer: Index = Default::default();
         let mut max_layer: Index = Default::default();
 
-        let mut notes = notes.into_iter().peekable();
         while let Some((mut pos, note)) = notes.next() {
             pos.layer = base_layer + current_layer;
-
             max_layer = max_layer.max(current_layer + 2);
             match notes.peek().map(|(p, _)| p.tick()) == Some(pos.tick()) {
                 true => current_layer += 1,
                 false => current_layer = 0,
             }
-
             result.insert(pos, note);
         }
         base_layer += max_layer;
     }
 
     result
+}
+
+// 按照列表重新分配层级
+fn reassign_layers(slices: Vec<BTreeMap<Position, Note>>) -> BTreeMap<Position, Note> {
+    reassign_layers_generic(
+        slices
+            .into_iter()
+            .map(|map| map.into_iter().map(|(pos, note)| (pos.tick(), note))),
+    )
 }
 
 #[test]
@@ -176,9 +195,6 @@ fn test_analyze_transposition_equivalence() {
     let song_length: Index = song.notes.iter().map(|(p, _)| p.tick()).max().unwrap() + 1;
     let half_length: Index = song_length / 2; // floor division
 
-    // A note point in the (tick, tone) plane of the score
-    type Point = (Index, Tone);
-
     // Plane-form notes multiset [note: (x: tick, y: tone), ...]
     let mut notes_multiset: Vec<Point> = song
         .notes
@@ -210,130 +226,140 @@ fn test_analyze_transposition_equivalence() {
         .filter(|(_, v)| v.len() > 1)
         .map(|(k, v)| (v.len(), k))
         .collect();
-    offset_counts.sort_unstable();
-    offset_counts.reverse();
+    offset_counts.sort_unstable_by(|a, b| b.cmp(&a));
 
     // TEST: This theory is unstable
 
-    // Approximate Minkowski sum decomposition via conflict resolution for noisy data.
-    //
-    // Find all possible positions for the `pattern`,
-    // then iteratively select the group with the least conflict.
-    //
-    // Suppose multiset = [0, 1, 2, 3, 3, 5, 6], pattern = [0, 1, 3], Then:
-    //
-    // | 0^1 | 1^1 | 2^1 | 3^2 | 5^1 | 6^1 | ... |
-    // |:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-    // | A0  | A1  |     | A3  |     |     |     |
-    // |     | B0  | B1  |     | B3  |     |     |
-    // |     |     | C0  | C1  |     | C3  |     |
-    //
-    // Group A overlap degree: 4 (1/1 + 2/1 + 2/2)
-    // Group B overlap degree: 5 (2/1 + 2/1 + 1/1)
-    // Group C overlap degree: 4 (2/1 + 2/2 + 1/1)
-    let satisfy_constraints = |multiset: &[Point], pattern: &[Index], song_length: Index| {
-        debug_assert!(pattern.len() > 1);
-        debug_assert!(pattern[0] == 0);
-        debug_assert!(pattern.windows(2).all(|w| w[0] < w[1]));
+    let mut subset: Counter<Point> = Default::default();
+    let mut pattern: HashSet<Index> = From::from([0]);
 
-        // Convert multiset to a count map of elements [p^k, ...]
-        let mut counts: HashMap<Point, usize> =
-            multiset.iter().fold(Default::default(), |mut acc, &p| {
-                *acc.entry(p).or_default() += 1;
-                acc
-            });
+    for &(count, offset) in &offset_counts {
+        // if count < subset.len() {
+        //     continue;
+        // }
 
-        // Any positions satisfying the matching pattern
-        let find_groups = |counts: &HashMap<Point, usize>| -> Option<Vec<Vec<Point>>> {
-            let groups: Vec<Vec<Point>> = counts
-                .keys()
-                .filter_map(|&(anchor, tone)| {
-                    let map_pat = |pat: &Index| ((anchor + pat) % song_length, tone);
-                    let has_stock = |pp: &Point| counts.get(pp).is_some_and(|&c| c > 0);
-                    let group: Vec<Point> = pattern.iter().map(map_pat).collect();
-                    group.iter().all(has_stock).then_some(group)
-                })
-                .collect();
-            (!groups.is_empty()).then_some(groups)
+        let pat = {
+            let mut pat = pattern.clone();
+            pat.insert(offset);
+            pat
         };
+        let sub = satisfy_constraints(
+            &mut notes_multiset.iter().copied().collect(),
+            &pat,
+            song_length,
+        );
+        if sub.len() >= subset.len() {
+            subset = sub;
+            pattern = pat;
 
-        // Matched multiset
-        let mut result: Vec<Point> = Default::default();
-
-        while let Some(groups) = find_groups(&counts) {
-            // Count how many groups cover each point (multiplicity)
-            let multiplicity: HashMap<Point, usize> = groups
-                .iter()
-                .flat_map(|group| group.iter().copied())
-                .fold(Default::default(), |mut acc, pp| {
-                    *acc.entry(pp).or_default() += 1;
-                    acc
-                });
-
-            // Least conflict; tie-break by smallest point
-            let chosen_group = groups
-                .into_iter()
-                .min_by_key(|group| {
-                    let score: f32 = group
-                        .iter()
-                        .map(|&pp| multiplicity[&pp] as f32 / counts[&pp] as f32)
-                        .sum();
-                    (OrderedFloat(score), group[0])
-                })
-                .unwrap();
-
-            // Move the chosen group to result
-            for pp in &chosen_group {
-                *counts.get_mut(pp).unwrap() -= 1;
-            }
-            result.extend(chosen_group);
+            println!(
+                "offset {}: count {}, pattern size: {}, subset size: {}",
+                offset,
+                count,
+                pattern.len(),
+                subset.len()
+            );
         }
-        result
-    };
+    }
 
-    let mut subset: Vec<Point> = Default::default();
+    // Collect matched subset and remaining notes into slices
+    let mut subset_counts: HashMap<Point, usize> = subset.iter().map(|(&p, &c)| (p, c)).collect();
+    let mut matched_notes: Vec<(Index, Note)> = Vec::new();
+    let mut remaining_notes: Vec<(Index, Note)> = Vec::new();
 
-    for (count, offset) in &offset_counts {}
+    for &(tick, tone) in &notes_multiset {
+        let note: Note = tone.into();
+        if let Some(count) = subset_counts.get_mut(&(tick, tone)) {
+            if *count > 0 {
+                matched_notes.push((tick, note));
+                *count -= 1;
+                continue;
+            }
+        }
+        remaining_notes.push((tick, note));
+    }
 
-    //
-    //
-    //
+    song.notes = reassign_layers_generic(vec![matched_notes, remaining_notes]);
+    song.header.is_loop = true;
+    song.save_nbs("fixtures/transposition.nbs").unwrap();
+}
 
-    // let mut offsets_rev: Vec<(Index, HashMap<Tone, Vec<usize>>)> = offsets.into_iter().collect();
-    // offsets_rev.sort_by_key(|(_, g)| g.values().map(|v| v.len()).sum::<usize>());
-    // offsets_rev.reverse();
-    // assert!(offsets_rev.len() != 0, "offsets_rev should not be empty");
+// A note point in the (tick, tone) plane of the score
+type Point = (Index, Tone);
 
-    // let mut candidate: HashMap<Tone, Vec<usize>> = offsets_rev[0].1.clone();
-    // let candidate_len: usize = candidate.iter().map(|(_, g)| g.len()).sum();
-    // assert!(candidate_len >= 2, "candidate should have at least 2 tones");
-
-    // for (_offset, tones) in &offsets_rev {
-    //     // Find the intersection
-    //     let intersection: HashMap<Tone, Vec<usize>> = tones
-    //         .iter()
-    //         .filter_map(|(tone, indices)| {
-    //             candidate.get(tone).map(|candidate_indices| {
-    //                 // Find the intersection of the two Vecs
-    //                 let common: Vec<usize> = indices
-    //                     .iter()
-    //                     .filter(|i| candidate_indices.contains(i))
-    //                     .copied()
-    //                     .collect();
-    //                 (tone.clone(), common)
-    //             })
-    //         })
-    //         .collect();
-
-    //     let intersection_len: usize = intersection.values().map(|v| v.len()).sum();
-    //     if intersection_len >= 2 {
-    //         candidate = intersection;
+/// Approximate Minkowski sum decomposition via conflict resolution for noisy data.
+///
+/// Find all possible positions for the `pattern`,
+/// then iteratively select the group with the least conflict.
+///
+/// Suppose multiset = [0, 1, 2, 3, 3, 5, 6], pattern = [0, 1, 3], Then:
+///
+/// | 0^1 | 1^1 | 2^1 | 3^2 | 5^1 | 6^1 |
+/// |-----|-----|-----|-----|-----|-----|
+/// | A0  | A1  |     | A3  |     |     |
+/// |     | B0  | B1  |     | B3  |     |
+/// |     |     | C0  | C1  |     | C3  |
+///
+/// Group A overlap degree: 4 (1/1 + 2/1 + 2/2)
+/// Group B overlap degree: 5 (2/1 + 2/1 + 1/1)
+/// Group C overlap degree: 4 (2/1 + 2/2 + 1/1)
+pub fn satisfy_constraints(
+    multiset: &mut Counter<Point>,
+    pattern: &HashSet<Index>,
+    song_length: Index,
+) -> Counter<Point> {
+    debug_assert!(pattern.len() > 1);
+    debug_assert!(pattern.get(&0).is_some());
+    // if cfg!(debug_assertions) {
+    //     print!("multiset:");
+    //     for (point, count) in multiset.iter() {
+    //         let (tick, (inst, key)) = point;
+    //         print!(" ({}: {}, {}, x{})", tick, inst, key, count);
     //     }
+    //     println!();
+    //     println!("pattern: {:?}", pattern);
+    //     println!("song_length: {:?}", song_length);
+    //     println!();
     // }
 
-    // song.notes = reassign_layers(final_maps);
-    // song.header.is_loop = true;
-    // song.save_nbs("fixtures/analyzed.nbs").unwrap();
+    // Any positions satisfying the matching pattern
+    let find_groups = |multiset: &Counter<Point>| -> Option<Vec<BTreeSet<Point>>> {
+        let groups: Vec<BTreeSet<Point>> = multiset
+            .keys()
+            .filter_map(|&(anchor, tone)| {
+                let map_pat = |pat: &Index| ((anchor + pat) % song_length, tone);
+                let has_stock = |pp: &Point| multiset.contains_key(pp);
+                let group: BTreeSet<Point> = pattern.iter().map(map_pat).collect();
+                group.iter().all(has_stock).then_some(group)
+            })
+            .collect();
+        (!groups.is_empty()).then_some(groups)
+    };
+
+    // Matched multiset
+    let mut result: Counter<Point> = Default::default();
+
+    while let Some(groups) = find_groups(&multiset) {
+        // Count how many groups cover each point (multiplicity)
+        let multiplicity: Counter<Point> = groups.iter().flat_map(|g| g).copied().collect();
+
+        // Least conflict; tie-break by smallest point
+        let chosen_group = groups
+            .into_iter()
+            .min_by_key(|group| {
+                let score: f32 = group
+                    .iter()
+                    .map(|&pp| multiplicity[&pp] as f32 / multiset[&pp] as f32)
+                    .sum();
+                (OrderedFloat(score), group.first().copied())
+            })
+            .unwrap();
+
+        // Move the chosen group to result
+        multiset.subtract(chosen_group.iter().copied());
+        result.extend(chosen_group);
+    }
+    result
 }
 
 // track
