@@ -1,5 +1,6 @@
 use super::*;
 use mcdata::{BlockState, util::BlockPos};
+use ordered_float::OrderedFloat;
 use rustmatica::Region;
 use std::{
     collections::{BTreeMap, HashSet},
@@ -175,8 +176,11 @@ fn test_analyze_transposition_equivalence() {
     let song_length: Index = song.notes.iter().map(|(p, _)| p.tick()).max().unwrap() + 1;
     let half_length: Index = song_length / 2; // floor division
 
+    // A note point in the (tick, tone) plane of the score
+    type Point = (Index, Tone);
+
     // Plane-form notes multiset [note: (x: tick, y: tone), ...]
-    let mut notes_multiset: Vec<(Index, Tone)> = song
+    let mut notes_multiset: Vec<Point> = song
         .notes
         .into_iter()
         .map(|(p, n)| (p.tick(), n.tone()))
@@ -184,20 +188,20 @@ fn test_analyze_transposition_equivalence() {
     notes_multiset.sort_unstable();
 
     // Left point of translation {offset: [note_point, ...], ...}
-    let mut offsets: HashMap<Index, Vec<(Index, Tone)>> = notes_multiset
+    let offsets: HashMap<Index, Vec<Point>> = notes_multiset
         .iter()
         .enumerate()
-        .flat_map(|(i, a)| notes_multiset[..i].iter().map(move |b| (b, a)))
-        .fold(Default::default(), |mut acc, ((tb, nb), (ta, na))| {
-            let distance = match na == nb {
-                true => ta - tb,
+        .flat_map(|(i, r)| notes_multiset[..i].iter().map(move |l| (l, r)))
+        .fold(Default::default(), |mut acc, ((tl, nl), (tr, nr))| {
+            let distance = match nr == nl {
+                true => tr - tl,
                 false => return acc,
             };
             let offset = match distance > half_length {
                 true => song_length - distance,
                 false => distance,
             };
-            acc.entry(offset).or_default().push((*tb, *nb));
+            acc.entry(offset).or_default().push((*tl, *nl));
             acc
         });
 
@@ -216,7 +220,7 @@ fn test_analyze_transposition_equivalence() {
     // Find all possible positions for the `pattern`,
     // then iteratively select the group with the least conflict.
     //
-    // Suppose multiset = [0, 1, 2, 3, 3, 5, 6], pattern = [1, 3], Then:
+    // Suppose multiset = [0, 1, 2, 3, 3, 5, 6], pattern = [0, 1, 3], Then:
     //
     // | 0^1 | 1^1 | 2^1 | 3^2 | 5^1 | 6^1 | ... |
     // |:---:|:---:|:---:|:---:|:---:|:---:|:---:|
@@ -227,111 +231,67 @@ fn test_analyze_transposition_equivalence() {
     // Group A overlap degree: 4 (1/1 + 2/1 + 2/2)
     // Group B overlap degree: 5 (2/1 + 2/1 + 1/1)
     // Group C overlap degree: 4 (2/1 + 2/2 + 1/1)
-    let satisfy_constraints = |multiset: &[(Index, Tone)], pattern: &[(Index, Tone)]| {
-        debug_assert!(!pattern.is_empty());
+    let satisfy_constraints = |multiset: &[Point], pattern: &[Index], song_length: Index| {
+        debug_assert!(pattern.len() > 1);
+        debug_assert!(pattern[0] == 0);
+        debug_assert!(pattern.windows(2).all(|w| w[0] < w[1]));
 
         // Convert multiset to a count map of elements [p^k, ...]
-        let counts: HashMap<_, usize> = multiset.iter().fold(Default::default(), |mut acc, &p| {
-            *acc.entry(p).or_default() += 1;
-            acc
-        });
+        let mut counts: HashMap<Point, usize> =
+            multiset.iter().fold(Default::default(), |mut acc, &p| {
+                *acc.entry(p).or_default() += 1;
+                acc
+            });
 
         // Any positions satisfying the matching pattern
-        let mut groups: HashSet<(Index, Tone)> = Default::default();
+        let find_groups = |counts: &HashMap<Point, usize>| -> Option<Vec<Vec<Point>>> {
+            let groups: Vec<Vec<Point>> = counts
+                .keys()
+                .filter_map(|&(anchor, tone)| {
+                    let map_pat = |pat: &Index| ((anchor + pat) % song_length, tone);
+                    let has_stock = |pp: &Point| counts.get(pp).is_some_and(|&c| c > 0);
+                    let group: Vec<Point> = pattern.iter().map(map_pat).collect();
+                    group.iter().all(has_stock).then_some(group)
+                })
+                .collect();
+            (!groups.is_empty()).then_some(groups)
+        };
 
-        let original_counts = counts.clone();
+        // Matched multiset
+        let mut result: Vec<Point> = Default::default();
 
-        // 2. 生成所有可能的组
-        let first = pattern[0];
-        let mut groups: Vec<Vec<(Index, Tone)>> = Vec::new();
+        while let Some(groups) = find_groups(&counts) {
+            // Count how many groups cover each point (multiplicity)
+            let multiplicity: HashMap<Point, usize> = groups
+                .iter()
+                .flat_map(|group| group.iter().copied())
+                .fold(Default::default(), |mut acc, pp| {
+                    *acc.entry(pp).or_default() += 1;
+                    acc
+                });
 
-        for &(base_tick, base_tone) in multiset {
-            if base_tone != first.1 {
-                continue;
+            // Least conflict; tie-break by smallest point
+            let chosen_group = groups
+                .into_iter()
+                .min_by_key(|group| {
+                    let score: f32 = group
+                        .iter()
+                        .map(|&pp| multiplicity[&pp] as f32 / counts[&pp] as f32)
+                        .sum();
+                    (OrderedFloat(score), group[0])
+                })
+                .unwrap();
+
+            // Move the chosen group to result
+            for pp in &chosen_group {
+                *counts.get_mut(pp).unwrap() -= 1;
             }
-            let dt = base_tick as i64 - first.0 as i64;
-            let mut group = Vec::with_capacity(pattern.len());
-            let mut valid = true;
-            for &(pt, ptone) in pattern {
-                let abs_tick = (pt as i64 + dt) as Index;
-                let abs_tone = ptone;
-                if counts.get(&(abs_tick, abs_tone)).unwrap_or(&0) == &0 {
-                    valid = false;
-                    break;
-                }
-                group.push((abs_tick, abs_tone));
-            }
-            if valid {
-                groups.push(group);
-            }
-        }
-        groups.sort();
-        groups.dedup();
-
-        // 3. 贪心选择
-        let mut selected_groups: Vec<Vec<(Index, Tone)>> = Vec::new();
-        let mut remaining = counts;
-
-        loop {
-            // 可用组索引
-            let mut available_indices = Vec::new();
-            for (idx, group) in groups.iter().enumerate() {
-                if group.iter().all(|p| remaining.get(p).unwrap_or(&0) > &0) {
-                    available_indices.push(idx);
-                }
-            }
-            if available_indices.is_empty() {
-                break;
-            }
-
-            // 计算冲突值，选最小值
-            let mut best_idx = available_indices[0];
-            let mut best_conflict = f64::MAX;
-
-            for &idx in &available_indices {
-                let group = &groups[idx];
-
-                let mut occupancy: HashMap<(Index, Tone), usize> = HashMap::new();
-                for g in &selected_groups {
-                    for &p in g {
-                        *occupancy.entry(p).or_insert(0) += 1;
-                    }
-                }
-
-                let mut conflict = 0.0;
-                for &p in group {
-                    let occ = occupancy.get(&p).unwrap_or(&0) + 1;
-                    let cap = *original_counts.get(&p).unwrap_or(&1);
-                    conflict += occ as f64 / cap as f64;
-                }
-
-                if conflict < best_conflict {
-                    best_conflict = conflict;
-                    best_idx = idx;
-                }
-            }
-
-            let chosen = groups[best_idx].clone();
-            selected_groups.push(chosen.clone());
-
-            for &p in &chosen {
-                let entry = remaining.get_mut(&p).unwrap();
-                *entry -= 1;
-                if *entry == 0 {
-                    remaining.remove(&p);
-                }
-            }
-        }
-
-        // 展平所有选中的组
-        let mut result = Vec::new();
-        for group in selected_groups {
-            result.extend(group);
+            result.extend(chosen_group);
         }
         result
     };
 
-    let mut subset: Vec<(Index, Tone)> = Default::default();
+    let mut subset: Vec<Point> = Default::default();
 
     for (count, offset) in &offset_counts {}
 
