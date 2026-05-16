@@ -3,10 +3,10 @@ use counter::Counter;
 use mcdata::{BlockState, util::BlockPos};
 use ordered_float::OrderedFloat;
 use rustmatica::Region;
-use std::{
-    collections::{BTreeMap, BTreeSet, HashSet},
-    iter::repeat,
-};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::iter::repeat;
+use std::{result, vec};
+type Multiset<T> = counter::Counter<T>;
 
 // TEST: temporary test case
 /// Pre-defined patterns for note block arrangement.
@@ -193,7 +193,6 @@ fn test_analyze_transposition_equivalence() {
 
     // params
     let song_length: Index = song.notes.iter().map(|(p, _)| p.tick()).max().unwrap() + 1;
-    let half_length: Index = song_length / 2; // floor division
 
     // Plane-form notes multiset [note: (x: tick, y: tone), ...]
     let mut notes_multiset: Vec<Point> = song
@@ -209,13 +208,9 @@ fn test_analyze_transposition_equivalence() {
         .enumerate()
         .flat_map(|(i, r)| notes_multiset[..i].iter().map(move |l| (l, r)))
         .fold(Default::default(), |mut acc, ((tl, nl), (tr, nr))| {
-            let distance = match nr == nl {
-                true => tr - tl,
+            let offset = match nr == nl {
+                true => (tr - tl).min(song_length - (tr - tl)),
                 false => return acc,
-            };
-            let offset = match distance > half_length {
-                true => song_length - distance,
-                false => distance,
             };
             acc.entry(offset).or_default().push((*tl, *nl));
             acc
@@ -252,13 +247,14 @@ fn test_analyze_transposition_equivalence() {
             subset = sub;
             pattern = pat;
 
-            println!(
-                "offset {}: count {}, pattern size: {}, subset size: {}",
-                offset,
-                count,
-                pattern.len(),
-                subset.len()
+            print!(
+                "offset {}: count {}, pattern: {:?}, subset:",
+                offset, count, pattern
             );
+            for ((tick, _), cnt) in &subset {
+                print!(" ({}: {}),", tick, cnt);
+            }
+            println!("");
         }
     }
 
@@ -360,6 +356,115 @@ pub fn satisfy_constraints(
         result.extend(chosen_group);
     }
     result
+}
+
+//
+//
+// ============================================================================
+
+#[test]
+pub fn test_deconvolve() {
+    // TODO: 优化空间巨大，但先验证理论模型
+    //       开放性问题，评价模型尚不完善
+    // #[cfg(not(debug_assertions))]
+    // compile_error!("unimplemented path in release");
+
+    /// find best pattern arrangement via backtracking
+    fn deconvolve(points_mset: &Vec<Point>, loop_len: Index) -> Vec<Point> {
+        let mut result: Vec<Point> = Default::default();
+        let mut candidate: Vec<Point>;
+        // stack
+        let mut task = vec![points_mset.iter()];
+        let mut pattern: Vec<Point> = vec![];
+        let mut base_size: Vec<usize> = vec![0];
+
+        while !task.is_empty() {
+            // backtrack
+            let Some(p) = task.last_mut().unwrap().next() else {
+                task.pop();
+                pattern.pop();
+                base_size.pop();
+                continue;
+            };
+            // matchs
+            pattern.push(*p);
+            candidate = place_pattern(points_mset, &pattern, loop_len);
+
+            if candidate.len() >= *base_size.last().unwrap() {
+                // recurse
+                task.push(task.last().unwrap().clone());
+                base_size.push(candidate.len());
+                // elected
+                if candidate.len() > result.len() {
+                    result = candidate;
+                } // TODO: tie-break if equal
+            } else {
+                pattern.pop();
+            }
+        }
+        result
+    }
+
+    /// sequential matching. sensitive to input, prone to local optima
+    fn place_pattern(points_mset: &[Point], pattern: &[Point], loop_len: Index) -> Vec<Point> {
+        let mut points: Counter<Point> = points_mset.iter().copied().collect();
+        let pattern: Counter<Point> = pattern.iter().copied().collect();
+        let mut result = Vec::with_capacity(points.len());
+
+        for i in 0..loop_len {
+            let offset_pattern: Counter<Point> = pattern
+                .iter()
+                .map(|(&(t, n), &c)| (((t + i) % loop_len, n), c))
+                .collect();
+
+            if offset_pattern
+                .iter()
+                .all(|(p, &c)| points.get(p).copied().unwrap_or(0) >= c)
+            {
+                for (p, &c) in &offset_pattern {
+                    *points.get_mut(p).unwrap() -= c;
+                    result.extend(repeat(*p).take(c));
+                }
+            }
+        }
+        result
+    }
+
+    //
+
+    let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
+
+    // params
+    let song_length: Index = song.notes.iter().map(|(p, _)| p.tick()).max().unwrap() + 1;
+
+    // 构建点集 multiset
+    let points_mset: Vec<Point> = song
+        .notes
+        .iter()
+        .map(|(pos, note)| (pos.tick(), (note.instrument, note.key)))
+        .collect();
+
+    // 找到最大重复模式
+    let pattern = deconvolve(&points_mset, song_length);
+
+    // 将音符分为模式匹配部分和剩余部分
+    let mut pattern_counter: Counter<Point> = pattern.iter().copied().collect();
+    let mut matched: Vec<(Index, Note)> = Vec::new();
+    let mut remaining: Vec<(Index, Note)> = Vec::new();
+
+    for (pos, note) in &song.notes {
+        let p = (pos.tick(), (note.instrument, note.key));
+        if pattern_counter.get(&p).copied().unwrap_or(0) > 0 {
+            *pattern_counter.get_mut(&p).unwrap() -= 1;
+            matched.push((pos.tick(), note.clone()));
+        } else {
+            remaining.push((pos.tick(), note.clone()));
+        }
+    }
+
+    song.notes = reassign_layers_generic(vec![matched, remaining]);
+    song.header.is_loop = true;
+    song.save_nbs("fixtures/deconvolve.nbs").unwrap();
 }
 
 // track
