@@ -5,6 +5,7 @@ use ordered_float::OrderedFloat;
 use rustmatica::Region;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::iter::repeat;
+use std::ops::Range;
 use std::{result, vec};
 type Multiset<T> = counter::Counter<T>;
 
@@ -14,10 +15,87 @@ pub const PATTERNS: &[&[Index]] = &[
     // &[0, 64, 128, 192, 32, 96, 160, 224],
     // &[0, 64, 128, 192],
     // &[0, 128],
-    &[0, 24, 48, 72],
-    &[0, 48],
+    // &[0, 1, 16, 17],
+    // &[0, 1, 4, 5],
+    // &[0, 1, 4, 5, 16, 17, 20, 21],
+    // &[0, 32],
+    // &[0, 16, 32, 48, 64, 80, 96, 112],
+    // &[0, 16],
+    // &[0, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88],
+    // &[0, 16, 32, 48, 64, 80],
+    // &[0, 16],
+    // &[0, 64, 32, 96, 16, 48, 80, 112, 24, 40, 56, 72, 88, 104, 120],
+    // &[0, 64, 32, 96, 16, 48, 80, 112],
+    // &[0, 64, 32, 96],
+    // &[0, 64],
+    //
+    // &[0, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104],
+    // &[0, 16, 32, 48, 64, 80, 96],
+    // &[0, 1, 8, 9, 16, 17, 24, 25],
+    // &[0, 64, 32, 96],
+    // &[0, 64],
+    // &[0, 4, 8, 12],
+    //
+    &[
+        32 * 0,
+        32 * 1,
+        32 * 2,
+        32 * 3,
+        32 * 4,
+        32 * 5,
+        32 * 6,
+        32 * 7,
+    ],
+    &[64 * 0, 64 * 1, 64 * 2, 64 * 3],
+    &[64 * 0, 64 * 1],
+    &[128 * 0, 128 * 1],
+    // &[
+    //     16 * 0,
+    //     16 * 1,
+    //     16 * 2,
+    //     16 * 3,
+    //     16 * 4,
+    //     16 * 5,
+    //     16 * 6,
+    //     16 * 7,
+    // ],
+    // &[32 * 0, 32 * 1, 32 * 2, 32 * 3],
+    // &[64 * 0, 64 * 1],
     &[0],
 ];
+
+#[test]
+fn test_scale_ticks() {
+    let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
+
+    // Scale each note's tick by 3
+    let scaled_notes: BTreeMap<Position, Note> = song
+        .notes
+        .into_iter()
+        .map(|(pos, note)| {
+            let new_pos = Position::new(pos.tick() * 3, pos.layer);
+            (new_pos, note)
+        })
+        .collect();
+
+    song.notes = scaled_notes;
+
+    // Also update song length metadata if present
+    song.header.song_length = song.header.song_length * 3;
+
+    song.save_nbs("fixtures/scaled_by_3.nbs").unwrap();
+}
+
+#[test]
+fn test_v6_to_v5_conversion() {
+    let mut song_v6 = Song::open_nbs("fixtures/source.nbs").unwrap();
+    assert_eq!(song_v6.header.version, Version(6));
+
+    song_v6.header.version = Version(5);
+    song_v6.save_nbs("fixtures/out_v5.nbs").unwrap();
+}
+
+// cargo test test_generation_litematic && cargo test test_pattern_matching && cargo test analyze_tones
 
 #[test]
 fn test_pattern_matching() {
@@ -42,6 +120,86 @@ fn test_pattern_matching() {
     song.notes = reassign_layers(clusters).into();
     song.header.is_loop = true;
     song.save_nbs("fixtures/out.nbs").unwrap();
+}
+
+#[test]
+fn test_sectional_matching() {
+    let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
+    let notes = song.notes;
+
+    let patterns = PATTERNS;
+    let song_length: Index = 768;
+    let coarse: Index = 4;
+
+    // 按章节划分组
+    let sections: Vec<Range<Index>> =
+        // vec![0..128, 128..256, 256..384, 384..512, 512..640, 640..768];
+        vec![0..256, 256..512, 512..768];
+
+    let mut all_clusters: Vec<BTreeMap<Position, Note>> = vec![];
+
+    for section_range in sections {
+        // 提取当前章节的音符，保留原始 tick 位置（不动原点）
+        let section_notes: BTreeMap<Position, Note> = notes
+            .clone()
+            .into_iter()
+            .filter(|(p, _)| section_range.contains(&p.tick()))
+            .collect();
+
+        // 对每个章节独立进行模式匹配，song_length 传入 768 防止错误回环
+        let mut remaining = section_notes;
+        let mut clusters: Vec<BTreeMap<Position, Note>> = vec![];
+        for &pattern in patterns {
+            let (matched, unmatched) =
+                remaining.matches_by(pattern, song_length, |a, b| a.tone() == b.tone());
+
+            // 如果匹配的数量太少则回退
+            if matched.len() < 20 && unmatched.len() > 0 {
+                remaining = matched;
+                remaining.extend(unmatched);
+                continue;
+            }
+
+            clusters.push(matched);
+            remaining = unmatched;
+        }
+        all_clusters.extend(clusters);
+    }
+
+    // 输出 nbs
+    song.notes = reassign_layers(all_clusters.clone());
+    song.header.is_loop = true;
+    song.save_nbs("fixtures/out_sectional.nbs").unwrap();
+
+    // 输出投影 (litematic)
+    let tracks: Vec<Track> = all_clusters
+        .into_iter()
+        .map(|cluster| Track::new(cluster, coarse))
+        .collect();
+
+    let mut region: Region<GenericBlockState> = Region::new(
+        "Planet",
+        BlockPos::new(0, 0, 0),
+        BlockPos::new(
+            (tracks.len() * 3) as _,
+            4,
+            (tracks.iter().map(Track::len).max().unwrap_or(0)) as _,
+        ),
+    );
+
+    for (track_idx, track) in tracks.iter().enumerate() {
+        let iter = TrackIterator::new(track);
+        for (block_pos, block_state) in iter {
+            let x_offset = track_idx as i32 * 3;
+            let world_pos = BlockPos::new(x_offset + block_pos.x, block_pos.y, block_pos.z);
+            region.set_block(world_pos, block_state);
+        }
+    }
+
+    let planet = region.as_litematic("Sectional from source.nbs", "Planet");
+    planet
+        .write_file("fixtures/generated_sectional.litematic")
+        .unwrap();
 }
 
 #[test]
@@ -363,7 +521,8 @@ pub fn satisfy_constraints(
 // ============================================================================
 
 #[test]
-pub fn test_deconvolve() {
+// #[deprecated]
+pub fn test_deconvolve_d1() {
     // TODO: 优化空间巨大，但先验证理论模型
     //       开放性问题，评价模型尚不完善
     // #[cfg(not(debug_assertions))]
@@ -403,6 +562,139 @@ pub fn test_deconvolve() {
             }
         }
         result
+    }
+
+    /// sequential matching. sensitive to input, prone to local optima
+    fn place_pattern(points_mset: &[Point], pattern: &[Point], loop_len: Index) -> Vec<Point> {
+        let mut points: Counter<Point> = points_mset.iter().copied().collect();
+        let pattern: Counter<Point> = pattern.iter().copied().collect();
+        let mut result = Vec::with_capacity(points.len());
+
+        for i in 0..loop_len {
+            let offset_pattern: Counter<Point> = pattern
+                .iter()
+                .map(|(&(t, n), &c)| (((t + i) % loop_len, n), c))
+                .collect();
+
+            if offset_pattern
+                .iter()
+                .all(|(p, &c)| points.get(p).copied().unwrap_or(0) >= c)
+            {
+                for (p, &c) in &offset_pattern {
+                    *points.get_mut(p).unwrap() -= c;
+                    result.extend(repeat(*p).take(c));
+                }
+            }
+        }
+        result
+    }
+
+    //
+
+    let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
+
+    // params
+    let song_length: Index = song.notes.iter().map(|(p, _)| p.tick()).max().unwrap() + 1;
+
+    // 构建点集 multiset
+    let points_mset: Vec<Point> = song
+        .notes
+        .iter()
+        .map(|(pos, note)| (pos.tick(), (note.instrument, note.key)))
+        .collect();
+
+    // 找到最大重复模式
+    let pattern = deconvolve(&points_mset, song_length);
+
+    // 将音符分为模式匹配部分和剩余部分
+    let mut pattern_counter: Counter<Point> = pattern.iter().copied().collect();
+    let mut matched: Vec<(Index, Note)> = Vec::new();
+    let mut remaining: Vec<(Index, Note)> = Vec::new();
+
+    for (pos, note) in &song.notes {
+        let p = (pos.tick(), (note.instrument, note.key));
+        if pattern_counter.get(&p).copied().unwrap_or(0) > 0 {
+            *pattern_counter.get_mut(&p).unwrap() -= 1;
+            matched.push((pos.tick(), note.clone()));
+        } else {
+            remaining.push((pos.tick(), note.clone()));
+        }
+    }
+
+    song.notes = reassign_layers_generic(vec![matched, remaining]);
+    song.header.is_loop = true;
+    song.save_nbs("fixtures/deconvolve.nbs").unwrap();
+}
+
+#[test]
+pub fn test_deconvolve() {
+    fn deconvolve(points_mset: &[Point], loop_len: Index) -> Vec<Point> {
+        let points: Counter<Point> = points_mset.iter().copied().collect();
+        let mut local_points: HashMap<Point, Counter<Index>> = points
+            .keys()
+            .map(|&(tick, note)| {
+                let offset_by_tick = |(&(ti, _), &c)| ((ti + loop_len - tick) % loop_len, c);
+                ((tick, note), points.iter().map(offset_by_tick).collect())
+            })
+            .collect();
+        // let mut local_points: HashMap<Point, HashSet<Index>> = points.keys()
+        //     .map(|&(tick, note)| {
+        //         let offset_by_tick = |&(ti, _)| (ti + loop_len - tick) % loop_len;
+        //         ((tick, note), points.keys().map(offset_by_tick).collect())
+        //     }).collect();
+
+        // {N} -> {{K}} * {T} = {{M}} - residual
+        let mut note_palette: HashSet<Tone> = Default::default();
+        let mut time_pattern: HashSet<Index> = Default::default();
+        let mut conv_kernel: Counter<Index> = Default::default();
+
+        // TODO: 1. 建立初始值
+        //       2. 迭代贪婪的匹配，消耗 loval_points 对 conv_kernel 做不缩小匹配
+        //       3. 重建为整体返回
+
+        while !local_points.is_empty() {
+            //
+        }
+
+        todo!()
+    }
+
+    fn seed_best<'a, I>(local_points: I) -> Counter<Index>
+    where
+        I: IntoIterator<Item = (&'a Point, &'a Counter<Index>)>,
+    {
+        let local_points: Vec<(&Point, &Counter<Index>)> = local_points.into_iter().collect();
+        // local_points.sort_unstable_by_key(|(p, _)| *p);
+        let mut best_size: usize = Default::default();
+        let mut best: Counter<Index> = Default::default();
+
+        // TODO: 先比较最多的两个局部坐标系的交集作为迭代初始值。
+        // TODO: 一个音在时间上的图案，不随时间变化而变化，而只是位移。
+        //       同种音和不同音的匹配行为应该有区分。
+        for ((&(_tkl, _ntl), cntl), (&(_tkr, _ntr), cntr)) in local_points
+            .iter()
+            .enumerate()
+            .flat_map(|(i, r)| local_points[..i].iter().map(move |l| (*l, *r)))
+        {
+            // if ntl == ntr {}
+
+            let candidate: Counter<Index> = cntl
+                .iter()
+                .filter_map(|(&t, &cnt)| {
+                    cntr.get(&t)
+                        .map(|&cr| cnt.min(cr))
+                        .filter(|&c| c > 0)
+                        .map(|c| (t, c))
+                })
+                .collect();
+
+            let candidate_size = candidate.values().sum();
+            if candidate_size > best_size {
+                best_size = candidate_size;
+                best = candidate;
+            }
+        }
+        best
     }
 
     /// sequential matching. sensitive to input, prone to local optima

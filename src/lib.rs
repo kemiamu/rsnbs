@@ -514,7 +514,7 @@ impl Default for CustomInstrument {
 // ============================================================================
 
 /// The current NBS (Note Block Studio) file format version.
-const CURRENT_NBS_VERSION: u8 = 5;
+const CURRENT_NBS_VERSION: u8 = 6;
 
 /// Represents a valid NBS version format
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
