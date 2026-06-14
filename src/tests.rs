@@ -112,13 +112,30 @@ fn test_pattern_matching() {
     song.save_nbs("fixtures/out.nbs").unwrap();
 }
 
+// cargo test test_sectional_matching && cargo test analyze_tones
+
 #[test]
 fn test_sectional_matching() {
     let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
     let notes = song.notes;
 
     let song_length: Index = 1024;
+    let min_notes: usize = 0;
     let coarse: Index = 4;
+
+    // 匹配+回退包装：匹配音符数不足时回退所有匹配
+    let try_match = |notes: BTreeMap<Position, Note>,
+                     pattern: &[Index]|
+     -> (BTreeMap<Position, Note>, BTreeMap<Position, Note>) {
+        let saved = notes.clone();
+        let (matched, unmatched) =
+            notes.matches_by(pattern, song_length, |a, b| a.tone() == b.tone());
+        if matched.len() >= min_notes || pattern.len() == 1 {
+            (matched, unmatched)
+        } else {
+            (BTreeMap::new(), saved)
+        }
+    };
 
     let global_patterns: &[&[Index]] = &[
         // &[0, 8 * 1, 8 * 2, 8 * 3, 8 * 4, 8 * 5, 8 * 6, 8 * 7],
@@ -140,10 +157,12 @@ fn test_sectional_matching() {
     // let sectional_patterns: &[&[Index]] = &[&[0, 8, 16, 24], &[0, 16], &[0]];
     // let sections: &[Range<Index>] = &[0..32, 32..64, 64..96, 96..128];
     let sectional_patterns: &[&[Index]] = &[
-        &[0, 16, 32, 48, 64, 80, 96],
-        &[0, 32, 64, 96],
-        &[0, 64],
-        &[0, 32],
+        // &[0, 16, 32, 48, 64, 80, 96, 112],
+        // &[0, 32, 64, 96],
+        // &[0, 64],
+        // &[0, 32],
+        &[0, 16, 32, 48],
+        &[0, 16],
         &[0],
     ];
     let sections: &[Range<Index>] = &[0..256, 256..512];
@@ -153,8 +172,7 @@ fn test_sectional_matching() {
     // 第一步：全局匹配
     let mut remaining = notes.clone();
     for &pattern in global_patterns {
-        let (matched, unmatched) =
-            remaining.matches_by(pattern, song_length, |a, b| a.tone() == b.tone());
+        let (matched, unmatched) = try_match(remaining, pattern);
         all_clusters.push(matched);
         remaining = unmatched;
     }
@@ -174,8 +192,7 @@ fn test_sectional_matching() {
 
         let mut remaining_in_section = section_notes;
         for &pattern in sectional_patterns {
-            let (matched, unmatched) =
-                remaining_in_section.matches_by(pattern, song_length, |a, b| a.tone() == b.tone());
+            let (matched, unmatched) = try_match(remaining_in_section, pattern);
             all_clusters.push(matched);
             remaining_in_section = unmatched;
         }
