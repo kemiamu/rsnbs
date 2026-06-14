@@ -34,21 +34,11 @@ pub const PATTERNS: &[&[Index]] = &[
     // &[0, 1, 8, 9, 16, 17, 24, 25],
     // &[0, 64, 32, 96],
     // &[0, 64],
-    // &[0, 4, 8, 12],
+    &[0, 4, 8, 12, 16, 20, 24, 28],
+    &[0, 8, 16, 24],
+    &[0, 16],
     //
-    &[
-        32 * 0,
-        32 * 1,
-        32 * 2,
-        32 * 3,
-        32 * 4,
-        32 * 5,
-        32 * 6,
-        32 * 7,
-    ],
-    &[64 * 0, 64 * 1, 64 * 2, 64 * 3],
-    &[64 * 0, 64 * 1],
-    &[128 * 0, 128 * 1],
+
     // &[
     //     16 * 0,
     //     16 * 1,
@@ -127,43 +117,62 @@ fn test_sectional_matching() {
     let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
     let notes = song.notes;
 
-    let patterns = PATTERNS;
-    let song_length: Index = 768;
+    let song_length: Index = 1024;
     let coarse: Index = 4;
 
-    // 按章节划分组
-    let sections: Vec<Range<Index>> =
-        // vec![0..128, 128..256, 256..384, 384..512, 512..640, 640..768];
-        vec![0..256, 256..512, 512..768];
+    let global_patterns: &[&[Index]] = &[
+        // &[0, 8 * 1, 8 * 2, 8 * 3, 8 * 4, 8 * 5, 8 * 6, 8 * 7],
+        // &[0, 8 * 1, 8 * 2, 8 * 3],
+        // &[0, 12, 24, 36],
+        &[0, 32, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480],
+        &[0, 32, 64, 96, 192, 256, 288, 320, 352, 384, 416, 448, 480],
+        &[0, 192, 256, 288, 320, 352, 384, 416],
+        &[0, 32, 64, 96],
+        &[0, 64],
+        &[0, 32],
+        &[0],
+        // &[0, 16, 32, 48, 64, 80, 96, 112],
+        // &[0, 8, 16, 24, 32, 40, 48, 56],
+        // &[0, 16, 32, 48],
+        // &[0, 32],
+        // &[0],
+    ];
+    // let sectional_patterns: &[&[Index]] = &[&[0, 8, 16, 24], &[0, 16], &[0]];
+    // let sections: &[Range<Index>] = &[0..32, 32..64, 64..96, 96..128];
+    let sectional_patterns: &[&[Index]] = &[];
+    let sections: &[Range<Index>] = &[];
 
     let mut all_clusters: Vec<BTreeMap<Position, Note>> = vec![];
 
+    // 第一步：全局匹配
+    let mut remaining = notes.clone();
+    for &pattern in global_patterns {
+        let (matched, unmatched) =
+            remaining.matches_by(pattern, song_length, |a, b| a.tone() == b.tone());
+        all_clusters.push(matched);
+        remaining = unmatched;
+    }
+
+    // 第二步：未匹配上的进入章节匹配
     for section_range in sections {
-        // 提取当前章节的音符，保留原始 tick 位置（不动原点）
-        let section_notes: BTreeMap<Position, Note> = notes
+        // 提取当前章节的未匹配音符，保留原始 tick 位置（不动原点）
+        let section_notes: BTreeMap<Position, Note> = remaining
             .clone()
             .into_iter()
             .filter(|(p, _)| section_range.contains(&p.tick()))
             .collect();
 
-        // 对每个章节独立进行模式匹配，song_length 传入 768 防止错误回环
-        let mut remaining = section_notes;
-        let mut clusters: Vec<BTreeMap<Position, Note>> = vec![];
-        for &pattern in patterns {
-            let (matched, unmatched) =
-                remaining.matches_by(pattern, song_length, |a, b| a.tone() == b.tone());
-
-            // 如果匹配的数量太少则回退
-            if matched.len() < 20 && unmatched.len() > 0 {
-                remaining = matched;
-                remaining.extend(unmatched);
-                continue;
-            }
-
-            clusters.push(matched);
-            remaining = unmatched;
+        if section_notes.is_empty() {
+            continue;
         }
-        all_clusters.extend(clusters);
+
+        let mut remaining_in_section = section_notes;
+        for &pattern in sectional_patterns {
+            let (matched, unmatched) =
+                remaining_in_section.matches_by(pattern, song_length, |a, b| a.tone() == b.tone());
+            all_clusters.push(matched);
+            remaining_in_section = unmatched;
+        }
     }
 
     // 输出 nbs
