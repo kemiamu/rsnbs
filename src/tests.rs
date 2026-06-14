@@ -127,10 +127,10 @@ fn test_sectional_matching() {
         &[0, 32, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480],
         &[0, 32, 64, 96, 192, 256, 288, 320, 352, 384, 416, 448, 480],
         &[0, 192, 256, 288, 320, 352, 384, 416],
-        &[0, 32, 64, 96],
-        &[0, 64],
-        &[0, 32],
-        &[0],
+        // &[0, 32, 64, 96],
+        // &[0, 64],
+        // &[0, 32],
+        // &[0],
         // &[0, 16, 32, 48, 64, 80, 96, 112],
         // &[0, 8, 16, 24, 32, 40, 48, 56],
         // &[0, 16, 32, 48],
@@ -139,8 +139,14 @@ fn test_sectional_matching() {
     ];
     // let sectional_patterns: &[&[Index]] = &[&[0, 8, 16, 24], &[0, 16], &[0]];
     // let sections: &[Range<Index>] = &[0..32, 32..64, 64..96, 96..128];
-    let sectional_patterns: &[&[Index]] = &[];
-    let sections: &[Range<Index>] = &[];
+    let sectional_patterns: &[&[Index]] = &[
+        &[0, 16, 32, 48, 64, 80, 96],
+        &[0, 32, 64, 96],
+        &[0, 64],
+        &[0, 32],
+        &[0],
+    ];
+    let sections: &[Range<Index>] = &[0..256, 256..512];
 
     let mut all_clusters: Vec<BTreeMap<Position, Note>> = vec![];
 
@@ -180,8 +186,27 @@ fn test_sectional_matching() {
     song.header.is_loop = true;
     song.save_nbs("fixtures/out_sectional.nbs").unwrap();
 
-    // 输出投影 (litematic)
-    let tracks: Vec<Track> = all_clusters
+    // 输出投影 (litematic) — 只保留每个 pattern 的第 0 项（base），不含重复
+    let projection_clusters: Vec<BTreeMap<Position, Note>> = all_clusters
+        .iter()
+        .zip(global_patterns.iter())
+        .map(|(cluster, pattern)| {
+            let ticks: BTreeSet<Index> = cluster.keys().map(|p| p.tick()).collect();
+            cluster
+                .iter()
+                .filter(|(pos, _)| {
+                    let base = pos.tick();
+                    pattern
+                        .iter()
+                        .skip(1)
+                        .all(|offset| ticks.contains(&((base + offset) % song_length)))
+                })
+                .map(|(pos, note)| (*pos, note.clone()))
+                .collect()
+        })
+        .collect();
+
+    let tracks: Vec<Track> = projection_clusters
         .into_iter()
         .map(|cluster| Track::new(cluster, coarse))
         .collect();
