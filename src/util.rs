@@ -1,29 +1,5 @@
+use crate::{Index, Note, Position};
 use std::collections::BTreeMap;
-
-use crate::{Index, Note, Position, Song};
-
-/// A trait for types that can be refreshed to ensure data consistency.
-pub trait Refreshable {
-    /// Refreshes the data to ensure consistency.
-    ///
-    /// This method should update the internal state of the type
-    /// to reflect the most current and consistent data.
-    fn refresh(&mut self);
-}
-
-impl Refreshable for Song {
-    fn refresh(&mut self) {
-        // 从音符计算歌曲长度
-        match self.notes.iter().map(|(pos, _)| pos.tick()).max() {
-            Some(last_tick) => self.header.song_length = last_tick,
-            None => self.header.song_length = 1,
-        }
-        // 更新 layer 数量
-        self.header.song_layers = self.layers.len() as _;
-        // 更新 notes
-        // self.notes.refresh();
-    }
-}
 
 pub trait NotesExt {
     fn matches_by<F>(
@@ -34,6 +10,12 @@ pub trait NotesExt {
     ) -> (BTreeMap<Position, Note>, BTreeMap<Position, Note>)
     where
         F: Fn(&Note, &Note) -> bool;
+
+    /// Reassign layers across multiple note groups so they don't overlap.
+    fn reassign_layers<I, J>(slices: I) -> BTreeMap<Position, Note>
+    where
+        I: IntoIterator<Item = J>,
+        J: IntoIterator<Item = (Index, Note)>;
 }
 
 impl NotesExt for BTreeMap<Position, Note> {
@@ -95,5 +77,40 @@ impl NotesExt for BTreeMap<Position, Note> {
             };
         }
         (matched, unmatched)
+    }
+
+    /// Reassign layers across multiple note groups so they don't overlap.
+    fn reassign_layers<I, J>(slices: I) -> BTreeMap<Position, Note>
+    where
+        I: IntoIterator<Item = J>,
+        J: IntoIterator<Item = (Index, Note)>,
+    {
+        let mut base_layer: Index = Default::default();
+        let mut result: BTreeMap<Position, Note> = Default::default();
+
+        for notes in slices {
+            let mut notes: Vec<(Index, Note)> = notes.into_iter().collect();
+            notes.sort_unstable_by_key(|(tick, _)| *tick);
+            let mut notes = notes
+                .into_iter()
+                .map(|(tick, note)| (Position::new(tick, 0), note))
+                .peekable();
+
+            let mut current_layer: Index = Default::default();
+            let mut max_layer: Index = Default::default();
+
+            while let Some((pos, note)) = notes.next() {
+                let pos = Position::new(pos.tick(), base_layer + current_layer);
+                max_layer = max_layer.max(current_layer + 2);
+                match notes.peek().map(|(p, _)| p.tick()) == Some(pos.tick()) {
+                    true => current_layer += 1,
+                    false => current_layer = 0,
+                }
+                result.insert(pos, note);
+            }
+            base_layer += max_layer;
+        }
+
+        result
     }
 }

@@ -1,7 +1,6 @@
 //! NBS (Note Block Studio) file format parser and writer.
 
 use crate::nbs_ext::{NbsReadExt, NbsWriteExt};
-use crate::util::Refreshable;
 use crate::{CustomInstrument, Header, Instrument, Key, Layer, Note, Position, Song};
 use crate::{Index, Panning, Result, Version, Volume};
 use std::collections::BTreeMap;
@@ -53,7 +52,7 @@ impl Song {
         Ok(song)
     }
 
-    /// Writes the song to a writer after refreshing song data for consistency.
+    /// Writes the song to a writer.
     pub fn write<W: io::Write>(&mut self, writer: &mut W) -> Result<()> {
         self.refresh();
 

@@ -3,13 +3,12 @@
 mod codec;
 mod nbs_ext;
 mod note;
-mod util;
 
 pub mod schematic;
+pub mod util;
 pub use note::*;
 pub use song::*;
 pub use types::*;
-pub use util::*;
 
 // #[cfg(test)]
 // mod tests;
@@ -19,10 +18,9 @@ pub use util::*;
 // ============================================================================
 
 mod song {
-    use std::collections::BTreeMap;
-
     use super::types::{Index, Panning, Position, Version, Volume};
     use super::{Note, Result};
+    use std::collections::BTreeMap;
 
     /// Represents a complete NBS song with header, notes, layers, and instruments.
     #[derive(Debug, Default, Clone, PartialEq, PartialOrd)]
@@ -63,6 +61,17 @@ mod song {
         pub fn to_stdout(&mut self) -> Result<()> {
             let mut stdout = std::io::stdout();
             self.write(&mut stdout)
+        }
+
+        /// Refreshes song data for consistency.
+        pub fn refresh(&mut self) {
+            // 从音符计算歌曲长度
+            match self.notes.iter().map(|(pos, _)| pos.tick()).max() {
+                Some(last_tick) => self.header.song_length = last_tick,
+                None => self.header.song_length = 1,
+            }
+            // 更新 layer 数量
+            self.header.song_layers = self.layers.len() as _;
         }
     }
 

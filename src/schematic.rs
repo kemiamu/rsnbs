@@ -163,7 +163,7 @@ impl SchematicBuilder {
         );
 
         // floor
-        for (x, z) in (0..length).flat_map(|x| (0..width).map(move |z| (x, z))) {
+        for (x, z) in (0..width).flat_map(|x| (0..length).map(move |z| (x, z))) {
             region.set_block(BlockPos::new(x, 0, z), self.floor_block.clone());
         }
 
