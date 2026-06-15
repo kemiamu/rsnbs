@@ -182,24 +182,24 @@ impl SchematicBuilder {
             (BlockPos::new(2, 2, 0), &Self::redstone_wire()),
             (BlockPos::new(3, 2, 0), &Self::redstone_wire()),
         ];
+        let group_blocks = [
+            (BlockPos::new(1, 0, 0), 0),
+            (BlockPos::new(1, 1, 0), 1),
+            (BlockPos::new(1, 2, 0), 2),
+            (BlockPos::new(1, 0, 1), 3),
+            (BlockPos::new(1, 1, 1), 4),
+            (BlockPos::new(1, 2, 1), 5),
+            (BlockPos::new(0, 0, 1), 6),
+            (BlockPos::new(0, 1, 1), 7),
+            (BlockPos::new(0, 2, 1), 8),
+            (BlockPos::new(2, 0, 1), 9),
+            (BlockPos::new(2, 1, 1), 10),
+            (BlockPos::new(2, 2, 1), 11),
+        ];
 
         for (_track_idx, wrapped_track) in wrapped_tracks.iter().enumerate() {
             for (line_idx, line) in wrapped_track.iter().enumerate() {
                 for (group_idx, group) in line.iter().enumerate() {
-                    let group_blocks = [
-                        (BlockPos::new(1, 0, 0), 0),
-                        (BlockPos::new(1, 1, 0), 1),
-                        (BlockPos::new(1, 2, 0), 2),
-                        (BlockPos::new(1, 0, 1), 3),
-                        (BlockPos::new(1, 1, 1), 4),
-                        (BlockPos::new(1, 2, 1), 5),
-                        (BlockPos::new(0, 0, 1), 6),
-                        (BlockPos::new(0, 1, 1), 7),
-                        (BlockPos::new(0, 2, 1), 8),
-                        (BlockPos::new(2, 0, 1), 9),
-                        (BlockPos::new(2, 1, 1), 10),
-                        (BlockPos::new(2, 2, 1), 11),
-                    ];
                     if group_idx * 2 < self.wrap_length {
                         for (pos, index) in group_blocks {
                             let world_pos = BlockPos::new(
