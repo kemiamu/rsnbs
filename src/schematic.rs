@@ -98,18 +98,17 @@ impl SchematicBuilder {
             remaining = remaining.saturating_sub(3);
 
             // sustain group
-            if remaining > 0 {
-                groups.push(Group::Sustain(notes.pop(), notes.pop()));
-                remaining = remaining.saturating_sub(2);
-            }
-
-            // repeat sustain or end
             while remaining > 0 {
                 groups.push(Group::Sustain(notes.pop(), notes.pop()));
                 remaining = remaining.saturating_sub(2);
             }
 
-            // // TODO: 这个优化在折叠时会出问题
+            // // TODO: SustainEnd 在折叠时会出问题，禁用这一项优化
+            //
+            // if remaining > 0 {
+            //     groups.push(Group::Sustain(notes.pop(), notes.pop()));
+            //     remaining = remaining.saturating_sub(2);
+            // }
             // while remaining > 3 {
             //     groups.push(Group::Sustain(notes.pop(), notes.pop()));
             //     remaining -= 2;
