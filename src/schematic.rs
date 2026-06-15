@@ -74,13 +74,13 @@ impl SchematicBuilder {
         }
 
         let mut groups: Vec<Group> = Default::default();
-        let mut current_tick: Option<Index> = Default::default();
+        let mut current_tick: Index = Index::MAX;
 
         for (tick, mut notes) in timed_notes {
-            let mut delay = current_tick.map_or(tick + 1, |t| tick - t);
+            let mut delay = tick.wrapping_sub(current_tick);
             let mut remaining = notes.len();
 
-            current_tick = Some(tick);
+            current_tick = tick;
 
             // pure delay groups
             while let Some((group, consumed)) = Self::pop_delay_group(delay, coarse) {
@@ -118,6 +118,7 @@ impl SchematicBuilder {
     }
 
     fn pop_delay_group(delay: Index, coarse: Index) -> Option<(Group, Index)> {
+        // handle JE micro-timing
         if (2..=4).contains(&coarse) {
             if delay > coarse * 2 {
                 Some((Group::DelayOnly(coarse as _, coarse as _), coarse * 2))
@@ -205,15 +206,19 @@ impl SchematicBuilder {
         pointing_north: bool,
     ) {
         const LAYOUT: [(i32, i32, i32, u8); 12] = [
+            // pillar
             (1, 0, 0, 0),
             (1, 1, 0, 1),
             (1, 2, 0, 2),
+            // center
             (1, 0, 1, 3),
             (1, 1, 1, 4),
             (1, 2, 1, 5),
+            // left
             (0, 0, 1, 6),
             (0, 1, 1, 7),
             (0, 2, 1, 8),
+            // right
             (2, 0, 1, 9),
             (2, 1, 1, 10),
             (2, 2, 1, 11),
