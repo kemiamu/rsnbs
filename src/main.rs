@@ -46,7 +46,7 @@ fn main() {
 fn matching(input: &str, output: &str) {
     std::fs::create_dir_all(output).unwrap();
     let nbs_path = std::path::Path::new(output).join("matched.nbs");
-    let litematic_path = std::path::Path::new(output).join("matched.litematic");
+    let litematic_path = std::path::Path::new(output).join("generated_matched.litematic");
     let song = Song::open_nbs(input).unwrap();
     let notes = song.notes.clone();
 
@@ -54,7 +54,7 @@ fn matching(input: &str, output: &str) {
     let song_length: Index = 1024;
     let min_notes: usize = 0;
     let coarse: Index = 0;
-    let wrap_length: usize = 16;
+    let wrap_length: usize = 24;
 
     // matching + 回退包装
     let try_match = |notes: BTreeMap<Position, Note>,
@@ -71,9 +71,13 @@ fn matching(input: &str, output: &str) {
     };
 
     let global_patterns: &[&[Index]] = &[
-        &[0, 32, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480],
-        &[0, 32, 64, 96, 192, 256, 288, 320, 352, 384, 416, 448, 480],
-        &[0, 192, 256, 288, 320, 352, 384, 416],
+        // &[0, 32, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480],
+        // &[0, 32, 64, 96, 192, 256, 288, 320, 352, 384, 416, 448, 480],
+        // &[0, 192, 256, 288, 320, 352, 384, 416],
+        // &[0, 16, 32, 64],
+        // &[0, 16],
+        // &[0, 64],
+        &[0],
     ];
     // let sectional_patterns: &[&[Index]] = &[&[0, 16, 32, 48], &[0, 16], &[0]];
     // let sections: &[Range<Index>] = &[0..256, 256..512];

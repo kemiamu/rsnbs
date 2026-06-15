@@ -8,13 +8,13 @@ use std::collections::{BTreeMap, HashMap};
 
 /// 3×2 block group
 pub enum Group {
-    /// no notes, just delay
+    /// first, second
     DelayOnly(u8, u8),
-    /// terminal: delay + up to 3 notes
+    /// delay, center, left, right
     Delayed(u8, Option<Note>, Option<Note>, Option<Note>),
-    /// sustain up to 2 notes
+    /// left, right
     Sustain(Option<Note>, Option<Note>),
-    /// final: sustain up to 3 notes
+    /// center, left, right
     SustainEnd(Option<Note>, Option<Note>, Option<Note>),
 }
 
@@ -104,14 +104,20 @@ impl SchematicBuilder {
             }
 
             // repeat sustain or end
-            while remaining > 3 {
+            while remaining > 0 {
                 groups.push(Group::Sustain(notes.pop(), notes.pop()));
                 remaining -= 2;
             }
-            if remaining > 0 {
-                groups.push(Group::SustainEnd(notes.pop(), notes.pop(), notes.pop()));
-                remaining = 0;
-            }
+
+            // // TODO: 这个优化在折叠时会出问题
+            // while remaining > 3 {
+            //     groups.push(Group::Sustain(notes.pop(), notes.pop()));
+            //     remaining -= 2;
+            // }
+            // if remaining > 0 {
+            //     groups.push(Group::SustainEnd(notes.pop(), notes.pop(), notes.pop()));
+            //     remaining = 0;
+            // }
         }
 
         self.tracks.push(groups);
@@ -152,7 +158,11 @@ impl SchematicBuilder {
         description: impl Into<Cow<'static, str>>,
         author: impl Into<Cow<'static, str>>,
     ) -> Litematic {
-        let width: i32 = self.tracks.iter().map(|t| t.len() * 4 + 1).sum::<usize>() as _;
+        let width: i32 = self
+            .tracks
+            .iter()
+            .map(|t| t.len().div_ceil(self.wrap_length) * 2 + 1)
+            .sum::<usize>() as _;
         let length: i32 = self.wrap_length as i32 * 2 + 2;
         const HEIGHT: i32 = 4;
 
@@ -174,21 +184,37 @@ impl SchematicBuilder {
             // [0, 1, 2, ..., 0, 1, 2, ...]
             track.iter().enumerate()
         }) {
-            // track changed
             if index == 0 {
+                // track changed
                 pointing_north = false;
-                cursor += 1;
-            }
-            // line changed
-            if index % self.wrap_length == 0 {
+                cursor += 3;
+            } else if index % self.wrap_length == 0 {
+                // line changed
                 pointing_north = !pointing_north;
                 cursor += 2;
             }
 
+            // turning
+            let turning_pos = match pointing_north {
+                true => self.wrap_length as i32 * 2 + 1,
+                false => 0,
+            };
+            let mut place_tuple = |dx: i32, dy: i32, block: GenericBlockState| {
+                region.set_block(BlockPos::new(cursor + dx, 1 + dy, turning_pos), block)
+            };
+            if index % self.wrap_length == 0 && index != 0 {
+                place_tuple(1, 0, self.chain_block.clone());
+                place_tuple(0, 0, self.chain_block.clone());
+                place_tuple(-1, 0, self.chain_block.clone());
+                place_tuple(1, 1, Self::redstone_wire());
+                place_tuple(0, 1, Self::redstone_wire());
+                place_tuple(-1, 1, Self::redstone_wire());
+            }
+
             let progress = (index % self.wrap_length) as i32;
             let anchor = match pointing_north {
-                true => BlockPos::new(cursor, 1, progress * 2 + 1),
-                false => BlockPos::new(cursor, 1, (self.wrap_length as i32 - progress) * 2 - 1),
+                true => BlockPos::new(cursor, 1, (self.wrap_length as i32 - progress) * 2 - 1),
+                false => BlockPos::new(cursor, 1, progress * 2 + 1),
             };
 
             self.place_group(&mut region, group, anchor, pointing_north);
@@ -232,8 +258,8 @@ impl SchematicBuilder {
 
         for (dx, dy, dz, idx) in &LAYOUT {
             let world_pos = match pointing_north {
-                true => BlockPos::new(anchor.x + dx, anchor.y + dy, anchor.z + dz),
-                false => BlockPos::new(anchor.x + dx, anchor.y + dy, anchor.z + 1 - dz),
+                true => BlockPos::new(anchor.x + dx, anchor.y + dy, anchor.z + 1 - dz),
+                false => BlockPos::new(anchor.x + dx, anchor.y + dy, anchor.z + dz),
             };
             region.set_block(world_pos, self.get_block(group, idx, facing.clone()));
         }
