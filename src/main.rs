@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use rsnbs::schematic::SchematicBuilder;
 use rsnbs::util::NotesExt;
-use rsnbs::{Index, Note, Position, Song};
+use rsnbs::{Index, Note, Position, Song, Tone};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
@@ -22,6 +22,14 @@ enum Command {
         #[arg(short, long, default_value = "out")]
         output: String,
     },
+    /// Group notes by tone and reassign layers
+    Analyze {
+        /// Input NBS file
+        input: String,
+        /// Output directory
+        #[arg(short, long, default_value = "out")]
+        output: String,
+    },
 }
 
 fn main() {
@@ -29,10 +37,31 @@ fn main() {
 
     match cli.command {
         Command::Matching { input, output } => matching(&input, &output),
+        Command::Analyze { input, output } => analyze(&input, &output),
     }
 }
 
 // cargo run -- matching fixtures/source.nbs
+
+fn save_paths(input: &str, output: &str) -> (String, String) {
+    let stem = std::path::Path::new(input)
+        .file_stem()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    std::fs::create_dir_all(output).unwrap();
+    (
+        std::path::Path::new(output)
+            .join(format!("{}.nbs", stem))
+            .display()
+            .to_string(),
+        std::path::Path::new(output)
+            .join(format!("{}.litematic", stem))
+            .display()
+            .to_string(),
+    )
+}
 
 fn matching(input: &str, output: &str) {
     let song = Song::open_nbs(input).unwrap();
@@ -103,15 +132,7 @@ fn matching(input: &str, output: &str) {
             .iter()
             .map(|c| c.iter().map(|(p, n)| (p.tick(), n.clone()))),
     );
-    let stem = std::path::Path::new(input)
-        .file_stem()
-        .unwrap()
-        .to_str()
-        .unwrap();
-    let nbs_path = std::path::Path::new(output).join(format!("{}.nbs", stem));
-    let litematic_path = std::path::Path::new(output).join(format!("{}.litematic", stem));
-
-    std::fs::create_dir_all(output).unwrap();
+    let (nbs_path, litematic_path) = save_paths(input, output);
 
     matched_song.save_nbs(&nbs_path).unwrap();
 
@@ -148,5 +169,30 @@ fn matching(input: &str, output: &str) {
     let litematic = builder.build("from source.nbs", "rsnbs");
     litematic.write_file(&litematic_path).unwrap();
 
-    println!("Done: {}, {}", nbs_path.display(), litematic_path.display());
+    println!("Done: {}, {}", nbs_path, litematic_path);
+}
+
+// cargo run -- analyze fixtures/source.nbs
+
+fn analyze(input: &str, output: &str) {
+    let song = Song::open_nbs(input).unwrap();
+
+    let mut by_tone: BTreeMap<Tone, Vec<(Position, Note)>> = BTreeMap::new();
+    for (pos, note) in song.notes.clone() {
+        by_tone.entry(note.tone()).or_default().push((pos, note));
+    }
+    let slices: Vec<BTreeMap<Position, Note>> = by_tone
+        .into_values()
+        .map(|v| v.into_iter().collect())
+        .collect();
+
+    let (nbs_path, _litematic_path) = save_paths(input, output);
+    let mut analyzed = song;
+    analyzed.notes = <BTreeMap<Position, Note> as NotesExt>::reassign_layers(
+        slices
+            .iter()
+            .map(|c| c.iter().map(|(p, n)| (p.tick(), n.clone()))),
+    );
+    analyzed.save_nbs(&nbs_path).unwrap();
+    println!("Done: {}", nbs_path);
 }
