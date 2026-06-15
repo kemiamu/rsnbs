@@ -88,10 +88,11 @@ fn matching(input: &str, output: &str) {
         &[
             0, 16, 32, 192, 208, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432,
         ],
-        &[0, 64, 128, 64 * 3],
-        &[0, 16, 32, 48],
-        &[0, 16],
-        &[0, 64],
+        &[0, 8],
+        // &[0, 64, 128, 64 * 3],
+        // &[0, 16, 32, 48],
+        // &[0, 16],
+        // &[0, 64],
         &[0],
     ];
     // let sectional_patterns: &[&[Index]] = &[&[0, 16, 32, 48], &[0, 16], &[0]];
@@ -220,7 +221,10 @@ fn analyze_offset(input: &str) {
                 acc
             });
 
-    // ===== 2 点：原逻辑 =====
+    const MAX_SPAN: Index = 128;
+    const STEP: Index = 8;
+
+    // ===== 2 点：原逻辑，步长过滤 =====
     {
         let offsets: HashMap<Index, Vec<(Index, Tone)>> = notes
             .iter()
@@ -231,6 +235,9 @@ fn analyze_offset(input: &str) {
                     return acc;
                 }
                 let offset = (tr - tl).min(song_length - (tr - tl));
+                if offset > MAX_SPAN || offset % STEP != 0 {
+                    return acc;
+                }
                 acc.entry(offset).or_default().push((*tl, *nl));
                 acc
             });
@@ -247,61 +254,61 @@ fn analyze_offset(input: &str) {
         }
     }
 
-    // ===== 3 点：距离向量 (d1, d2) =====
-    {
-        let mut triples: HashMap<(Index, Index), Vec<(Index, Tone)>> = HashMap::new();
+    // ===== N 点：通用组合枚举 =====
+    for n in [4, 6, 8, 12] {
+        let mut patterns: HashMap<Vec<Index>, Vec<(Index, Tone)>> = HashMap::new();
         for (&tone, ticks) in &by_tone {
-            for i in 0..ticks.len() {
-                for j in i + 1..ticks.len() {
-                    for k in j + 1..ticks.len() {
-                        let d1 = ticks[j] - ticks[i];
-                        let d2 = ticks[k] - ticks[j];
-                        triples.entry((d1, d2)).or_default().push((ticks[i], tone));
-                    }
-                }
+            if ticks.len() < n {
+                continue;
             }
-        }
-        let mut triple_counts: Vec<(usize, (Index, Index))> = triples
-            .into_iter()
-            .filter(|(_, v)| v.len() > 1)
-            .map(|(k, v)| (v.len(), k))
-            .collect();
-        triple_counts.sort_unstable_by(|a, b| b.cmp(&a));
-        println!("\n=== 3-point (d1, d2): count top30 ===");
-        for (count, (d1, d2)) in triple_counts.iter().take(30) {
-            println!("  ({d1:>4}, {d2:>4}): {count}");
-        }
-    }
-
-    // ===== 4 点：距离向量 (d1, d2, d3) =====
-    {
-        let mut quads: HashMap<(Index, Index, Index), Vec<(Index, Tone)>> = HashMap::new();
-        for (&tone, ticks) in &by_tone {
             for i in 0..ticks.len() {
-                for j in i + 1..ticks.len() {
-                    for k in j + 1..ticks.len() {
-                        for l in k + 1..ticks.len() {
-                            let d1 = ticks[j] - ticks[i];
-                            let d2 = ticks[k] - ticks[j];
-                            let d3 = ticks[l] - ticks[k];
-                            quads
-                                .entry((d1, d2, d3))
-                                .or_default()
-                                .push((ticks[i], tone));
+                // 收集有效偏移（STEP 倍数且 <= MAX_SPAN）
+                let offsets: Vec<Index> = ticks[i + 1..]
+                    .iter()
+                    .take_while(|&&t| t - ticks[i] <= MAX_SPAN)
+                    .map(|&t| t - ticks[i])
+                    .filter(|&d| d % STEP == 0)
+                    .collect();
+                if offsets.len() < n - 1 {
+                    continue;
+                }
+
+                // 生成所有 (n-1)-组合
+                let mut comb = (0..n - 1).collect::<Vec<_>>();
+                loop {
+                    let vec: Vec<Index> = comb.iter().map(|&idx| offsets[idx]).collect();
+                    patterns.entry(vec).or_default().push((ticks[i], tone));
+
+                    // 下一个组合
+                    let mut carry = true;
+                    for pos in (0..n - 1).rev() {
+                        let max_at_pos = offsets.len() - (n - 1 - pos);
+                        if comb[pos] + 1 < max_at_pos {
+                            comb[pos] += 1;
+                            for next in pos + 1..n - 1 {
+                                comb[next] = comb[next - 1] + 1;
+                            }
+                            carry = false;
+                            break;
                         }
                     }
+                    if carry {
+                        break;
+                    }
                 }
             }
         }
-        let mut quad_counts: Vec<(usize, (Index, Index, Index))> = quads
+
+        let mut counts: Vec<(usize, Vec<Index>)> = patterns
             .into_iter()
             .filter(|(_, v)| v.len() > 1)
             .map(|(k, v)| (v.len(), k))
             .collect();
-        quad_counts.sort_unstable_by(|a, b| b.cmp(&a));
-        println!("\n=== 4-point (d1, d2, d3): count top20 ===");
-        for (count, (d1, d2, d3)) in quad_counts.iter().take(20) {
-            println!("  ({d1:>4}, {d2:>4}, {d3:>4}): {count}");
+        counts.sort_unstable_by(|a, b| b.cmp(&a));
+        println!("\n=== {n}-point (d1..d{}) count top30 ===", n - 1);
+        for (count, vec) in counts.iter().take(30) {
+            let ds: Vec<String> = vec.iter().map(|d| format!("{:>4}", d)).collect();
+            println!("  ({}): {count}", ds.join(", "));
         }
     }
 }
