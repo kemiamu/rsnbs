@@ -177,7 +177,7 @@ impl SchematicBuilder {
         }
 
         let mut cursor: i32 = -3;
-        let mut pointing_north: bool = false;
+        let mut pointing_south: bool = true;
 
         for (index, group) in self.tracks.iter().flat_map(|track| {
             // [0, 1, 2, ..., 0, 1, 2, ...]
@@ -185,24 +185,24 @@ impl SchematicBuilder {
         }) {
             if index == 0 {
                 // track changed
-                pointing_north = false;
+                pointing_south = true;
                 cursor += 3;
             } else if index % self.wrap_length == 0 {
                 // line changed
-                pointing_north = !pointing_north;
+                pointing_south = !pointing_south;
                 cursor += 2;
                 // turning
-                self.place_turning(&mut region, cursor, pointing_north);
+                self.place_turning(&mut region, cursor, pointing_south);
             }
 
             // track
             let progress = (index % self.wrap_length) as i32;
-            let anchor = match pointing_north {
-                true => BlockPos::new(cursor, 1, (self.wrap_length as i32 - progress) * 2 - 1),
-                false => BlockPos::new(cursor, 1, progress * 2 + 1),
+            let anchor = match pointing_south {
+                true => BlockPos::new(cursor, 1, progress * 2 + 1),
+                false => BlockPos::new(cursor, 1, (self.wrap_length as i32 - progress) * 2 - 1),
             };
 
-            self.place_group(&mut region, group, anchor, pointing_north);
+            self.place_group(&mut region, group, anchor, pointing_south);
         }
 
         region.as_litematic(description, author)
@@ -213,11 +213,11 @@ impl SchematicBuilder {
         &self,
         region: &mut Region<GenericBlockState>,
         cursor: i32,
-        pointing_north: bool,
+        pointing_south: bool,
     ) {
-        let turning_pos = match pointing_north {
-            true => self.wrap_length as i32 * 2 + 1,
-            false => 0,
+        let turning_pos = match pointing_south {
+            true => 0,
+            false => self.wrap_length as i32 * 2 + 1,
         };
         let mut place_tuple = |dx: i32, dy: i32, block: GenericBlockState| {
             region.set_block(BlockPos::new(cursor + dx, 1 + dy, turning_pos), block)
@@ -236,7 +236,7 @@ impl SchematicBuilder {
         region: &mut Region<GenericBlockState>,
         group: &Group,
         anchor: BlockPos,
-        pointing_north: bool,
+        pointing_south: bool,
     ) {
         const LAYOUT: [(i32, i32, i32, u8); 12] = [
             // pillar
@@ -258,15 +258,15 @@ impl SchematicBuilder {
         ];
 
         // idk why mojang does this :(
-        let facing: Cow<'static, str> = match pointing_north {
-            true => "south".into(),
-            false => "north".into(),
+        let facing: Cow<'static, str> = match pointing_south {
+            true => "north".into(),
+            false => "south".into(),
         };
 
         for (dx, dy, dz, idx) in &LAYOUT {
-            let world_pos = match pointing_north {
-                true => BlockPos::new(anchor.x + dx, anchor.y + dy, anchor.z + 1 - dz),
-                false => BlockPos::new(anchor.x + dx, anchor.y + dy, anchor.z + dz),
+            let world_pos = match pointing_south {
+                true => BlockPos::new(anchor.x + dx, anchor.y + dy, anchor.z + dz),
+                false => BlockPos::new(anchor.x + dx, anchor.y + dy, anchor.z + 1 - dz),
             };
             region.set_block(world_pos, self.get_block(group, idx, facing.clone()));
         }
