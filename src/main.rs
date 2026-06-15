@@ -41,29 +41,12 @@ fn main() {
     }
 }
 
-// cargo run -- matching fixtures/source.nbs
-
-fn save_paths(input: &str, output: &str) -> (String, String) {
-    let stem = std::path::Path::new(input)
-        .file_stem()
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_string();
-    std::fs::create_dir_all(output).unwrap();
-    (
-        std::path::Path::new(output)
-            .join(format!("{}.nbs", stem))
-            .display()
-            .to_string(),
-        std::path::Path::new(output)
-            .join(format!("{}.litematic", stem))
-            .display()
-            .to_string(),
-    )
-}
+// cargo run -- matching fixtures/source.nbs && cargo run -- analyze fixtures/source.nbs
 
 fn matching(input: &str, output: &str) {
+    std::fs::create_dir_all(output).unwrap();
+    let nbs_path = std::path::Path::new(output).join("matched.nbs");
+    let litematic_path = std::path::Path::new(output).join("matched.litematic");
     let song = Song::open_nbs(input).unwrap();
     let notes = song.notes.clone();
 
@@ -92,8 +75,10 @@ fn matching(input: &str, output: &str) {
         &[0, 32, 64, 96, 192, 256, 288, 320, 352, 384, 416, 448, 480],
         &[0, 192, 256, 288, 320, 352, 384, 416],
     ];
-    let sectional_patterns: &[&[Index]] = &[&[0, 16, 32, 48], &[0, 16], &[0]];
-    let sections: &[Range<Index>] = &[0..256, 256..512];
+    // let sectional_patterns: &[&[Index]] = &[&[0, 16, 32, 48], &[0, 16], &[0]];
+    // let sections: &[Range<Index>] = &[0..256, 256..512];
+    let sectional_patterns: &[&[Index]] = &[];
+    let sections: &[Range<Index>] = &[];
 
     let mut all_clusters: Vec<BTreeMap<Position, Note>> = vec![];
 
@@ -132,7 +117,6 @@ fn matching(input: &str, output: &str) {
             .iter()
             .map(|c| c.iter().map(|(p, n)| (p.tick(), n.clone()))),
     );
-    let (nbs_path, litematic_path) = save_paths(input, output);
 
     matched_song.save_nbs(&nbs_path).unwrap();
 
@@ -169,10 +153,8 @@ fn matching(input: &str, output: &str) {
     let litematic = builder.build("from source.nbs", "rsnbs");
     litematic.write_file(&litematic_path).unwrap();
 
-    println!("Done: {}, {}", nbs_path, litematic_path);
+    println!("Done: {}, {}", nbs_path.display(), litematic_path.display());
 }
-
-// cargo run -- analyze fixtures/source.nbs
 
 fn analyze(input: &str, output: &str) {
     let song = Song::open_nbs(input).unwrap();
@@ -186,7 +168,8 @@ fn analyze(input: &str, output: &str) {
         .map(|v| v.into_iter().collect())
         .collect();
 
-    let (nbs_path, _litematic_path) = save_paths(input, output);
+    let nbs_path = std::path::Path::new(output).join("analyzed.nbs");
+    std::fs::create_dir_all(output).unwrap();
     let mut analyzed = song;
     analyzed.notes = <BTreeMap<Position, Note> as NotesExt>::reassign_layers(
         slices
@@ -194,5 +177,5 @@ fn analyze(input: &str, output: &str) {
             .map(|c| c.iter().map(|(p, n)| (p.tick(), n.clone()))),
     );
     analyzed.save_nbs(&nbs_path).unwrap();
-    println!("Done: {}", nbs_path);
+    println!("Done: {}", nbs_path.display());
 }
