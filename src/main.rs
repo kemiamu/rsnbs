@@ -70,7 +70,7 @@ fn matching(input: &str, output: &str) {
     // hardcoded parameters
     let song_length: Index = 1024;
     let min_notes: usize = 0;
-    let coarse: Index = 4;
+    let coarse: Index = 0;
     let wrap_length: usize = 16;
 
     // matching + 回退包装
