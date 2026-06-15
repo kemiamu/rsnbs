@@ -29,17 +29,19 @@ pub struct SchematicBuilder {
 impl SchematicBuilder {
     /// new builder with defaults
     pub fn new() -> Self {
+        let floor_block = GenericBlockState {
+            name: "minecraft:white_concrete".into(),
+            properties: Default::default(),
+        };
+        let chain_block = GenericBlockState {
+            name: "minecraft:smooth_stone".into(),
+            properties: Default::default(),
+        };
         Self {
             tracks: Default::default(),
             wrap_length: usize::MAX,
-            floor_block: GenericBlockState {
-                name: "minecraft:white_concrete".into(),
-                properties: Default::default(),
-            },
-            chain_block: GenericBlockState {
-                name: "minecraft:smooth_stone".into(),
-                properties: Default::default(),
-            },
+            floor_block,
+            chain_block,
         }
     }
 
@@ -149,17 +151,8 @@ impl SchematicBuilder {
         description: impl Into<Cow<'static, str>>,
         author: impl Into<Cow<'static, str>>,
     ) -> Litematic {
-        // T-shape interlocking: a single pass is 3 wide, two passes overlap by 1,
-        // so n passes span `1 + 2n` in x. One row = forward + backward = 2 passes,
-        // thus `1 + 4*wrap_length` per row. Total = `n_groups * 4 + 1`.
-        let wrapped_tracks: Vec<Vec<&[Group]>> = self
-            .tracks
-            .iter()
-            .map(|track| track.chunks(self.wrap_length).collect())
-            .collect();
-
         let width: i32 = self.tracks.iter().map(|t| t.len() * 4 + 1).sum::<usize>() as _;
-        let length: i32 = self.wrap_length as i32 + 2;
+        let length: i32 = self.wrap_length as i32 * 2 + 2;
         const HEIGHT: i32 = 4;
 
         let mut region: Region<GenericBlockState> = Region::new(
@@ -173,73 +166,31 @@ impl SchematicBuilder {
             region.set_block(BlockPos::new(x, 0, z), self.floor_block.clone());
         }
 
-        let mut cursor: i32 = 0;
-        let turning_blocks = [
-            (BlockPos::new(1, 1, 0), &self.chain_block),
-            (BlockPos::new(2, 1, 0), &self.chain_block),
-            (BlockPos::new(3, 1, 0), &self.chain_block),
-            (BlockPos::new(1, 2, 0), &Self::redstone_wire()),
-            (BlockPos::new(2, 2, 0), &Self::redstone_wire()),
-            (BlockPos::new(3, 2, 0), &Self::redstone_wire()),
-        ];
-        let group_blocks = [
-            (BlockPos::new(1, 0, 0), 0),
-            (BlockPos::new(1, 1, 0), 1),
-            (BlockPos::new(1, 2, 0), 2),
-            (BlockPos::new(1, 0, 1), 3),
-            (BlockPos::new(1, 1, 1), 4),
-            (BlockPos::new(1, 2, 1), 5),
-            (BlockPos::new(0, 0, 1), 6),
-            (BlockPos::new(0, 1, 1), 7),
-            (BlockPos::new(0, 2, 1), 8),
-            (BlockPos::new(2, 0, 1), 9),
-            (BlockPos::new(2, 1, 1), 10),
-            (BlockPos::new(2, 2, 1), 11),
-        ];
+        let mut cursor: i32 = -3;
+        let mut pointing_north: bool = false;
 
-        for (_track_idx, wrapped_track) in wrapped_tracks.iter().enumerate() {
-            for (line_idx, line) in wrapped_track.iter().enumerate() {
-                for (group_idx, group) in line.iter().enumerate() {
-                    if group_idx * 2 < self.wrap_length {
-                        for (pos, index) in group_blocks {
-                            let world_pos = BlockPos::new(
-                                pos.x + cursor,
-                                pos.y + 1,
-                                pos.z + group_idx as i32 * 2 + 1,
-                            );
-                            region
-                                .set_block(world_pos, self.get_block(group, index, "north".into()));
-                        }
-                    } else {
-                        for (pos, index) in group_blocks {
-                            let world_pos = BlockPos::new(
-                                pos.x + cursor + 2,
-                                pos.y + 1,
-                                (self.wrap_length as i32 - group_idx as i32) * 2 - pos.z,
-                            );
-                            region
-                                .set_block(world_pos, self.get_block(group, index, "south".into()));
-                        }
-                    }
-                    if group_idx * 2 == self.wrap_length {
-                        for &(pos, block) in &turning_blocks {
-                            let world_pos = BlockPos::new(
-                                pos.x + cursor,
-                                pos.y,
-                                pos.z + self.wrap_length as i32 - 1,
-                            );
-                            region.set_block(world_pos, block.clone());
-                        }
-                    } else if group_idx == 0 && line_idx != 0 {
-                        for &(pos, block) in &turning_blocks {
-                            let world_pos = BlockPos::new(pos.x + cursor, pos.y, pos.z);
-                            region.set_block(world_pos, block.clone());
-                        }
-                    }
-                }
-                cursor += 4;
+        for (index, group) in self.tracks.into_iter().flat_map(|track| {
+            // [0, 1, 2, ..., 0, 1, 2, ...]
+            track.into_iter().enumerate()
+        }) {
+            // track changed
+            if index == 0 {
+                pointing_north = false;
+                cursor += 1;
             }
-            cursor += 1;
+            // line changed
+            if index % self.wrap_length == 0 {
+                pointing_north = !pointing_north;
+                cursor += 2;
+            }
+
+            let progress = (index % self.wrap_length) as i32;
+            let world_pos = match pointing_north {
+                true => BlockPos::new(cursor, 0, progress * 2 + 1),
+                false => BlockPos::new(cursor, 0, (self.wrap_length as i32 - progress) * 2 - 1),
+            };
+
+            Self::place_group(&mut region, group, world_pos, pointing_north);
         }
 
         region.as_litematic(description, author)
