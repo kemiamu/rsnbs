@@ -152,25 +152,25 @@ impl SchematicBuilder {
         // T-shape interlocking: a single pass is 3 wide, two passes overlap by 1,
         // so n passes span `1 + 2n` in x. One row = forward + backward = 2 passes,
         // thus `1 + 4*wrap_length` per row. Total = `n_groups * 4 + 1`.
-        let mut wrapped_tracks: Vec<Vec<&[Group]>> = Default::default();
-        for track in &self.tracks {
-            wrapped_tracks.push(track.chunks(self.wrap_length).collect());
-        }
+        let wrapped_tracks: Vec<Vec<&[Group]>> = self
+            .tracks
+            .iter()
+            .map(|track| track.chunks(self.wrap_length).collect())
+            .collect();
 
         let width: i32 = self.tracks.iter().map(|t| t.len() * 4 + 1).sum::<usize>() as _;
+        let length: i32 = self.wrap_length as i32 + 2;
         const HEIGHT: i32 = 4;
 
         let mut region: Region<GenericBlockState> = Region::new(
             "Note Block Track Schematic",
             BlockPos::new(0, 0, 0),
-            BlockPos::new(width, HEIGHT, (self.wrap_length + 2) as _),
+            BlockPos::new(width, HEIGHT, length),
         );
 
         // floor
-        for x in 0..width {
-            for z in 0..(self.wrap_length as i32 + 2) {
-                region.set_block(BlockPos::new(x, 0, z), self.floor_block.clone());
-            }
+        for (x, z) in (0..length).flat_map(|x| (0..width).map(move |z| (x, z))) {
+            region.set_block(BlockPos::new(x, 0, z), self.floor_block.clone());
         }
 
         let mut cursor: i32 = 0;
