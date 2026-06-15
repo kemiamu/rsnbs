@@ -191,25 +191,11 @@ impl SchematicBuilder {
                 // line changed
                 pointing_north = !pointing_north;
                 cursor += 2;
+                // turning
+                self.place_turning(&mut region, cursor, pointing_north);
             }
 
-            // turning
-            let turning_pos = match pointing_north {
-                true => self.wrap_length as i32 * 2 + 1,
-                false => 0,
-            };
-            let mut place_tuple = |dx: i32, dy: i32, block: GenericBlockState| {
-                region.set_block(BlockPos::new(cursor + dx, 1 + dy, turning_pos), block)
-            };
-            if index % self.wrap_length == 0 && index != 0 {
-                place_tuple(1, 0, self.chain_block.clone());
-                place_tuple(0, 0, self.chain_block.clone());
-                place_tuple(-1, 0, self.chain_block.clone());
-                place_tuple(1, 1, Self::redstone_wire());
-                place_tuple(0, 1, Self::redstone_wire());
-                place_tuple(-1, 1, Self::redstone_wire());
-            }
-
+            // track
             let progress = (index % self.wrap_length) as i32;
             let anchor = match pointing_north {
                 true => BlockPos::new(cursor, 1, (self.wrap_length as i32 - progress) * 2 - 1),
@@ -220,6 +206,28 @@ impl SchematicBuilder {
         }
 
         region.as_litematic(description, author)
+    }
+
+    /// place turning blocks at line wrap
+    fn place_turning(
+        &self,
+        region: &mut Region<GenericBlockState>,
+        cursor: i32,
+        pointing_north: bool,
+    ) {
+        let turning_pos = match pointing_north {
+            true => self.wrap_length as i32 * 2 + 1,
+            false => 0,
+        };
+        let mut place_tuple = |dx: i32, dy: i32, block: GenericBlockState| {
+            region.set_block(BlockPos::new(cursor + dx, 1 + dy, turning_pos), block)
+        };
+        place_tuple(1, 0, self.chain_block.clone());
+        place_tuple(0, 0, self.chain_block.clone());
+        place_tuple(-1, 0, self.chain_block.clone());
+        place_tuple(1, 1, Self::redstone_wire());
+        place_tuple(0, 1, Self::redstone_wire());
+        place_tuple(-1, 1, Self::redstone_wire());
     }
 
     /// place 12 blocks of a group at anchor
