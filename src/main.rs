@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use rsnbs::schematic::SchematicBuilder;
 use rsnbs::util::NotesExt;
 use rsnbs::{Index, Note, Position, Song, Tone};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range;
 
 #[derive(Parser)]
@@ -30,6 +30,11 @@ enum Command {
         #[arg(short, long, default_value = "out")]
         output: String,
     },
+    /// Analyze transposition equivalence (same-tone point pairs)
+    AnalyzeOffset {
+        /// Input NBS file
+        input: String,
+    },
 }
 
 fn main() {
@@ -38,6 +43,7 @@ fn main() {
     match cli.command {
         Command::Matching { input, output } => matching(&input, &output),
         Command::Analyze { input, output } => analyze(&input, &output),
+        Command::AnalyzeOffset { input } => analyze_offset(&input),
     }
 }
 
@@ -51,10 +57,10 @@ fn matching(input: &str, output: &str) {
     let notes = song.notes.clone();
 
     // hardcoded parameters
-    let song_length: Index = 1024;
+    let song_length: Index = 512;
     let min_notes: usize = 0;
     let coarse: Index = 0;
-    let wrap_length: usize = 24;
+    let wrap_length: usize = 16;
 
     // matching + 回退包装
     let try_match = |notes: BTreeMap<Position, Note>,
@@ -71,12 +77,21 @@ fn matching(input: &str, output: &str) {
     };
 
     let global_patterns: &[&[Index]] = &[
-        // &[0, 32, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480],
-        // &[0, 32, 64, 96, 192, 256, 288, 320, 352, 384, 416, 448, 480],
-        // &[0, 192, 256, 288, 320, 352, 384, 416],
-        // &[0, 16, 32, 64],
-        // &[0, 16],
-        // &[0, 64],
+        &[
+            0, 16, 32, 48, 192, 208, 224, 240, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400,
+            416, 432, 448, 464, 480, 496,
+        ],
+        &[
+            0, 16, 32, 48, 64, 80, 96, 112, 192, 208, 256, 272, 288, 304, 320, 336, 352, 368, 384,
+            400, 416, 432, 448, 464, 480, 496,
+        ],
+        &[
+            0, 16, 32, 192, 208, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432,
+        ],
+        &[0, 64, 128, 64 * 3],
+        &[0, 16, 32, 48],
+        &[0, 16],
+        &[0, 64],
         &[0],
     ];
     // let sectional_patterns: &[&[Index]] = &[&[0, 16, 32, 48], &[0, 16], &[0]];
@@ -182,4 +197,111 @@ fn analyze(input: &str, output: &str) {
     );
     analyzed.save_nbs(&nbs_path).unwrap();
     println!("Done: {}", nbs_path.display());
+}
+
+fn analyze_offset(input: &str) {
+    let song = Song::open_nbs(input).unwrap();
+    let song_length: Index = song.notes.iter().map(|(p, _)| p.tick()).max().unwrap() + 1;
+
+    // 音符视为点 (tick, tone)
+    let mut notes: Vec<(Index, Tone)> = song
+        .notes
+        .into_iter()
+        .map(|(p, n)| (p.tick(), n.tone()))
+        .collect();
+    notes.sort_unstable();
+
+    // 按音高分组，每组按时间升序
+    let by_tone: BTreeMap<Tone, Vec<Index>> =
+        notes
+            .iter()
+            .fold(Default::default(), |mut acc, &(t, tone)| {
+                acc.entry(tone).or_default().push(t);
+                acc
+            });
+
+    // ===== 2 点：原逻辑 =====
+    {
+        let offsets: HashMap<Index, Vec<(Index, Tone)>> = notes
+            .iter()
+            .enumerate()
+            .flat_map(|(i, r)| notes[..i].iter().map(move |l| (l, r)))
+            .fold(Default::default(), |mut acc, ((tl, nl), (tr, nr))| {
+                if nr != nl {
+                    return acc;
+                }
+                let offset = (tr - tl).min(song_length - (tr - tl));
+                acc.entry(offset).or_default().push((*tl, *nl));
+                acc
+            });
+
+        let mut counts: Vec<(usize, Index)> = offsets
+            .into_iter()
+            .filter(|(_, v)| v.len() > 1)
+            .map(|(k, v)| (v.len(), k))
+            .collect();
+        counts.sort_unstable_by(|a, b| b.cmp(&a));
+        println!("=== 2-point (offset: count) top50 ===");
+        for (count, offset) in &counts[..50.min(counts.len())] {
+            println!("  {offset:>4}: {count}");
+        }
+    }
+
+    // ===== 3 点：距离向量 (d1, d2) =====
+    {
+        let mut triples: HashMap<(Index, Index), Vec<(Index, Tone)>> = HashMap::new();
+        for (&tone, ticks) in &by_tone {
+            for i in 0..ticks.len() {
+                for j in i + 1..ticks.len() {
+                    for k in j + 1..ticks.len() {
+                        let d1 = ticks[j] - ticks[i];
+                        let d2 = ticks[k] - ticks[j];
+                        triples.entry((d1, d2)).or_default().push((ticks[i], tone));
+                    }
+                }
+            }
+        }
+        let mut triple_counts: Vec<(usize, (Index, Index))> = triples
+            .into_iter()
+            .filter(|(_, v)| v.len() > 1)
+            .map(|(k, v)| (v.len(), k))
+            .collect();
+        triple_counts.sort_unstable_by(|a, b| b.cmp(&a));
+        println!("\n=== 3-point (d1, d2): count top30 ===");
+        for (count, (d1, d2)) in triple_counts.iter().take(30) {
+            println!("  ({d1:>4}, {d2:>4}): {count}");
+        }
+    }
+
+    // ===== 4 点：距离向量 (d1, d2, d3) =====
+    {
+        let mut quads: HashMap<(Index, Index, Index), Vec<(Index, Tone)>> = HashMap::new();
+        for (&tone, ticks) in &by_tone {
+            for i in 0..ticks.len() {
+                for j in i + 1..ticks.len() {
+                    for k in j + 1..ticks.len() {
+                        for l in k + 1..ticks.len() {
+                            let d1 = ticks[j] - ticks[i];
+                            let d2 = ticks[k] - ticks[j];
+                            let d3 = ticks[l] - ticks[k];
+                            quads
+                                .entry((d1, d2, d3))
+                                .or_default()
+                                .push((ticks[i], tone));
+                        }
+                    }
+                }
+            }
+        }
+        let mut quad_counts: Vec<(usize, (Index, Index, Index))> = quads
+            .into_iter()
+            .filter(|(_, v)| v.len() > 1)
+            .map(|(k, v)| (v.len(), k))
+            .collect();
+        quad_counts.sort_unstable_by(|a, b| b.cmp(&a));
+        println!("\n=== 4-point (d1, d2, d3): count top20 ===");
+        for (count, (d1, d2, d3)) in quad_counts.iter().take(20) {
+            println!("  ({d1:>4}, {d2:>4}, {d3:>4}): {count}");
+        }
+    }
 }
