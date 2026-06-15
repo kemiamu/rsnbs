@@ -14,7 +14,7 @@ pub trait Refreshable {
 impl Refreshable for Song {
     fn refresh(&mut self) {
         // 从音符计算歌曲长度
-        match self.notes.iter().map(|(pos, _)| pos.tick).max() {
+        match self.notes.iter().map(|(pos, _)| pos.tick()).max() {
             Some(last_tick) => self.header.song_length = last_tick,
             None => self.header.song_length = 1,
         }
