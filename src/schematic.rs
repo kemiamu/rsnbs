@@ -6,18 +6,19 @@ use rustmatica::{Litematic, Region};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 
-/// A group of note blocks with a fixed spatial arrangement.
+/// 3×2 block group
 pub enum Group {
-    /// delay, pure delay filler
+    /// no notes, just delay
     DelayOnly(u8, u8),
-    /// delay <= coarse | center | left | right
+    /// terminal: delay + up to 3 notes
     Delayed(u8, Option<Note>, Option<Note>, Option<Note>),
-    /// left | right
+    /// sustain up to 2 notes
     Sustain(Option<Note>, Option<Note>),
-    /// center | left | right
+    /// final: sustain up to 3 notes
     SustainEnd(Option<Note>, Option<Note>, Option<Note>),
 }
 
+/// litematic builder
 pub struct SchematicBuilder {
     tracks: Vec<Vec<Group>>,
     wrap_length: usize,
@@ -26,6 +27,7 @@ pub struct SchematicBuilder {
 }
 
 impl SchematicBuilder {
+    /// new builder with defaults
     pub fn new() -> Self {
         Self {
             tracks: Default::default(),
@@ -41,21 +43,25 @@ impl SchematicBuilder {
         }
     }
 
+    /// set max groups per row
     pub fn with_wrap_length(mut self, wrap_length: usize) -> Self {
         self.wrap_length = wrap_length;
         self
     }
 
+    /// set floor block type
     pub fn with_floor_block(mut self, block: GenericBlockState) -> Self {
         self.floor_block = block;
         self
     }
 
+    /// set chain block type
     pub fn with_chain_block(mut self, block: GenericBlockState) -> Self {
         self.chain_block = block;
         self
     }
 
+    /// add a track with coarse delay
     pub fn add_track<I>(&mut self, track: I, coarse: Index)
     where
         I: IntoIterator<Item = (Index, Note)>,
@@ -137,6 +143,7 @@ impl SchematicBuilder {
         }
     }
 
+    /// build final litematic
     pub fn build(
         self,
         description: impl Into<Cow<'static, str>>,
