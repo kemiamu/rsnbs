@@ -106,7 +106,7 @@ impl SchematicBuilder {
             // repeat sustain or end
             while remaining > 0 {
                 groups.push(Group::Sustain(notes.pop(), notes.pop()));
-                remaining -= 2;
+                remaining = remaining.saturating_sub(2);
             }
 
             // // TODO: 这个优化在折叠时会出问题
