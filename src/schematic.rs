@@ -169,9 +169,9 @@ impl SchematicBuilder {
         let mut cursor: i32 = -3;
         let mut pointing_north: bool = false;
 
-        for (index, group) in self.tracks.into_iter().flat_map(|track| {
+        for (index, group) in self.tracks.iter().flat_map(|track| {
             // [0, 1, 2, ..., 0, 1, 2, ...]
-            track.into_iter().enumerate()
+            track.iter().enumerate()
         }) {
             // track changed
             if index == 0 {
@@ -185,18 +185,56 @@ impl SchematicBuilder {
             }
 
             let progress = (index % self.wrap_length) as i32;
-            let world_pos = match pointing_north {
-                true => BlockPos::new(cursor, 0, progress * 2 + 1),
-                false => BlockPos::new(cursor, 0, (self.wrap_length as i32 - progress) * 2 - 1),
+            let anchor = match pointing_north {
+                true => BlockPos::new(cursor, 1, progress * 2 + 1),
+                false => BlockPos::new(cursor, 1, (self.wrap_length as i32 - progress) * 2 - 1),
             };
 
-            Self::place_group(&mut region, group, world_pos, pointing_north);
+            self.place_group(&mut region, group, anchor, pointing_north);
         }
 
         region.as_litematic(description, author)
     }
 
-    fn get_block(&self, group: &Group, index: u8, facing: Cow<'static, str>) -> GenericBlockState {
+    /// place 12 blocks of a group at anchor
+    fn place_group(
+        &self,
+        region: &mut Region<GenericBlockState>,
+        group: &Group,
+        anchor: BlockPos,
+        pointing_north: bool,
+    ) {
+        const LAYOUT: [(i32, i32, i32, u8); 12] = [
+            (1, 0, 0, 0),
+            (1, 1, 0, 1),
+            (1, 2, 0, 2),
+            (1, 0, 1, 3),
+            (1, 1, 1, 4),
+            (1, 2, 1, 5),
+            (0, 0, 1, 6),
+            (0, 1, 1, 7),
+            (0, 2, 1, 8),
+            (2, 0, 1, 9),
+            (2, 1, 1, 10),
+            (2, 2, 1, 11),
+        ];
+
+        // idk why mojang does this :(
+        let facing: Cow<'static, str> = match pointing_north {
+            true => "south".into(),
+            false => "north".into(),
+        };
+
+        for (dx, dy, dz, idx) in &LAYOUT {
+            let world_pos = match pointing_north {
+                true => BlockPos::new(anchor.x + dx, anchor.y + dy, anchor.z + dz),
+                false => BlockPos::new(anchor.x + dx, anchor.y + dy, anchor.z + 1 - dz),
+            };
+            region.set_block(world_pos, self.get_block(group, idx, facing.clone()));
+        }
+    }
+
+    fn get_block(&self, group: &Group, index: &u8, facing: Cow<'static, str>) -> GenericBlockState {
         match group {
             Group::DelayOnly(first, second) => match index {
                 0 | 3 => self.chain_block.clone(),
