@@ -222,12 +222,10 @@ impl SchematicBuilder {
         let mut place_tuple = |dx: i32, dy: i32, block: GenericBlockState| {
             region.set_block(BlockPos::new(cursor + dx, 1 + dy, turning_pos), block)
         };
-        place_tuple(1, 0, self.chain_block.clone());
-        place_tuple(0, 0, self.chain_block.clone());
-        place_tuple(-1, 0, self.chain_block.clone());
-        place_tuple(1, 1, Self::redstone_wire());
-        place_tuple(0, 1, Self::redstone_wire());
-        place_tuple(-1, 1, Self::redstone_wire());
+        for dx in [1, 0, -1] {
+            place_tuple(dx, 0, self.chain_block.clone());
+            place_tuple(dx, 1, Self::redstone_wire());
+        }
     }
 
     /// place 12 blocks of a group at anchor
