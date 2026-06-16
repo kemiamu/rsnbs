@@ -1,8 +1,8 @@
 use clap::{Parser, Subcommand};
 use rsnbs::schematic::SchematicBuilder;
-use rsnbs::util::NotesExt;
+use rsnbs::util::{MatchedGroups, NotesExt};
 use rsnbs::{Index, Note, Position, Song, Tone};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 
 #[derive(Parser)]
@@ -59,40 +59,41 @@ fn matching(input: &str, output: &str) {
     // hardcoded parameters
     let song_length: Index = 1024;
     let min_notes: usize = 0;
-    let coarse: Index = 4;
-    let wrap_length: usize = 16;
+    let coarse: Index = 0;
+    let wrap_length: usize = 24;
 
     // matching + 回退包装
     let try_match = |notes: BTreeMap<Position, Note>,
                      pattern: &[Index]|
-     -> (BTreeMap<Position, Note>, BTreeMap<Position, Note>) {
+     -> (MatchedGroups, BTreeMap<Position, Note>) {
         let saved = notes.clone();
         let (matched, unmatched) =
-            notes.matches_by(pattern, song_length, |a, b| a.tone() == b.tone());
-        if matched.len() >= min_notes || pattern.len() == 1 {
+            notes.group_match(pattern, song_length, |a, b| a.tone() == b.tone());
+        if matched.matched_len() >= min_notes || pattern.len() == 1 {
             (matched, unmatched)
         } else {
-            (BTreeMap::new(), saved)
+            (MatchedGroups::empty(), saved)
         }
     };
 
     let global_patterns: &[&[Index]] = &[
-        &[
-            0, 16, 32, 48, 192, 208, 224, 240, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400,
-            416, 432, 448, 464, 480, 496,
-        ],
-        &[
-            0, 32, 64, 96, 192, 208, 112, 80, 48, 16, 256, 272, 288, 304, 320, 336, 352, 368, 384,
-            400, 416, 432, 448, 464, 480, 496,
-        ],
-        &[
-            0, 32, 192, 208, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 16,
-        ],
+        // &[
+        //     0, 16, 32, 48, 192, 208, 224, 240, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400,
+        //     416, 432, 448, 464, 480, 496,
+        // ],
+        // &[
+        //     0, 16, 32, 48, 64, 80, 96, 112, 192, 208, 256, 272, 288, 304, 320, 336, 352, 368, 384,
+        //     400, 416, 432, 448, 464, 480, 496,
+        // ],
+        // &[
+        //     0, 16, 192, 208, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432,
+        // ],
         &[0, 16, 32, 48],
-        &[0, 8],
+        // &[0, 8],
+        &[0, 64],
         // &[0, 16],
-        // &[0, 64, 128, 64 * 3],
         // &[0, 64],
+        // &[0, 64, 128, 64 * 3],
         &[0],
     ];
     // let sectional_patterns: &[&[Index]] = &[&[0, 16, 32, 48], &[0, 16], &[0]];
@@ -100,13 +101,13 @@ fn matching(input: &str, output: &str) {
     let sectional_patterns: &[&[Index]] = &[];
     let sections: &[Range<Index>] = &[];
 
-    let mut all_clusters: Vec<BTreeMap<Position, Note>> = vec![];
+    let mut all_matched: Vec<MatchedGroups> = vec![];
 
     // 全局匹配
     let mut remaining = notes.clone();
     for &pattern in global_patterns {
         let (matched, unmatched) = try_match(remaining, pattern);
-        all_clusters.push(matched);
+        all_matched.push(matched);
         remaining = unmatched;
     }
 
@@ -125,52 +126,26 @@ fn matching(input: &str, output: &str) {
         let mut remaining_in_section = section_notes;
         for &pattern in sectional_patterns {
             let (matched, unmatched) = try_match(remaining_in_section, pattern);
-            all_clusters.push(matched);
+            all_matched.push(matched);
             remaining_in_section = unmatched;
         }
     }
 
-    // 保存 NBS（重新分配层）
+    // 保存 NBS：使用完整匹配组，每组作为一层组
     let mut matched_song = song;
     matched_song.notes = <BTreeMap<Position, Note> as NotesExt>::reassign_layers(
-        all_clusters
-            .iter()
-            .map(|c| c.iter().map(|(p, n)| (p.tick(), n.clone()))),
+        all_matched.iter().flat_map(|mg| {
+            mg.groups()
+                .iter()
+                .map(|g| g.iter().map(|(p, n)| (p.tick(), n.clone())))
+        }),
     );
 
     matched_song.save_nbs(&nbs_path).unwrap();
 
-    // 过滤 projection：消耗式算法，每个 tick 只能被一个 base 消耗一次
-    let projection_clusters: Vec<BTreeMap<Position, Note>> = all_clusters
-        .iter()
-        .zip(global_patterns.iter().cycle())
-        .map(|(cluster, pattern)| {
-            let mut unused: BTreeSet<Index> = cluster.keys().map(|p| p.tick()).collect();
-            let mut bases: Vec<(Position, Note)> = vec![];
-
-            // 按 tick 升序遍历，找到所有满足 pattern 的 base
-            for (pos, note) in cluster.iter() {
-                let base = pos.tick();
-                if !unused.contains(&base) {
-                    continue;
-                }
-                let offsets: Vec<Index> = pattern
-                    .iter()
-                    .skip(1)
-                    .map(|&o| (base + o) % song_length)
-                    .collect();
-                if offsets.iter().all(|o| unused.contains(o)) {
-                    // 该音是 base，消耗它和它的 offset
-                    unused.remove(&base);
-                    for &o in &offsets {
-                        unused.remove(&o);
-                    }
-                    bases.push((*pos, note.clone()));
-                }
-            }
-            bases.into_iter().collect()
-        })
-        .collect();
+    // 过滤 projection：只取每组模板（基音）
+    let projection_clusters: Vec<BTreeMap<Position, Note>> =
+        all_matched.iter().map(|mg| mg.templates()).collect();
 
     // 用 SchematicBuilder 构建 litematic
     let mut builder = SchematicBuilder::new().with_wrap_length(wrap_length);
