@@ -83,13 +83,11 @@ impl SchematicBuilder {
             current_tick = tick;
 
             // pure delay groups
-            if let Some((group, consumed)) = Self::pop_delay_group(delay, coarse, true) {
+            let mut prev = 0;
+            while let Some((group, consumed)) = Self::pop_delay_group(delay, coarse, prev) {
                 groups.push(group);
                 delay -= consumed;
-            }
-            while let Some((group, consumed)) = Self::pop_delay_group(delay, coarse, false) {
-                groups.push(group);
-                delay -= consumed;
+                prev = consumed;
             }
 
             // terminal group
@@ -126,7 +124,7 @@ impl SchematicBuilder {
         self.tracks.push(groups);
     }
 
-    fn pop_delay_group(delay: Index, coarse: Index, _first: bool) -> Option<(Group, Index)> {
+    fn pop_delay_group(delay: Index, coarse: Index, prev: Index) -> Option<(Group, Index)> {
         // handle JE micro-timing
         if (2..=4).contains(&coarse) {
             // TODO FIXME: 因为折叠可能在纯延迟处拆行，会破坏信号引出，这里保守化。
@@ -134,10 +132,15 @@ impl SchematicBuilder {
             if delay > coarse * 2 {
                 let delay = coarse * 2 - 1;
                 Some((Group::DelayOnly(coarse as _, (coarse - 1) as _), delay))
+            } else if delay == coarse * 2 && prev <= coarse {
+                Some((Group::Delayed(coarse as _, None, None, None), coarse))
             } else if delay == coarse * 2 {
                 Some((Group::DelayOnly(coarse as _, 1), coarse + 1))
-            } else if delay >= coarse {
+            } else if delay >= coarse && prev > coarse {
                 let delay = coarse - 1;
+                Some((Group::Delayed(delay as _, None, None, None), delay))
+            } else if delay > coarse {
+                let delay = coarse;
                 Some((Group::Delayed(delay as _, None, None, None), delay))
             } else {
                 None

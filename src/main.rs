@@ -90,9 +90,9 @@ fn matching(input: &str, output: &str) {
         ],
         &[0, 16, 32, 48],
         &[0, 8],
-        &[0, 16],
+        // &[0, 16],
         // &[0, 64, 128, 64 * 3],
-        &[0, 64],
+        // &[0, 64],
         &[0],
     ];
     // let sectional_patterns: &[&[Index]] = &[&[0, 16, 32, 48], &[0, 16], &[0]];
@@ -140,23 +140,35 @@ fn matching(input: &str, output: &str) {
 
     matched_song.save_nbs(&nbs_path).unwrap();
 
-    // 过滤 projection
+    // 过滤 projection：消耗式算法，每个 tick 只能被一个 base 消耗一次
     let projection_clusters: Vec<BTreeMap<Position, Note>> = all_clusters
         .iter()
         .zip(global_patterns.iter().cycle())
         .map(|(cluster, pattern)| {
-            let ticks: BTreeSet<Index> = cluster.keys().map(|p| p.tick()).collect();
-            cluster
-                .iter()
-                .filter(|(pos, _)| {
-                    let base = pos.tick();
-                    pattern
-                        .iter()
-                        .skip(1)
-                        .all(|offset| ticks.contains(&((base + offset) % song_length)))
-                })
-                .map(|(pos, note)| (*pos, note.clone()))
-                .collect()
+            let mut unused: BTreeSet<Index> = cluster.keys().map(|p| p.tick()).collect();
+            let mut bases: Vec<(Position, Note)> = vec![];
+
+            // 按 tick 升序遍历，找到所有满足 pattern 的 base
+            for (pos, note) in cluster.iter() {
+                let base = pos.tick();
+                if !unused.contains(&base) {
+                    continue;
+                }
+                let offsets: Vec<Index> = pattern
+                    .iter()
+                    .skip(1)
+                    .map(|&o| (base + o) % song_length)
+                    .collect();
+                if offsets.iter().all(|o| unused.contains(o)) {
+                    // 该音是 base，消耗它和它的 offset
+                    unused.remove(&base);
+                    for &o in &offsets {
+                        unused.remove(&o);
+                    }
+                    bases.push((*pos, note.clone()));
+                }
+            }
+            bases.into_iter().collect()
         })
         .collect();
 
