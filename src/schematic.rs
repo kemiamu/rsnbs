@@ -83,7 +83,11 @@ impl SchematicBuilder {
             current_tick = tick;
 
             // pure delay groups
-            while let Some((group, consumed)) = Self::pop_delay_group(delay, coarse) {
+            if let Some((group, consumed)) = Self::pop_delay_group(delay, coarse, true) {
+                groups.push(group);
+                delay -= consumed;
+            }
+            while let Some((group, consumed)) = Self::pop_delay_group(delay, coarse, false) {
                 groups.push(group);
                 delay -= consumed;
             }
@@ -103,7 +107,7 @@ impl SchematicBuilder {
                 remaining = remaining.saturating_sub(2);
             }
 
-            // // TODO: SustainEnd 在折叠时会出问题，禁用这一项优化
+            // // TODO FIXME: SustainEnd 在折叠时会出问题，禁用这一项优化
             //
             // if remaining > 0 {
             //     groups.push(Group::Sustain(notes.pop(), notes.pop()));
@@ -122,15 +126,19 @@ impl SchematicBuilder {
         self.tracks.push(groups);
     }
 
-    fn pop_delay_group(delay: Index, coarse: Index) -> Option<(Group, Index)> {
+    fn pop_delay_group(delay: Index, coarse: Index, _first: bool) -> Option<(Group, Index)> {
         // handle JE micro-timing
         if (2..=4).contains(&coarse) {
+            // TODO FIXME: 因为折叠可能在纯延迟处拆行，会破坏信号引出，这里保守化。
+            //             要在生成结构时考虑折叠，只能在构建时生成结构
             if delay > coarse * 2 {
-                Some((Group::DelayOnly(coarse as _, coarse as _), coarse * 2))
+                let delay = coarse * 2 - 1;
+                Some((Group::DelayOnly(coarse as _, (coarse - 1) as _), delay))
             } else if delay == coarse * 2 {
                 Some((Group::DelayOnly(coarse as _, 1), coarse + 1))
             } else if delay >= coarse {
-                Some((Group::Delayed(coarse as _, None, None, None), coarse - 1))
+                let delay = coarse - 1;
+                Some((Group::Delayed(delay as _, None, None, None), delay))
             } else {
                 None
             }
