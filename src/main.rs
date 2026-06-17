@@ -57,10 +57,10 @@ fn matching(input: &str, output: &str) {
     let notes = song.notes.clone();
 
     // hardcoded parameters
-    let song_length: Index = 1024;
+    let song_length: Index = 512;
     let min_notes: usize = 0;
     let coarse: Index = 0;
-    let wrap_length: usize = 24;
+    let wrap_length: usize = 12;
 
     // matching + 回退包装
     let try_match = |notes: BTreeMap<Position, Note>,
@@ -94,12 +94,12 @@ fn matching(input: &str, output: &str) {
         // &[0, 16],
         // &[0, 64],
         // &[0, 64, 128, 64 * 3],
-        &[0],
+        // &[0],
     ];
     // let sectional_patterns: &[&[Index]] = &[&[0, 16, 32, 48], &[0, 16], &[0]];
     // let sections: &[Range<Index>] = &[0..256, 256..512];
-    let sectional_patterns: &[&[Index]] = &[];
-    let sections: &[Range<Index>] = &[];
+    let sectional_patterns: &[&[Index]] = &[&[0]];
+    let sections: &[Range<Index>] = &[0..256, 256..512];
 
     let mut all_matched: Vec<MatchedGroups> = vec![];
 
@@ -131,19 +131,18 @@ fn matching(input: &str, output: &str) {
         }
     }
 
-    // 保存 NBS：使用完整匹配组，每组作为一层组
+    // 保存 NBS：每 pattern 一个层组（所有匹配组的全部音符合并）
     let mut matched_song = song;
-    matched_song.notes = <BTreeMap<Position, Note> as NotesExt>::reassign_layers(
-        all_matched.iter().flat_map(|mg| {
+    matched_song.notes =
+        <BTreeMap<Position, Note> as NotesExt>::reassign_layers(all_matched.iter().map(|mg| {
             mg.groups()
                 .iter()
-                .map(|g| g.iter().map(|(p, n)| (p.tick(), n.clone())))
-        }),
-    );
+                .flat_map(|g| g.iter().map(|(p, n)| (p.tick(), n.clone())))
+        }));
 
     matched_song.save_nbs(&nbs_path).unwrap();
 
-    // 过滤 projection：只取每组模板（基音）
+    // 过滤 projection：每 pattern 一个轨道，每个匹配组贡献一个基音
     let projection_clusters: Vec<BTreeMap<Position, Note>> =
         all_matched.iter().map(|mg| mg.templates()).collect();
 
@@ -186,6 +185,8 @@ fn analyze(input: &str, output: &str) {
     analyzed.save_nbs(&nbs_path).unwrap();
     println!("Done: {}", nbs_path.display());
 }
+
+// cargo run -- analyze-offset fixtures/source.nbs
 
 fn analyze_offset(input: &str) {
     let song = Song::open_nbs(input).unwrap();
