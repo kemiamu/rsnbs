@@ -28,15 +28,19 @@ impl Group {
     ) {
         // [(X, Y, Z, idx)]
         const LAYOUT: [(i32, i32, i32, u8); 12] = [
+            // pillar
             (1, 0, 0, 0),
             (1, 1, 0, 1),
             (1, 2, 0, 2),
+            // center
             (1, 0, 1, 3),
             (1, 1, 1, 4),
             (1, 2, 1, 5),
+            // left
             (0, 0, 1, 6),
             (0, 1, 1, 7),
             (0, 2, 1, 8),
+            // right
             (2, 0, 1, 9),
             (2, 1, 1, 10),
             (2, 2, 1, 11),
@@ -57,56 +61,76 @@ impl Group {
     }
 
     /// get block at layout index
-    fn get_block(&self, index: &u8, facing: Cow<'static, str>) -> GenericBlockState {
+    pub fn get_block(&self, index: &u8, facing: Cow<'static, str>) -> GenericBlockState {
+        let repeater = |delay: &u8| GenericBlockState {
+            name: "minecraft:repeater".into(),
+            properties: HashMap::from([
+                ("delay".into(), delay.to_string().into()),
+                ("facing".into(), facing.clone()),
+                ("locked".into(), "false".into()),
+                ("powered".into(), "false".into()),
+            ]),
+        };
+        let note_block = |note: &Option<Note>, fallback: fn() -> GenericBlockState| {
+            note.as_ref()
+                .and_then(|n| n.note_block_state())
+                .unwrap_or_else(fallback)
+        };
+        let instrument_block = |note: &Option<Note>, fallback: fn() -> GenericBlockState| {
+            note.as_ref()
+                .and_then(|n| n.instrument.instrument_block())
+                .unwrap_or_else(fallback)
+        };
+
         match self {
             Group::DelayOnly(first, second) => match index {
                 0 | 3 => Self::chain_block(),
-                1 => Self::repeater(first, facing),
-                4 => Self::repeater(second, facing),
+                1 => repeater(first),
+                4 => repeater(second),
                 _ => GenericBlockState::air(),
             },
             Group::Delayed(delay, center, left, right) => match index {
                 0 => Self::chain_block(),
-                1 => Self::repeater(delay, facing),
-                3 => Self::instrument_block_or_else(center, || Self::chain_block()),
-                4 => Self::note_block_or_else(center, || Self::chain_block()),
-                6 => Self::instrument_block_or_else(left, || GenericBlockState::air()),
-                7 => Self::note_block_or_else(left, || GenericBlockState::air()),
-                9 => Self::instrument_block_or_else(right, || GenericBlockState::air()),
-                10 => Self::note_block_or_else(right, || GenericBlockState::air()),
+                1 => repeater(delay),
+                3 => instrument_block(center, Self::chain_block),
+                4 => note_block(center, Self::chain_block),
+                6 => instrument_block(left, GenericBlockState::air),
+                7 => note_block(left, GenericBlockState::air),
+                9 => instrument_block(right, GenericBlockState::air),
+                10 => note_block(right, GenericBlockState::air),
                 _ => GenericBlockState::air(),
             },
             Group::Sustain(left, right) => match index {
                 0 | 3 | 4 => Self::chain_block(),
                 1 | 5 => Self::redstone_wire(),
-                6 => Self::instrument_block_or_else(left, || GenericBlockState::air()),
-                7 => Self::note_block_or_else(left, || GenericBlockState::air()),
-                9 => Self::instrument_block_or_else(right, || GenericBlockState::air()),
-                10 => Self::note_block_or_else(right, || GenericBlockState::air()),
+                6 => instrument_block(left, GenericBlockState::air),
+                7 => note_block(left, GenericBlockState::air),
+                9 => instrument_block(right, GenericBlockState::air),
+                10 => note_block(right, GenericBlockState::air),
                 _ => GenericBlockState::air(),
             },
             Group::SustainEnd(center, left, right) => match index {
                 0 => Self::chain_block(),
                 1 => Self::redstone_wire(),
-                3 => Self::instrument_block_or_else(center, || Self::chain_block()),
-                4 => Self::note_block_or_else(center, || Self::chain_block()),
-                6 => Self::instrument_block_or_else(left, || GenericBlockState::air()),
-                7 => Self::note_block_or_else(left, || GenericBlockState::air()),
-                9 => Self::instrument_block_or_else(right, || GenericBlockState::air()),
-                10 => Self::note_block_or_else(right, || GenericBlockState::air()),
+                3 => instrument_block(center, Self::chain_block),
+                4 => note_block(center, Self::chain_block),
+                6 => instrument_block(left, GenericBlockState::air),
+                7 => note_block(left, GenericBlockState::air),
+                9 => instrument_block(right, GenericBlockState::air),
+                10 => note_block(right, GenericBlockState::air),
                 _ => GenericBlockState::air(),
             },
         }
     }
 
-    fn chain_block() -> GenericBlockState {
+    pub fn chain_block() -> GenericBlockState {
         GenericBlockState {
             name: "minecraft:smooth_stone".into(),
             properties: Default::default(),
         }
     }
 
-    fn redstone_wire() -> GenericBlockState {
+    pub fn redstone_wire() -> GenericBlockState {
         let properties = HashMap::from([
             ("power".into(), "0".into()),
             ("north".into(), "side".into()),
@@ -119,42 +143,13 @@ impl Group {
             properties,
         }
     }
-
-    fn repeater(delay: &u8, facing: Cow<'static, str>) -> GenericBlockState {
-        let properties = HashMap::from([
-            ("delay".into(), delay.to_string().into()),
-            ("facing".into(), facing),
-            ("locked".into(), "false".into()),
-            ("powered".into(), "false".into()),
-        ]);
-        GenericBlockState {
-            name: "minecraft:repeater".into(),
-            properties,
-        }
-    }
-
-    fn note_block_or_else<F>(note: &Option<Note>, fallback: F) -> GenericBlockState
-    where
-        F: FnOnce() -> GenericBlockState,
-    {
-        note.as_ref()
-            .and_then(|n| n.note_block_state())
-            .unwrap_or_else(fallback)
-    }
-
-    fn instrument_block_or_else<F>(note: &Option<Note>, fallback: F) -> GenericBlockState
-    where
-        F: FnOnce() -> GenericBlockState,
-    {
-        note.as_ref()
-            .and_then(|n| n.instrument.instrument_block())
-            .unwrap_or_else(fallback)
-    }
 }
 
 /// litematic builder
 pub struct SchematicBuilder {
-    tracks: Vec<Vec<Group>>,
+    /// raw track data grouped by tick: (`[({tick: [note]}, coarse)]`)
+    tracks: Vec<(BTreeMap<Index, Vec<Note>>, Index)>,
+    /// max groups per row (`group * wrap_length = row length`)
     wrap_length: usize,
 }
 
@@ -183,6 +178,14 @@ impl SchematicBuilder {
             timed_notes.entry(tick).or_default().push(note);
         }
 
+        self.tracks.push((timed_notes, coarse));
+    }
+
+    fn generate_groups(
+        timed_notes: BTreeMap<Index, Vec<Note>>,
+        coarse: Index,
+        wrap_length: usize,
+    ) -> Vec<Group> {
         let mut groups: Vec<Group> = Default::default();
         let mut current_tick: Index = Index::MAX;
 
@@ -193,11 +196,13 @@ impl SchematicBuilder {
             current_tick = tick;
 
             // pure delay groups
-            let mut prev = 0;
-            while let Some((group, consumed)) = Self::pop_delay_group(delay, coarse, prev) {
+            let mut carry = false;
+            while let Some((group, consumed)) =
+                Self::pop_delay_group(delay, coarse, carry, (groups.len() + 1) % wrap_length == 0)
+            {
                 groups.push(group);
                 delay -= consumed;
-                prev = consumed;
+                carry = consumed > coarse;
             }
 
             // terminal group
@@ -210,48 +215,49 @@ impl SchematicBuilder {
             remaining = remaining.saturating_sub(3);
 
             // sustain group
-            while remaining > 0 {
+            if remaining > 0 {
                 groups.push(Group::Sustain(notes.pop(), notes.pop()));
                 remaining = remaining.saturating_sub(2);
             }
-
-            // // TODO FIXME: SustainEnd 在折叠时会出问题，禁用这一项优化
-            //
-            // if remaining > 0 {
-            //     groups.push(Group::Sustain(notes.pop(), notes.pop()));
-            //     remaining = remaining.saturating_sub(2);
-            // }
-            // while remaining > 3 {
-            //     groups.push(Group::Sustain(notes.pop(), notes.pop()));
-            //     remaining -= 2;
-            // }
-            // if remaining > 0 {
-            //     groups.push(Group::SustainEnd(notes.pop(), notes.pop(), notes.pop()));
-            //     remaining = 0;
-            // }
+            while remaining > 3 || remaining > 0 && (groups.len() + 1) % wrap_length == 0 {
+                groups.push(Group::Sustain(notes.pop(), notes.pop()));
+                remaining = remaining.saturating_sub(2);
+            }
+            if remaining > 0 {
+                groups.push(Group::SustainEnd(notes.pop(), notes.pop(), notes.pop()));
+            }
         }
 
-        self.tracks.push(groups);
+        groups
     }
 
-    fn pop_delay_group(delay: Index, coarse: Index, prev: Index) -> Option<(Group, Index)> {
+    fn pop_delay_group(
+        delay: Index,
+        coarse: Index,
+        carry: bool,
+        wrap: bool,
+    ) -> Option<(Group, Index)> {
         // handle JE micro-timing
         if (2..=4).contains(&coarse) {
-            // TODO FIXME: 因为折叠可能在纯延迟处拆行，会破坏信号引出，这里保守化。
-            //             要在生成结构时考虑折叠，只能在构建时生成结构
-            if delay > coarse * 2 {
+            if delay > coarse * 2 && !wrap {
+                // delay chain (exit unsafe)
+                let delay = coarse * 2;
+                Some((Group::DelayOnly(coarse as _, coarse as _), delay))
+            } else if delay > coarse * 2 {
+                // delay chain at wrap (exit safe)
                 let delay = coarse * 2 - 1;
                 Some((Group::DelayOnly(coarse as _, (coarse - 1) as _), delay))
-            } else if delay == coarse * 2 && prev <= coarse {
-                Some((Group::Delayed(coarse as _, None, None, None), coarse))
-            } else if delay == coarse * 2 {
-                Some((Group::DelayOnly(coarse as _, 1), coarse + 1))
-            } else if delay >= coarse && prev > coarse {
+            } else if delay == coarse * 2 && carry {
+                // drain delay chain (exit safe)
+                let delay = coarse + 1;
+                Some((Group::DelayOnly(coarse as _, 1), delay))
+            } else if delay >= coarse && carry {
+                // drain delay chain (exit safe)
                 let delay = coarse - 1;
                 Some((Group::Delayed(delay as _, None, None, None), delay))
-            } else if delay > coarse {
-                let delay = coarse;
-                Some((Group::Delayed(delay as _, None, None, None), delay))
+            } else if delay > coarse && !carry {
+                // short delay (exit safe)
+                Some((Group::Delayed(coarse as _, None, None, None), coarse))
             } else {
                 None
             }
@@ -278,12 +284,23 @@ impl SchematicBuilder {
         description: impl Into<Cow<'static, str>>,
         author: impl Into<Cow<'static, str>>,
     ) -> Litematic {
-        let width: i32 = self
-            .tracks
+        // destructure to avoid partial move issues
+        let SchematicBuilder {
+            tracks,
+            wrap_length,
+        } = self;
+
+        // convert raw tracks to groups
+        let track_groups: Vec<Vec<Group>> = tracks
+            .into_iter()
+            .map(|(timed_notes, coarse)| Self::generate_groups(timed_notes, coarse, wrap_length))
+            .collect();
+
+        let width: i32 = track_groups
             .iter()
-            .map(|t| t.len().div_ceil(self.wrap_length) * 2 + 1)
+            .map(|t| t.len().div_ceil(wrap_length) * 2 + 1)
             .sum::<usize>() as _;
-        let length: i32 = self.wrap_length as i32 * 2 + 2;
+        let length: i32 = wrap_length as i32 * 2 + 2;
         const HEIGHT: i32 = 4;
 
         let mut region: Region<GenericBlockState> = Region::new(
@@ -293,38 +310,40 @@ impl SchematicBuilder {
         );
 
         // floor
-        let floor_block = GenericBlockState {
+        let floor_block = || GenericBlockState {
             name: "minecraft:white_concrete".into(),
             properties: Default::default(),
         };
         for (x, z) in (0..width).flat_map(|x| (0..length).map(move |z| (x, z))) {
-            region.set_block(BlockPos::new(x, 0, z), floor_block.clone());
+            region.set_block(BlockPos::new(x, 0, z), floor_block());
         }
 
         let mut cursor: i32 = -3;
         let mut pointing_south: bool = true;
 
-        for (index, group) in self.tracks.iter().flat_map(|track| {
+        for (index, group) in track_groups.iter().flat_map(|track| {
             // [0, 1, 2, ..., 0, 1, 2, ...]
             track.iter().enumerate()
         }) {
+            let offset = (index % wrap_length) as i32;
+
             if index == 0 {
                 // track changed
                 pointing_south = true;
                 cursor += 3;
-            } else if index % self.wrap_length == 0 {
+            } else if offset == 0 {
                 // line changed
                 pointing_south = !pointing_south;
                 cursor += 2;
                 // turning
-                self.place_turning(&mut region, cursor, pointing_south);
+                let turning_anchor = Self::turning_pos(pointing_south, cursor, wrap_length * 2);
+                Self::place_turning(&mut region, turning_anchor);
             }
 
             // track
-            let progress = (index % self.wrap_length) as i32;
             let anchor = match pointing_south {
-                true => BlockPos::new(cursor, 1, progress * 2 + 1),
-                false => BlockPos::new(cursor, 1, (self.wrap_length as i32 - progress) * 2 - 1),
+                true => BlockPos::new(cursor, 1, offset * 2 + 1),
+                false => BlockPos::new(cursor, 1, (wrap_length as i32 - offset) * 2 - 1),
             };
 
             group.place(&mut region, anchor, pointing_south);
@@ -333,23 +352,23 @@ impl SchematicBuilder {
         region.as_litematic(description, author)
     }
 
+    fn turning_pos(pointing_south: bool, cursor: i32, length: usize) -> BlockPos {
+        match pointing_south {
+            true => BlockPos::new(cursor - 1, 1, 0),
+            false => BlockPos::new(cursor - 1, 1, length as i32 + 1),
+        }
+    }
+
     /// place turning blocks at line wrap
-    fn place_turning(
-        &self,
-        region: &mut Region<GenericBlockState>,
-        cursor: i32,
-        pointing_south: bool,
-    ) {
-        let turning_pos = match pointing_south {
-            true => 0,
-            false => self.wrap_length as i32 * 2 + 1,
+    fn place_turning(region: &mut Region<GenericBlockState>, anchor: BlockPos) {
+        let chain_block = Group::chain_block;
+        let redstone_wire = Group::redstone_wire;
+        let mut place = |dx: i32, dy: i32, block: GenericBlockState| {
+            region.set_block(BlockPos::new(anchor.x + dx, anchor.y + dy, anchor.z), block)
         };
-        let mut place_tuple = |dx: i32, dy: i32, block: GenericBlockState| {
-            region.set_block(BlockPos::new(cursor + dx, 1 + dy, turning_pos), block)
-        };
-        for dx in [1, 0, -1] {
-            place_tuple(dx, 0, Group::chain_block());
-            place_tuple(dx, 1, Group::redstone_wire());
+        for dx in 0..=2 {
+            place(dx, 0, chain_block());
+            place(dx, 1, redstone_wire());
         }
     }
 }
