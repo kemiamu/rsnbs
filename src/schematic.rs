@@ -18,48 +18,158 @@ pub enum Group {
     SustainEnd(Option<Note>, Option<Note>, Option<Note>),
 }
 
+impl Group {
+    /// place 12 blocks of this group at anchor
+    pub fn place(
+        &self,
+        region: &mut Region<GenericBlockState>,
+        anchor: BlockPos,
+        pointing_south: bool,
+    ) {
+        // [(X, Y, Z, idx)]
+        const LAYOUT: [(i32, i32, i32, u8); 12] = [
+            (1, 0, 0, 0),
+            (1, 1, 0, 1),
+            (1, 2, 0, 2),
+            (1, 0, 1, 3),
+            (1, 1, 1, 4),
+            (1, 2, 1, 5),
+            (0, 0, 1, 6),
+            (0, 1, 1, 7),
+            (0, 2, 1, 8),
+            (2, 0, 1, 9),
+            (2, 1, 1, 10),
+            (2, 2, 1, 11),
+        ];
+
+        let facing: Cow<'static, str> = match pointing_south {
+            true => "north".into(),
+            false => "south".into(),
+        };
+
+        for (dx, dy, dz, idx) in &LAYOUT {
+            let world_pos = match pointing_south {
+                true => BlockPos::new(anchor.x + dx, anchor.y + dy, anchor.z + dz),
+                false => BlockPos::new(anchor.x + dx, anchor.y + dy, anchor.z + 1 - dz),
+            };
+            region.set_block(world_pos, self.get_block(idx, facing.clone()));
+        }
+    }
+
+    /// get block at layout index
+    fn get_block(&self, index: &u8, facing: Cow<'static, str>) -> GenericBlockState {
+        match self {
+            Group::DelayOnly(first, second) => match index {
+                0 | 3 => Self::chain_block(),
+                1 => Self::repeater(first, facing),
+                4 => Self::repeater(second, facing),
+                _ => GenericBlockState::air(),
+            },
+            Group::Delayed(delay, center, left, right) => match index {
+                0 => Self::chain_block(),
+                1 => Self::repeater(delay, facing),
+                3 => Self::instrument_block_or_else(center, || Self::chain_block()),
+                4 => Self::note_block_or_else(center, || Self::chain_block()),
+                6 => Self::instrument_block_or_else(left, || GenericBlockState::air()),
+                7 => Self::note_block_or_else(left, || GenericBlockState::air()),
+                9 => Self::instrument_block_or_else(right, || GenericBlockState::air()),
+                10 => Self::note_block_or_else(right, || GenericBlockState::air()),
+                _ => GenericBlockState::air(),
+            },
+            Group::Sustain(left, right) => match index {
+                0 | 3 | 4 => Self::chain_block(),
+                1 | 5 => Self::redstone_wire(),
+                6 => Self::instrument_block_or_else(left, || GenericBlockState::air()),
+                7 => Self::note_block_or_else(left, || GenericBlockState::air()),
+                9 => Self::instrument_block_or_else(right, || GenericBlockState::air()),
+                10 => Self::note_block_or_else(right, || GenericBlockState::air()),
+                _ => GenericBlockState::air(),
+            },
+            Group::SustainEnd(center, left, right) => match index {
+                0 => Self::chain_block(),
+                1 => Self::redstone_wire(),
+                3 => Self::instrument_block_or_else(center, || Self::chain_block()),
+                4 => Self::note_block_or_else(center, || Self::chain_block()),
+                6 => Self::instrument_block_or_else(left, || GenericBlockState::air()),
+                7 => Self::note_block_or_else(left, || GenericBlockState::air()),
+                9 => Self::instrument_block_or_else(right, || GenericBlockState::air()),
+                10 => Self::note_block_or_else(right, || GenericBlockState::air()),
+                _ => GenericBlockState::air(),
+            },
+        }
+    }
+
+    fn chain_block() -> GenericBlockState {
+        GenericBlockState {
+            name: "minecraft:smooth_stone".into(),
+            properties: Default::default(),
+        }
+    }
+
+    fn redstone_wire() -> GenericBlockState {
+        let properties = HashMap::from([
+            ("power".into(), "0".into()),
+            ("north".into(), "side".into()),
+            ("south".into(), "side".into()),
+            ("east".into(), "side".into()),
+            ("west".into(), "side".into()),
+        ]);
+        GenericBlockState {
+            name: "minecraft:redstone_wire".into(),
+            properties,
+        }
+    }
+
+    fn repeater(delay: &u8, facing: Cow<'static, str>) -> GenericBlockState {
+        let properties = HashMap::from([
+            ("delay".into(), delay.to_string().into()),
+            ("facing".into(), facing),
+            ("locked".into(), "false".into()),
+            ("powered".into(), "false".into()),
+        ]);
+        GenericBlockState {
+            name: "minecraft:repeater".into(),
+            properties,
+        }
+    }
+
+    fn note_block_or_else<F>(note: &Option<Note>, fallback: F) -> GenericBlockState
+    where
+        F: FnOnce() -> GenericBlockState,
+    {
+        note.as_ref()
+            .and_then(|n| n.note_block_state())
+            .unwrap_or_else(fallback)
+    }
+
+    fn instrument_block_or_else<F>(note: &Option<Note>, fallback: F) -> GenericBlockState
+    where
+        F: FnOnce() -> GenericBlockState,
+    {
+        note.as_ref()
+            .and_then(|n| n.instrument.instrument_block())
+            .unwrap_or_else(fallback)
+    }
+}
+
 /// litematic builder
 pub struct SchematicBuilder {
     tracks: Vec<Vec<Group>>,
     wrap_length: usize,
-    floor_block: GenericBlockState,
-    chain_block: GenericBlockState,
 }
 
 impl SchematicBuilder {
     /// new builder with defaults
     pub fn new() -> Self {
-        let floor_block = GenericBlockState {
-            name: "minecraft:white_concrete".into(),
-            properties: Default::default(),
-        };
-        let chain_block = GenericBlockState {
-            name: "minecraft:smooth_stone".into(),
-            properties: Default::default(),
-        };
         Self {
             tracks: Default::default(),
             wrap_length: usize::MAX,
-            floor_block,
-            chain_block,
         }
     }
 
     /// set max groups per row
     pub fn with_wrap_length(mut self, wrap_length: usize) -> Self {
         self.wrap_length = wrap_length;
-        self
-    }
-
-    /// set floor block type
-    pub fn with_floor_block(mut self, block: GenericBlockState) -> Self {
-        self.floor_block = block;
-        self
-    }
-
-    /// set chain block type
-    pub fn with_chain_block(mut self, block: GenericBlockState) -> Self {
-        self.chain_block = block;
         self
     }
 
@@ -183,8 +293,12 @@ impl SchematicBuilder {
         );
 
         // floor
+        let floor_block = GenericBlockState {
+            name: "minecraft:white_concrete".into(),
+            properties: Default::default(),
+        };
         for (x, z) in (0..width).flat_map(|x| (0..length).map(move |z| (x, z))) {
-            region.set_block(BlockPos::new(x, 0, z), self.floor_block.clone());
+            region.set_block(BlockPos::new(x, 0, z), floor_block.clone());
         }
 
         let mut cursor: i32 = -3;
@@ -213,7 +327,7 @@ impl SchematicBuilder {
                 false => BlockPos::new(cursor, 1, (self.wrap_length as i32 - progress) * 2 - 1),
             };
 
-            self.place_group(&mut region, group, anchor, pointing_south);
+            group.place(&mut region, anchor, pointing_south);
         }
 
         region.as_litematic(description, author)
@@ -234,137 +348,8 @@ impl SchematicBuilder {
             region.set_block(BlockPos::new(cursor + dx, 1 + dy, turning_pos), block)
         };
         for dx in [1, 0, -1] {
-            place_tuple(dx, 0, self.chain_block.clone());
-            place_tuple(dx, 1, Self::redstone_wire());
+            place_tuple(dx, 0, Group::chain_block());
+            place_tuple(dx, 1, Group::redstone_wire());
         }
-    }
-
-    /// place 12 blocks of a group at anchor
-    fn place_group(
-        &self,
-        region: &mut Region<GenericBlockState>,
-        group: &Group,
-        anchor: BlockPos,
-        pointing_south: bool,
-    ) {
-        const LAYOUT: [(i32, i32, i32, u8); 12] = [
-            // pillar
-            (1, 0, 0, 0),
-            (1, 1, 0, 1),
-            (1, 2, 0, 2),
-            // center
-            (1, 0, 1, 3),
-            (1, 1, 1, 4),
-            (1, 2, 1, 5),
-            // left
-            (0, 0, 1, 6),
-            (0, 1, 1, 7),
-            (0, 2, 1, 8),
-            // right
-            (2, 0, 1, 9),
-            (2, 1, 1, 10),
-            (2, 2, 1, 11),
-        ];
-
-        // idk why mojang does this :(
-        let facing: Cow<'static, str> = match pointing_south {
-            true => "north".into(),
-            false => "south".into(),
-        };
-
-        for (dx, dy, dz, idx) in &LAYOUT {
-            let world_pos = match pointing_south {
-                true => BlockPos::new(anchor.x + dx, anchor.y + dy, anchor.z + dz),
-                false => BlockPos::new(anchor.x + dx, anchor.y + dy, anchor.z + 1 - dz),
-            };
-            region.set_block(world_pos, self.get_block(group, idx, facing.clone()));
-        }
-    }
-
-    fn get_block(&self, group: &Group, index: &u8, facing: Cow<'static, str>) -> GenericBlockState {
-        match group {
-            Group::DelayOnly(first, second) => match index {
-                0 | 3 => self.chain_block.clone(),
-                1 => Self::repeater(first, facing),
-                4 => Self::repeater(second, facing),
-                _ => GenericBlockState::air(),
-            },
-            Group::Delayed(delay, center, left, right) => match index {
-                0 => self.chain_block.clone(),
-                1 => Self::repeater(delay, facing),
-                3 => Self::instrument_block_or_else(center, || self.chain_block.clone()),
-                4 => Self::note_block_or_else(center, || self.chain_block.clone()),
-                6 => Self::instrument_block_or_else(left, || GenericBlockState::air()),
-                7 => Self::note_block_or_else(left, || GenericBlockState::air()),
-                9 => Self::instrument_block_or_else(right, || GenericBlockState::air()),
-                10 => Self::note_block_or_else(right, || GenericBlockState::air()),
-                _ => GenericBlockState::air(),
-            },
-            Group::Sustain(left, right) => match index {
-                0 | 3 | 4 => self.chain_block.clone(),
-                1 | 5 => Self::redstone_wire(),
-                6 => Self::instrument_block_or_else(left, || GenericBlockState::air()),
-                7 => Self::note_block_or_else(left, || GenericBlockState::air()),
-                9 => Self::instrument_block_or_else(right, || GenericBlockState::air()),
-                10 => Self::note_block_or_else(right, || GenericBlockState::air()),
-                _ => GenericBlockState::air(),
-            },
-            Group::SustainEnd(center, left, right) => match index {
-                0 => self.chain_block.clone(),
-                1 => Self::redstone_wire(),
-                3 => Self::instrument_block_or_else(center, || self.chain_block.clone()),
-                4 => Self::note_block_or_else(center, || self.chain_block.clone()),
-                6 => Self::instrument_block_or_else(left, || GenericBlockState::air()),
-                7 => Self::note_block_or_else(left, || GenericBlockState::air()),
-                9 => Self::instrument_block_or_else(right, || GenericBlockState::air()),
-                10 => Self::note_block_or_else(right, || GenericBlockState::air()),
-                _ => GenericBlockState::air(),
-            },
-        }
-    }
-
-    fn redstone_wire() -> GenericBlockState {
-        let properties = HashMap::from([
-            ("power".into(), "0".into()),
-            ("north".into(), "side".into()),
-            ("south".into(), "side".into()),
-            ("east".into(), "side".into()),
-            ("west".into(), "side".into()),
-        ]);
-        GenericBlockState {
-            name: "minecraft:redstone_wire".into(),
-            properties,
-        }
-    }
-
-    fn repeater(delay: &u8, facing: Cow<'static, str>) -> GenericBlockState {
-        let properties = HashMap::from([
-            ("delay".into(), delay.to_string().into()),
-            ("facing".into(), facing),
-            ("locked".into(), "false".into()),
-            ("powered".into(), "false".into()),
-        ]);
-        GenericBlockState {
-            name: "minecraft:repeater".into(),
-            properties,
-        }
-    }
-
-    fn note_block_or_else<F>(note: &Option<Note>, fallback: F) -> GenericBlockState
-    where
-        F: FnOnce() -> GenericBlockState,
-    {
-        note.as_ref()
-            .and_then(|n| n.note_block_state())
-            .unwrap_or_else(fallback)
-    }
-
-    fn instrument_block_or_else<F>(note: &Option<Note>, fallback: F) -> GenericBlockState
-    where
-        F: FnOnce() -> GenericBlockState,
-    {
-        note.as_ref()
-            .and_then(|n| n.instrument.instrument_block())
-            .unwrap_or_else(fallback)
     }
 }
