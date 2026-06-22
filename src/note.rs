@@ -1,15 +1,15 @@
+use crate::{Panning, Position, Volume};
 use mcdata::GenericBlockState;
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::{self, Display, Formatter};
-
-use crate::{Panning, Volume};
+use std::ops::{Deref, DerefMut};
 
 // note
 //
 // ============================================================================
 
-/// Represents a single note in the song with timing, instrument, and modulation data.
+/// a single note with timing, instrument, and modulation data.
 #[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Note {
     pub instrument: Instrument,
@@ -20,7 +20,7 @@ pub struct Note {
 }
 
 impl Note {
-    /// Creates a new note with the specified position and tone parameters.
+    /// creates a new note with the given instrument and key.
     pub fn new(instrument: Instrument, key: Key) -> Self {
         let mut note = Self::default();
         note.instrument = instrument;
@@ -28,17 +28,17 @@ impl Note {
         note
     }
 
-    /// Returns the tone of the note as a tuple (instrument, key)
+    /// returns the tone as a tuple (instrument, key).
     pub fn tone(&self) -> (Instrument, Key) {
         (self.instrument, self.key)
     }
 
-    /// Returns the modulation parameters as a tuple (velocity, panning, pitch)
+    /// returns the modulation parameters as a tuple (velocity, panning, pitch).
     pub fn modulation(&self) -> (u8, i8, i16) {
         (self.velocity.get(), self.panning.get(), self.pitch)
     }
 
-    /// Returns the Minecraft note block block state for this note.
+    /// returns the minecraft note block block state for this note.
     pub fn note_block_state(&self) -> Option<GenericBlockState> {
         let note = self.key.minecraft_note()?;
         let instr = self.instrument.instrument_property();
@@ -66,14 +66,14 @@ impl From<&Tone> for Note {
     }
 }
 
-/// A tone is a pair of an instrument and a key.
+/// a tone is a pair of an instrument and a key.
 pub type Tone = (Instrument, Key);
 
 // instrument
 //
 // ============================================================================
 
-/// Built-in Minecraft note block instruments.
+/// built-in minecraft note block instruments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Instrument {
     Harp,
@@ -285,7 +285,7 @@ impl Instrument {
         ),
     ];
 
-    /// Returns the instrument property string used in Minecraft's note block block state.
+    /// returns the instrument property string for minecraft note block state.
     pub fn instrument_property(&self) -> &'static str {
         Self::TABLE
             .iter()
@@ -294,7 +294,7 @@ impl Instrument {
             .unwrap_or("custom")
     }
 
-    /// Returns the block under the note block for this instrument's sound.
+    /// returns the block under the note block for this instrument's sound.
     pub fn instrument_block(&self) -> Option<GenericBlockState> {
         if matches!(self, Self::Imitate(_)) {
             return None;
@@ -309,7 +309,7 @@ impl Instrument {
         })
     }
 
-    /// Returns the mob head block for this instrument, if it is a mob head instrument.
+    /// returns the mob head block for this instrument, if it is a mob head instrument.
     pub fn head_block(&self) -> Option<GenericBlockState> {
         if !matches!(self, Self::Imitate(_)) {
             return None;
@@ -357,7 +357,7 @@ impl Display for Instrument {
 //
 // ============================================================================
 
-/// Represents a musical key (F#3-F#5)
+/// a musical key (f#3-f#5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Key(u8);
 
@@ -399,13 +399,13 @@ impl Key {
         Self(key)
     }
 
-    /// Converts a Minecraft note (0-24, F#3-F#5) to the corresponding NBS Key.
+    /// converts a minecraft note (0-24, f#3-f#5) to the corresponding nbs key.
     pub fn from_minecraft_note<T: TryInto<u8>>(note: T) -> Option<Self> {
         let key = note.try_into().ok()?.checked_add(33)?;
         if key <= 57 { Some(Self(key)) } else { None }
     }
 
-    /// Converts the NBS Key to the corresponding Minecraft note (0-24, F#3-F#5).
+    /// converts the nbs key to the corresponding minecraft note (0-24, f#3-f#5).
     pub fn minecraft_note(&self) -> Option<u8> {
         self.0.checked_sub(33).filter(|&n| n <= 24)
     }
@@ -435,5 +435,54 @@ impl Display for Key {
             .map(|k| format!("{k:02} clicks"))
             .unwrap_or("invalid".into());
         write!(f, "{note}{octave} ({clicks})")
+    }
+}
+
+// notes collection
+//
+// ============================================================================
+
+/// ordered note set, guarantees position order for nbs serialization.
+#[derive(Debug, Default, Clone, PartialEq, PartialOrd)]
+pub struct Notes(BTreeMap<Position, Note>);
+
+impl Deref for Notes {
+    type Target = BTreeMap<Position, Note>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Notes {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl IntoIterator for Notes {
+    type Item = (Position, Note);
+    type IntoIter = std::collections::btree_map::IntoIter<Position, Note>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a Notes {
+    type Item = (&'a Position, &'a Note);
+    type IntoIter = std::collections::btree_map::Iter<'a, Position, Note>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl From<BTreeMap<Position, Note>> for Notes {
+    fn from(map: BTreeMap<Position, Note>) -> Self {
+        Notes(map)
+    }
+}
+
+impl FromIterator<(Position, Note)> for Notes {
+    fn from_iter<T: IntoIterator<Item = (Position, Note)>>(iter: T) -> Self {
+        Notes(iter.into_iter().collect())
     }
 }

@@ -1,23 +1,23 @@
 //! NBS (Note Block Studio) file format parser and writer.
 
 use crate::nbs_ext::{NbsReadExt, NbsWriteExt};
-use crate::{CustomInstrument, Header, Instrument, Key, Layer, Note, Position, Song};
+use crate::{CustomInstrument, Header, Instrument, Key, Layer, Note, Notes, Position, Song};
 use crate::{Index, Panning, Result, Version, Volume};
 use std::collections::BTreeMap;
 use std::io;
 use std::num::NonZeroU32;
 
-/// Unified trait for both parsing and writing data, optionally with context
+/// unified trait for both parsing and writing data, optionally with context
 pub(super) trait Codec {
-    /// Context type shared for both parsing and writing (use () when no context is needed)
+    /// context type shared for both parsing and writing (use () when no context is needed)
     type Context;
 
-    /// Parse data from a reader with context
+    /// parse data from a reader with context
     fn parse<R: io::Read>(reader: &mut R, context: &Self::Context) -> Result<Self>
     where
         Self: Sized;
 
-    /// Write data to a writer with context
+    /// write data to a writer with context
     fn write<W: io::Write>(&self, writer: &mut W, context: &Self::Context) -> Result<()>;
 }
 
@@ -26,7 +26,7 @@ pub(super) trait Codec {
 // ============================================================================
 
 impl Song {
-    /// Parses a complete Song from a reader
+    /// parses a complete Song from a reader
     pub fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
         let mut song = Self::default();
 
@@ -52,7 +52,7 @@ impl Song {
         Ok(song)
     }
 
-    /// Writes the song to a writer.
+    /// writes the song to a writer.
     pub fn write<W: io::Write>(&mut self, writer: &mut W) -> Result<()> {
         self.refresh();
 
@@ -177,7 +177,7 @@ impl Codec for Header {
 //
 // ============================================================================
 
-impl Codec for BTreeMap<Position, Note> {
+impl Codec for Notes {
     type Context = Version;
 
     fn parse<R: io::Read>(reader: &mut R, version: &Self::Context) -> Result<Self> {
@@ -198,7 +198,7 @@ impl Codec for BTreeMap<Position, Note> {
             }
         }
 
-        Ok(notes)
+        Ok(notes.into())
     }
 
     fn write<W: io::Write>(&self, writer: &mut W, context: &Self::Context) -> Result<()> {
@@ -275,7 +275,7 @@ impl Codec for Note {
 impl Codec for Layer {
     type Context = Version;
 
-    /// Parses a Layer from a reader with version context
+    /// parses a Layer from a reader with version context
     fn parse<R: io::Read>(reader: &mut R, version: &Self::Context) -> Result<Self> {
         let mut layer = Self::default();
         layer.name = reader.read_string()?;
@@ -293,7 +293,7 @@ impl Codec for Layer {
         Ok(layer)
     }
 
-    /// Writes a Layer to a writer with version context
+    /// writes a Layer to a writer with version context
     fn write<W: io::Write>(&self, writer: &mut W, version: &Self::Context) -> Result<()> {
         writer.write_string(&self.name)?;
 
@@ -318,7 +318,7 @@ impl Codec for Layer {
 impl Codec for CustomInstrument {
     type Context = ();
 
-    /// Parses an Instrument from a reader
+    /// parses an Instrument from a reader
     fn parse<R: io::Read>(reader: &mut R, _: &Self::Context) -> Result<Self> {
         let mut instrument = Self::default();
         instrument.name = reader.read_string()?;
@@ -328,7 +328,7 @@ impl Codec for CustomInstrument {
         Ok(instrument)
     }
 
-    /// Writes an Instrument to a writer
+    /// writes an Instrument to a writer
     fn write<W: io::Write>(&self, writer: &mut W, _: &Self::Context) -> Result<()> {
         writer.write_string(&self.name)?;
         writer.write_string(&self.file)?;

@@ -1,73 +1,9 @@
-use crate::{Index, Note, Position};
+use crate::{Index, Note, Notes, Position};
 use std::collections::BTreeMap;
 
-/// Pattern 匹配结果，保留分组边界。
-/// 每组对应一次完整的 pattern 匹配。
-#[derive(Debug, Clone)]
-pub struct MatchedGroups {
-    groups: Vec<BTreeMap<Position, Note>>,
-}
-
-impl MatchedGroups {
-    pub fn empty() -> Self {
-        Self { groups: vec![] }
-    }
-
-    /// 所有匹配组，每组是一次 pattern 匹配的全部音符。
-    pub fn groups(&self) -> &[BTreeMap<Position, Note>] {
-        &self.groups
-    }
-
-    /// 匹配到的音符总数。
-    pub fn matched_len(&self) -> usize {
-        self.groups.iter().map(|g| g.len()).sum()
-    }
-
-    /// 模板音符：每组的第一个音（基音）。用于投影，每组只贡献一个音。
-    /// 同 tick 不同层的基音会各自保留。
-    pub fn templates(&self) -> BTreeMap<Position, Note> {
-        self.groups
-            .iter()
-            .filter_map(|group| group.iter().next().map(|(p, n)| (*p, n.clone())))
-            .collect()
-    }
-}
-
-pub trait NotesExt {
-    fn matches_by<F>(
-        self,
-        pattern: &[Index],
-        song_length: Index,
-        f: F,
-    ) -> (BTreeMap<Position, Note>, BTreeMap<Position, Note>)
-    where
-        F: Fn(&Note, &Note) -> bool;
-
-    /// 同 matches_by 但保留分组边界，返回 MatchedGroups。
-    fn group_match<F>(
-        self,
-        pattern: &[Index],
-        song_length: Index,
-        f: F,
-    ) -> (MatchedGroups, BTreeMap<Position, Note>)
-    where
-        F: Fn(&Note, &Note) -> bool;
-
-    /// Reassign layers across multiple note groups so they don't overlap.
-    fn reassign_layers<I, J>(slices: I) -> BTreeMap<Position, Note>
-    where
-        I: IntoIterator<Item = J>,
-        J: IntoIterator<Item = (Index, Note)>;
-}
-
-impl NotesExt for BTreeMap<Position, Note> {
-    /// Separates notes into matching and non-matching groups based on pattern matching.
-    fn matches_by<F>(
-        self,
-        pattern: &[Index],
-        song_length: Index,
-        f: F,
-    ) -> (BTreeMap<Position, Note>, BTreeMap<Position, Note>)
+impl Notes {
+    /// separates notes into matched and unmatched groups via pattern matching.
+    pub fn matches_by<F>(self, pattern: &[Index], song_length: Index, f: F) -> (Notes, Notes)
     where
         F: Fn(&Note, &Note) -> bool,
     {
@@ -90,7 +26,6 @@ impl NotesExt for BTreeMap<Position, Note> {
                 continue;
             }
 
-            // 按偏移模式检查匹配
             let base = candidates[i].pos.tick();
             let result = pattern.into_iter().try_fold(vec![], |mut indices, p| {
                 let target = (base + p) % song_length;
@@ -103,7 +38,6 @@ impl NotesExt for BTreeMap<Position, Note> {
                 })
             });
 
-            // 在匹配组成立时选中
             if let Some(indices) = result {
                 for &idx in &indices {
                     candidates[idx].is_matched = true;
@@ -118,15 +52,17 @@ impl NotesExt for BTreeMap<Position, Note> {
                 false => unmatched.insert(note.pos, note.note),
             };
         }
-        (matched, unmatched)
+        (matched.into(), unmatched.into())
     }
 
-    fn group_match<F>(
+    /// like matches_by but preserves group boundaries, returns MatchedGroups.
+    #[allow(deprecated)]
+    pub fn group_match<F>(
         self,
         pattern: &[Index],
         song_length: Index,
         f: F,
-    ) -> (MatchedGroups, BTreeMap<Position, Note>)
+    ) -> (MatchedGroups, Notes)
     where
         F: Fn(&Note, &Note) -> bool,
     {
@@ -185,11 +121,16 @@ impl NotesExt for BTreeMap<Position, Note> {
             }
         }
 
-        (MatchedGroups { groups }, unmatched)
+        (
+            MatchedGroups {
+                groups: groups.into_iter().map(Into::into).collect(),
+            },
+            unmatched.into(),
+        )
     }
 
-    /// Reassign layers across multiple note groups so they don't overlap.
-    fn reassign_layers<I, J>(slices: I) -> BTreeMap<Position, Note>
+    /// reassign layers across multiple note groups so they don't overlap.
+    pub fn reassign_layers<I, J>(slices: I) -> Notes
     where
         I: IntoIterator<Item = J>,
         J: IntoIterator<Item = (Index, Note)>,
@@ -220,6 +161,41 @@ impl NotesExt for BTreeMap<Position, Note> {
             base_layer += max_layer;
         }
 
-        result
+        result.into()
+    }
+}
+
+/// pattern match result with group boundaries preserved.
+/// each group corresponds to one complete pattern match.
+#[deprecated(note = "this type is planned for deprecation")]
+#[allow(deprecated)]
+#[derive(Debug, Clone)]
+pub struct MatchedGroups {
+    groups: Vec<Notes>,
+}
+
+#[allow(deprecated)]
+impl MatchedGroups {
+    pub fn empty() -> Self {
+        Self { groups: vec![] }
+    }
+
+    /// all matched groups, each group is all notes from one pattern match.
+    pub fn groups(&self) -> &[Notes] {
+        &self.groups
+    }
+
+    /// total number of matched notes.
+    pub fn matched_len(&self) -> usize {
+        self.groups.iter().map(|g| g.len()).sum()
+    }
+
+    /// template notes: first note of each group (base). for projection, one note per group.
+    /// bases at different layers on the same tick are each preserved.
+    pub fn templates(&self) -> Notes {
+        self.groups
+            .iter()
+            .filter_map(|group| group.iter().next().map(|(p, n)| (*p, n.clone())))
+            .collect()
     }
 }

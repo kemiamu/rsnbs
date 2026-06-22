@@ -18,52 +18,51 @@ mod tests;
 // ============================================================================
 
 mod song {
-    use super::types::{Index, Panning, Position, Version, Volume};
-    use super::{Note, Result};
-    use std::collections::BTreeMap;
+    use super::types::{Index, Panning, Version, Volume};
+    use super::{Notes, Result};
 
-    /// Represents a complete NBS song with header, notes, layers, and instruments.
+    /// represents a complete nbs song with header, notes, layers, and instruments.
     #[derive(Debug, Default, Clone, PartialEq, PartialOrd)]
     pub struct Song {
         pub header: Header,
         // Position data is stored redundantly due to incremental encoding
         // I don't know why the header's song_length is only u16 :(
-        pub notes: BTreeMap<Position, Note>,
+        pub notes: Notes,
         pub layers: Vec<Layer>,
         pub custom_instruments: Vec<CustomInstrument>,
     }
 
     impl Song {
-        /// Creates a new empty Song with default values.
+        /// creates a new empty song with default values.
         pub fn new() -> Self {
             Self::default()
         }
 
-        /// Opens and parses an NBS file from a file path
+        /// opens and parses an nbs file from a file path
         pub fn open_nbs<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
             let mut file = std::fs::File::open(path)?;
             Self::parse(&mut file)
         }
 
-        /// Parses an NBS file from standard input
+        /// parses an nbs file from standard input
         pub fn from_stdin() -> Result<Self> {
             let mut stdin = std::io::stdin();
             Self::parse(&mut stdin)
         }
 
-        /// Saves the song to an NBS file at the specified path
+        /// saves the song to an nbs file at the specified path
         pub fn save_nbs<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<()> {
             let mut file = std::fs::File::create(path)?;
             self.write(&mut file)
         }
 
-        /// Writes the song to standard output
+        /// writes the song to standard output
         pub fn to_stdout(&mut self) -> Result<()> {
             let mut stdout = std::io::stdout();
             self.write(&mut stdout)
         }
 
-        /// Refreshes song data for consistency.
+        /// refreshes song data for consistency.
         pub fn refresh(&mut self) {
             // 从音符计算歌曲长度
             match self.notes.iter().map(|(pos, _)| pos.tick()).max() {
@@ -79,7 +78,7 @@ mod song {
     //
     // ============================================================================
 
-    /// Contains metadata and song information from the NBS file header.
+    /// contains metadata and song information from the nbs file header.
     #[derive(Debug, Clone, PartialEq, PartialOrd)]
     pub struct Header {
         pub version: Version,
@@ -137,7 +136,7 @@ mod song {
     //
     // ============================================================================
 
-    /// Represents a layer in the song with volume, panning, and lock settings.
+    /// represents a layer with volume, panning, and lock settings.
     #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct Layer {
         pub name: String,
@@ -161,7 +160,7 @@ mod song {
     //
     // ============================================================================
 
-    /// Represents an instrument with sound file, pitch, and playback settings.
+    /// represents an instrument with sound file, pitch, and playback settings.
     #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct CustomInstrument {
         pub name: String,
@@ -187,10 +186,10 @@ mod song {
 // ============================================================================
 
 mod types {
-    /// The current NBS (Note Block Studio) file format version.
+    /// the current nbs (note block studio) file format version.
     const CURRENT_NBS_VERSION: u8 = 6;
 
-    /// Represents a valid NBS version format
+    /// represents a valid nbs version format
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct Version(u8);
 
@@ -213,7 +212,7 @@ mod types {
         }
     }
 
-    /// Represents a position in the NBS file, with a tick and layer index.
+    /// represents a position with tick and layer index.
     #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct Position {
         tick: Index,
@@ -234,7 +233,7 @@ mod types {
         }
     }
 
-    /// Represents Volume value in range 0-100
+    /// represents volume value in range 0-100
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct Volume(u8);
 
@@ -257,7 +256,7 @@ mod types {
         }
     }
 
-    /// Represents panning value in range -100 to 100
+    /// represents panning value in range -100 to 100
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct Panning(i8);
 
@@ -286,7 +285,7 @@ mod types {
     //
     // ============================================================================
 
-    /// Custom error types
+    /// custom error types
     #[derive(Debug, thiserror::Error)]
     pub enum Error {
         // #[error("Invalid key: {0}")]

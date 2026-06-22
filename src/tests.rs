@@ -1,14 +1,16 @@
 use crate::schematic::SchematicBuilder;
-use crate::util::{MatchedGroups, NotesExt};
-use crate::{Index, Note, Position, Song, Tone, Version};
+use crate::util::MatchedGroups;
+use crate::{Index, Note, Notes, Position, Song, Tone, Version};
 use counter::Counter;
-use mcdata::{BlockState, util::BlockPos};
 use ordered_float::OrderedFloat;
-use rustmatica::Region;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::iter::repeat;
 use std::ops::Range;
+
 type Multiset<T> = counter::Counter<T>;
+
+// A note point in the (tick, tone) plane of the score
+type Point = (Index, Tone);
 
 #[test]
 fn test_scale_ticks() {
@@ -18,7 +20,7 @@ fn test_scale_ticks() {
     const DEN: Index = 1;
 
     // Scale each note's tick by numerator/denominator, multiply first
-    let scaled_notes: BTreeMap<Position, Note> = song
+    let scaled_notes: Notes = song
         .notes
         .into_iter()
         .map(|(pos, note)| {
@@ -48,6 +50,7 @@ fn test_v6_to_v5_conversion() {
 // cargo test test_sectional_matching && cargo test analyze_tones
 
 #[test]
+#[allow(deprecated)]
 fn test_sectional_matching() {
     let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
     let notes = song.notes.clone();
@@ -58,9 +61,7 @@ fn test_sectional_matching() {
     let wrap_length: usize = 17;
 
     // 匹配+回退包装：匹配音符数不足时回退所有匹配
-    let try_match = |notes: BTreeMap<Position, Note>,
-                     pattern: &[Index]|
-     -> (MatchedGroups, BTreeMap<Position, Note>) {
+    let try_match = |notes: Notes, pattern: &[Index]| -> (MatchedGroups, Notes) {
         let saved = notes.clone();
         let (matched, unmatched) =
             notes.group_match(pattern, song_length, |a, b| a.tone() == b.tone());
@@ -91,7 +92,7 @@ fn test_sectional_matching() {
 
     // 第二步：未匹配上的进入章节匹配
     for section_range in sections {
-        let section_notes: BTreeMap<Position, Note> = remaining
+        let section_notes: Notes = remaining
             .clone()
             .into_iter()
             .filter(|(p, _)| section_range.contains(&p.tick()))
@@ -110,18 +111,16 @@ fn test_sectional_matching() {
     }
 
     // 输出 nbs
-    song.notes =
-        <BTreeMap<Position, Note> as NotesExt>::reassign_layers(all_matched.iter().map(|mg| {
-            mg.groups()
-                .iter()
-                .flat_map(|g| g.iter().map(|(p, n)| (p.tick(), n.clone())))
-        }));
+    song.notes = Notes::reassign_layers(all_matched.iter().map(|mg| {
+        mg.groups()
+            .iter()
+            .flat_map(|g| g.iter().map(|(p, n)| (p.tick(), n.clone())))
+    }));
     song.header.is_loop = true;
     song.save_nbs("fixtures/out_sectional.nbs").unwrap();
 
     // 输出 litematic
-    let projection_clusters: Vec<BTreeMap<Position, Note>> =
-        all_matched.iter().map(|mg| mg.templates()).collect();
+    let projection_clusters: Vec<Notes> = all_matched.iter().map(|mg| mg.templates()).collect();
 
     let mut builder = SchematicBuilder::new().with_wrap_length(wrap_length);
 
@@ -146,12 +145,12 @@ fn analyze_tones() {
     for (pos, note) in song.notes {
         by_tone.entry(note.tone()).or_default().push((pos, note));
     }
-    let slices: Vec<BTreeMap<Position, Note>> = by_tone
+    let slices: Vec<Notes> = by_tone
         .into_values()
         .map(|v| v.into_iter().collect())
         .collect();
 
-    song.notes = <BTreeMap<Position, Note> as NotesExt>::reassign_layers(
+    song.notes = Notes::reassign_layers(
         slices
             .into_iter()
             .map(|m| m.into_iter().map(|(p, n)| (p.tick(), n))),
@@ -248,16 +247,10 @@ fn test_analyze_transposition_equivalence() {
         remaining_notes.push((tick, note));
     }
 
-    song.notes = <BTreeMap<Position, Note> as NotesExt>::reassign_layers(vec![
-        matched_notes,
-        remaining_notes,
-    ]);
+    song.notes = Notes::reassign_layers(vec![matched_notes, remaining_notes]);
     song.header.is_loop = true;
     song.save_nbs("fixtures/transposition.nbs").unwrap();
 }
-
-// A note point in the (tick, tone) plane of the score
-type Point = (Index, Tone);
 
 /// Approximate Minkowski sum decomposition via conflict resolution for noisy data.
 ///
@@ -343,8 +336,6 @@ pub fn satisfy_constraints(
 pub fn test_deconvolve_d1() {
     // TODO: 优化空间巨大，但先验证理论模型
     //       开放性问题，评价模型尚不完善
-    // #[cfg(not(debug_assertions))]
-    // compile_error!("unimplemented path in release");
 
     /// find best pattern arrangement via backtracking
     fn deconvolve(points_mset: &Vec<Point>, loop_len: Index) -> Vec<Point> {
@@ -439,7 +430,7 @@ pub fn test_deconvolve_d1() {
         }
     }
 
-    song.notes = <BTreeMap<Position, Note> as NotesExt>::reassign_layers(vec![matched, remaining]);
+    song.notes = Notes::reassign_layers(vec![matched, remaining]);
     song.header.is_loop = true;
     song.save_nbs("fixtures/deconvolve.nbs").unwrap();
 }
@@ -572,7 +563,7 @@ pub fn test_deconvolve() {
         }
     }
 
-    song.notes = <BTreeMap<Position, Note> as NotesExt>::reassign_layers(vec![matched, remaining]);
+    song.notes = Notes::reassign_layers(vec![matched, remaining]);
     song.header.is_loop = true;
     song.save_nbs("fixtures/deconvolve.nbs").unwrap();
 }
