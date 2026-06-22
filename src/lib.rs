@@ -10,8 +10,8 @@ pub use note::*;
 pub use song::*;
 pub use types::*;
 
-// #[cfg(test)]
-// mod tests;
+#[cfg(test)]
+mod tests;
 
 // song
 //
