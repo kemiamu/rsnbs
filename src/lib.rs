@@ -62,13 +62,22 @@ mod song {
             self.write(&mut stdout)
         }
 
+        /// returns the tick count (max tick + 1) of the song.
+        pub fn len(&self) -> super::Index {
+            self.notes
+                .last_key_value()
+                .map(|(p, _)| p.tick() + 1)
+                .unwrap_or(0)
+        }
+
         /// refreshes song data for consistency.
         pub fn refresh(&mut self) {
-            // 从音符计算歌曲长度
-            match self.notes.iter().map(|(pos, _)| pos.tick()).max() {
-                Some(last_tick) => self.header.song_length = last_tick,
-                None => self.header.song_length = 1,
-            }
+            // 更新歌曲长度
+            self.header.song_length = self
+                .notes
+                .last_key_value()
+                .map(|(p, _)| p.tick())
+                .unwrap_or(1);
             // 更新 layer 数量
             self.header.song_layers = self.layers.len() as _;
         }

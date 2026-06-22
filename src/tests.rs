@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::iter::repeat;
 use std::ops::Range;
 
-type Multiset<T> = counter::Counter<T>;
+type Multiset<T> = HashMap<T, usize>;
 
 // A note point in the (tick, tone) plane of the score
 type Point = (Index, Tone);
@@ -158,6 +158,49 @@ fn analyze_tones() {
     song.header.is_loop = true;
     song.save_nbs("fixtures/analyzed.nbs").unwrap();
 }
+
+//
+//
+// ============================================================================
+
+#[test]
+fn test_deconvolve_m1() {
+    let song = Song::open_nbs("fixtures/source.nbs").unwrap();
+
+    let loop_length = song.len();
+    let half_loop = loop_length / 2;
+
+    let points: Vec<Point> = song
+        .notes
+        .iter()
+        .map(|(pos, note)| (pos.tick(), note.tone()))
+        .collect();
+
+    let pairs = points
+        .iter()
+        .enumerate()
+        .flat_map(|(i, r)| points[..i].iter().map(move |l| (l, r)));
+
+    // left point of translation `{offset: [&point]}`
+    let mut offsets: HashMap<Index, Multiset<&Point>> = Default::default();
+    offsets = pairs.fold(offsets, |mut acc, pair| {
+        let (left @ &(tl, nl), right @ &(tr, nr)) = pair;
+        let offset = match nr == nl {
+            true => tr - tl,
+            false => return acc,
+        };
+        let (note, offset) = match offset <= half_loop {
+            true => (left, offset),
+            false => (right, loop_length - offset),
+        };
+        *acc.entry(offset).or_default().entry(note).or_default() += 1;
+        acc
+    });
+}
+
+//
+//
+// ============================================================================
 
 #[test]
 fn test_analyze_transposition_equivalence() {
