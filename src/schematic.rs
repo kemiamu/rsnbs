@@ -5,6 +5,7 @@ use mcdata::{BlockState, GenericBlockState, util::BlockPos};
 use rustmatica::{Litematic, Region};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
+use std::num::NonZero;
 
 /// 3×2 block group
 pub enum Group {
@@ -149,8 +150,8 @@ impl Group {
 pub struct SchematicBuilder {
     /// raw track data grouped by tick: (`[({tick: [note]}, coarse)]`)
     tracks: Vec<(BTreeMap<Index, Vec<Note>>, Index)>,
-    /// max groups per row (`group * wrap_length = row length`)
-    wrap_length: usize,
+    /// max groups per row (`group * wrap_length = row length`). `None` means no wrapping.
+    wrap_length: Option<NonZero<usize>>,
 }
 
 impl SchematicBuilder {
@@ -158,12 +159,12 @@ impl SchematicBuilder {
     pub fn new() -> Self {
         Self {
             tracks: Default::default(),
-            wrap_length: usize::MAX,
+            wrap_length: None,
         }
     }
 
-    /// set max groups per row
-    pub fn with_wrap_length(mut self, wrap_length: usize) -> Self {
+    /// set max groups per row. `None` means no wrapping.
+    pub fn with_wrap_length(mut self, wrap_length: Option<NonZero<usize>>) -> Self {
         self.wrap_length = wrap_length;
         self
     }
@@ -184,7 +185,7 @@ impl SchematicBuilder {
     fn generate_groups(
         timed_notes: BTreeMap<Index, Vec<Note>>,
         coarse: Index,
-        wrap_length: usize,
+        wrap_length: Option<NonZero<usize>>,
     ) -> Vec<Group> {
         let mut groups: Vec<Group> = Default::default();
         let mut current_tick: Index = Index::MAX;
@@ -197,9 +198,12 @@ impl SchematicBuilder {
 
             // pure delay groups
             let mut carry = false;
-            while let Some((group, consumed)) =
-                Self::pop_delay_group(delay, coarse, carry, (groups.len() + 1) % wrap_length == 0)
-            {
+            while let Some((group, consumed)) = Self::pop_delay_group(
+                delay,
+                coarse,
+                carry,
+                wrap_length.map_or(false, |wl| (groups.len() + 1) % wl.get() == 0),
+            ) {
                 groups.push(group);
                 delay -= consumed;
                 carry = consumed > coarse;
@@ -219,7 +223,10 @@ impl SchematicBuilder {
                 groups.push(Group::Sustain(notes.pop(), notes.pop()));
                 remaining = remaining.saturating_sub(2);
             }
-            while remaining > 3 || remaining > 0 && (groups.len() + 1) % wrap_length == 0 {
+            while remaining > 3
+                || remaining > 0
+                    && wrap_length.map_or(false, |wl| (groups.len() + 1) % wl.get() == 0)
+            {
                 groups.push(Group::Sustain(notes.pop(), notes.pop()));
                 remaining = remaining.saturating_sub(2);
             }
@@ -296,11 +303,15 @@ impl SchematicBuilder {
             .map(|(timed_notes, coarse)| Self::generate_groups(timed_notes, coarse, wrap_length))
             .collect();
 
+        let max_groups = track_groups.iter().map(|t| t.len()).max().unwrap_or(0);
+        // effective groups per row: wrap_length if set, otherwise the longest track
+        let effective_wrap = wrap_length.map_or(max_groups, |n| n.get());
+
         let width: i32 = track_groups
             .iter()
-            .map(|t| t.len().div_ceil(wrap_length) * 2 + 1)
+            .map(|t| t.len().div_ceil(effective_wrap) * 2 + 1)
             .sum::<usize>() as _;
-        let length: i32 = wrap_length as i32 * 2 + 2;
+        let length: i32 = effective_wrap as i32 * 2 + 2;
         const HEIGHT: i32 = 4;
 
         let mut region: Region<GenericBlockState> = Region::new(
@@ -325,7 +336,7 @@ impl SchematicBuilder {
             // [0, 1, 2, ..., 0, 1, 2, ...]
             track.iter().enumerate()
         }) {
-            let offset = (index % wrap_length) as i32;
+            let offset = wrap_length.map_or(index, |wl| index % wl.get()) as i32;
 
             if index == 0 {
                 // track changed
@@ -336,14 +347,14 @@ impl SchematicBuilder {
                 pointing_south = !pointing_south;
                 cursor += 2;
                 // turning
-                let turning_anchor = Self::turning_pos(pointing_south, cursor, wrap_length * 2);
+                let turning_anchor = Self::turning_pos(pointing_south, cursor, effective_wrap * 2);
                 Self::place_turning(&mut region, turning_anchor);
             }
 
             // track
             let anchor = match pointing_south {
                 true => BlockPos::new(cursor, 1, offset * 2 + 1),
-                false => BlockPos::new(cursor, 1, (wrap_length as i32 - offset) * 2 - 1),
+                false => BlockPos::new(cursor, 1, (effective_wrap as i32 - offset) * 2 - 1),
             };
 
             group.place(&mut region, anchor, pointing_south);

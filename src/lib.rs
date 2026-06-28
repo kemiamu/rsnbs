@@ -289,6 +289,7 @@ mod types {
     }
 
     pub type Index = u32;
+    pub type Tick = Index;
 
     // error
     //
