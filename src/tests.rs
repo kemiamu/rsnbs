@@ -1,16 +1,17 @@
 use crate::schematic::SchematicBuilder;
 use crate::util::MatchedGroups;
-use crate::{Index, Note, Notes, Position, Song, Tone, Version};
+use crate::{Index, Note, Notes, Position, Song, Tick, Tone, Version};
 use counter::Counter;
 use ordered_float::OrderedFloat;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::iter::repeat;
+use std::num::NonZero;
 use std::ops::Range;
 
-type Multiset<T> = HashMap<T, usize>;
+type Multiset<T> = BTreeMap<T, NonZero<usize>>;
 
 // A note point in the (tick, tone) plane of the score
-type Point = (Index, Tone);
+type Point = (Tick, Tone);
 
 #[test]
 fn test_scale_ticks() {
@@ -57,8 +58,8 @@ fn test_sectional_matching() {
 
     let song_length: Index = 1024;
     let min_notes: usize = 0;
-    let coarse: Index = 4;
-    let wrap_length: usize = 17;
+    let coarse: Index = 0;
+    let wrap_length = None;
 
     // 匹配+回退包装：匹配音符数不足时回退所有匹配
     let try_match = |notes: Notes, pattern: &[Index]| -> (MatchedGroups, Notes) {
@@ -72,13 +73,20 @@ fn test_sectional_matching() {
         }
     };
 
+    // let global_patterns: &[&[Index]] = &[
+    //     &[0, 32, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480],
+    //     &[0, 32, 64, 96, 192, 256, 288, 320, 352, 384, 416, 448, 480],
+    //     &[0, 192, 256, 288, 320, 352, 384, 416],
+    // ];
+    // let sectional_patterns: &[&[Index]] = &[&[0, 16, 32, 48], &[0, 16], &[0]];
+    // let sections: &[Range<Index>] = &[0..256, 256..512];
     let global_patterns: &[&[Index]] = &[
-        &[0, 32, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480],
-        &[0, 32, 64, 96, 192, 256, 288, 320, 352, 384, 416, 448, 480],
-        &[0, 192, 256, 288, 320, 352, 384, 416],
+        &[0, 48, 48 * 2, 48 * 3, 48 * 4, 48 * 5],
+        &[0, 12, 12 * 2],
+        &[0],
     ];
-    let sectional_patterns: &[&[Index]] = &[&[0, 16, 32, 48], &[0, 16], &[0]];
-    let sections: &[Range<Index>] = &[0..256, 256..512];
+    let sectional_patterns: &[&[Index]] = &[];
+    let sections: &[Range<Index>] = &[];
 
     let mut all_matched: Vec<MatchedGroups> = vec![];
 
@@ -181,21 +189,46 @@ fn test_deconvolve_m1() {
         .enumerate()
         .flat_map(|(i, r)| points[..i].iter().map(move |l| (l, r)));
 
-    // left point of translation `{offset: [&point]}`
-    let mut offsets: HashMap<Index, Multiset<&Point>> = Default::default();
-    offsets = pairs.fold(offsets, |mut acc, pair| {
+    // left point of translation `{offset: {&tone: [&tick]}}`
+    let mut offsets: HashMap<Tick, HashMap<&Tone, Multiset<&Tick>>>;
+
+    offsets = pairs.fold(Default::default(), |mut acc, pair| {
         let (left @ &(tl, nl), right @ &(tr, nr)) = pair;
         let offset = match nr == nl {
             true => tr - tl,
             false => return acc,
         };
-        let (note, offset) = match offset <= half_loop {
+        let ((tick, tone), offset) = match offset <= half_loop {
             true => (left, offset),
             false => (right, loop_length - offset),
         };
-        *acc.entry(offset).or_default().entry(note).or_default() += 1;
+        acc.entry(offset)
+            .or_default()
+            .entry(tone)
+            .or_default()
+            .entry(tick)
+            .and_modify(|c| *c = c.saturating_add(1))
+            .or_insert(NonZero::new(1).unwrap());
         acc
     });
+
+    // 过滤自重叠
+    for (offset, multiset) in offsets
+        .iter_mut()
+        .flat_map(|(&offset, tones)| tones.values_mut().map(move |m| (offset, m)))
+    {
+        let old = std::mem::take(multiset);
+        let mut mset: Multiset<&Tick> = Default::default();
+        for (&tick, count) in &old {
+            let pred = (loop_length + tick - offset) % loop_length;
+            let base = mset.get(&pred).map(|&c| c.get()).unwrap_or_default();
+            let kept = count.get().saturating_sub(base);
+            let _ = NonZero::new(kept).map(|k| mset.insert(tick, k));
+        }
+        *multiset = mset;
+    }
+
+    todo!()
 }
 
 //
