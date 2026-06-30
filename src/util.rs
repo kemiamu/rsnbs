@@ -1,7 +1,75 @@
-use crate::{Index, Note, Notes, Position};
-use std::collections::BTreeMap;
+use crate::{Index, Note, Notes, Position, Tick, Tone};
+use itertools::Itertools;
+use std::collections::{BTreeMap, HashMap};
+use std::num::NonZero;
 
 impl Notes {
+    /// flattens notes into the TP (tick–tone) plane multiset,
+    /// collapsing layers by summing counts per (tick, tone).
+    pub fn to_tp_multiset(&self) -> HashMap<Tick, HashMap<Tone, NonZero<usize>>> {
+        let mut tp: HashMap<Tick, HashMap<Tone, usize>> = HashMap::new();
+        for (pos, note) in self.iter() {
+            *tp.entry(pos.tick())
+                .or_default()
+                .entry(note.tone())
+                .or_default() += 1;
+        }
+        tp.into_iter()
+            .map(|(tick, tones)| {
+                let tones = tones
+                    .into_iter()
+                    .filter_map(|(tone, count)| NonZero::new(count).map(|c| (tone, c)))
+                    .collect();
+                (tick, tones)
+            })
+            .collect()
+    }
+
+    /// builds point enumeration (PE) from note pairs
+    pub fn build_pe<T, F>(
+        &self,
+        loop_length: Option<Tick>,
+        classify: F,
+    ) -> HashMap<Tick, HashMap<T, HashMap<Tick, NonZero<usize>>>>
+    where
+        T: Eq + std::hash::Hash + Clone,
+        F: Fn(&Note) -> T,
+    {
+        let mut pe: HashMap<Tick, HashMap<T, HashMap<Tick, NonZero<usize>>>> = Default::default();
+        let half_loop_bound = loop_length.map(|l| (l, l / 2));
+
+        let pair = |left: Tick, right: Tick| -> (Tick, Tick) {
+            debug_assert!(left <= right && left != right);
+            let Some((loop_len, half_bound)) = half_loop_bound else {
+                return (left, right - left);
+            };
+            let forward = right - left;
+            let (anchor_tick, offset) = match forward <= half_bound {
+                true => (left, forward),
+                false => (right, loop_len - forward),
+            };
+            (anchor_tick, offset)
+        };
+
+        for [(left_pos, left_note), (right_pos, right_note)] in self.iter().array_combinations() {
+            let class = match classify(left_note) {
+                class if class == classify(right_note) => class,
+                _ => continue,
+            };
+            let (anchor_tick, offset) = pair(left_pos.tick(), right_pos.tick());
+
+            pe.entry(offset)
+                .or_default()
+                .entry(class)
+                .or_default()
+                .entry(anchor_tick)
+                .and_modify(|c| *c = c.saturating_add(1))
+                .or_insert(NonZero::new(1).unwrap());
+        }
+
+        pe
+    }
+
     /// separates notes into matched and unmatched groups via pattern matching.
     pub fn matches_by<F>(self, pattern: &[Index], song_length: Index, f: F) -> (Notes, Notes)
     where

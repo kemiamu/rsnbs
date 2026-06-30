@@ -1,7 +1,11 @@
-/target
-
+/target/
 /Cargo.lock
 
 /out/
 /fixtures/
-# /src/main.rs
+/__pycache__/
+/research/
+/junkyard/
+
+/src/main.rs
+*.py

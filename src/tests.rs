@@ -56,7 +56,8 @@ fn test_sectional_matching() {
     let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
     let notes = song.notes.clone();
 
-    let song_length: Index = 1024;
+    // let song_length: Index = 128;
+    let song_length: Index = notes.iter().map(|(pos, _)| pos.tick()).max().unwrap_or(0) + 1;
     let min_notes: usize = 0;
     let coarse: Index = 0;
     let wrap_length = None;
@@ -81,9 +82,16 @@ fn test_sectional_matching() {
     // let sectional_patterns: &[&[Index]] = &[&[0, 16, 32, 48], &[0, 16], &[0]];
     // let sections: &[Range<Index>] = &[0..256, 256..512];
     let global_patterns: &[&[Index]] = &[
+<<<<<<< HEAD
         &[0, 48, 48 * 2, 48 * 3, 48 * 4, 48 * 5],
         &[0, 12, 12 * 2],
         &[0],
+=======
+        &[0, 16, 16 * 2, 16 * 3, 16 * 4, 16 * 5, 16 * 6, 16 * 7],
+        &[0, 32, 32 * 2, 32 * 3],
+        &[0, 64],
+        &[0], // any
+>>>>>>> 7240709 (refactor: restructure multiset type and add point enumeration utilities)
     ];
     let sectional_patterns: &[&[Index]] = &[];
     let sections: &[Range<Index>] = &[];
