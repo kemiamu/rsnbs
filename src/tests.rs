@@ -655,3 +655,31 @@ pub fn test_deconvolve() {
     song.header.is_loop = true;
     song.save_nbs("fixtures/deconvolve.nbs").unwrap();
 }
+
+#[test]
+fn dump_litematic() {
+    use rustmatica::Litematic;
+    let litematic: Litematic<
+        mcdata::GenericBlockState,
+        mcdata::GenericEntity,
+        mcdata::GenericBlockEntity,
+    > = Litematic::read_file("fixtures/Unnamed.litematic").unwrap();
+    for (i, region) in litematic.regions.iter().enumerate() {
+        println!("=== Region {}: {} ===", i, region.name);
+        println!("Position: {:?}, Size: {:?}", region.position, region.size);
+        for y in 0..region.size.y.abs() {
+            println!("--- Layer y={} ---", y);
+            for z in 0..region.size.z.abs() {
+                for x in 0..region.size.x.abs() {
+                    let pos = mcdata::util::BlockPos::new(x, y, z);
+                    let block: &mcdata::GenericBlockState = region.get_block(pos);
+                    if block.name != "minecraft:air" {
+                        println!("{:#?}", block);
+                    }
+                }
+                println!();
+            }
+        }
+    }
+    panic!("stop here");
+}
