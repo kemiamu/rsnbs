@@ -1,6 +1,7 @@
+use crate::layout::CompactLayout;
 use crate::schematic::SchematicBuilder;
 use crate::util::MatchedGroups;
-use crate::{Index, Note, Notes, Position, Song, Tick, Tone, Version};
+use crate::{GameTick, Index, Note, Notes, Position, Song, Tick, Tone, Version};
 use counter::Counter;
 use ordered_float::OrderedFloat;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -59,8 +60,8 @@ fn test_sectional_matching() {
     // let song_length: Index = 128;
     let song_length: Index = notes.iter().map(|(pos, _)| pos.tick()).max().unwrap_or(0) + 1;
     let min_notes: usize = 0;
-    let coarse: Index = 0;
-    let wrap_length = None;
+    let coarse: GameTick = 0;
+    let wrap_length: usize = 0;
 
     // 匹配+回退包装：匹配音符数不足时回退所有匹配
     let try_match = |notes: Notes, pattern: &[Index]| -> (MatchedGroups, Notes) {
@@ -82,16 +83,12 @@ fn test_sectional_matching() {
     // let sectional_patterns: &[&[Index]] = &[&[0, 16, 32, 48], &[0, 16], &[0]];
     // let sections: &[Range<Index>] = &[0..256, 256..512];
     let global_patterns: &[&[Index]] = &[
-<<<<<<< HEAD
-        &[0, 48, 48 * 2, 48 * 3, 48 * 4, 48 * 5],
-        &[0, 12, 12 * 2],
-        &[0],
-=======
-        &[0, 16, 16 * 2, 16 * 3, 16 * 4, 16 * 5, 16 * 6, 16 * 7],
-        &[0, 32, 32 * 2, 32 * 3],
-        &[0, 64],
+        // &[0, 16, 16 * 2, 16 * 3, 16 * 4, 16 * 5, 16 * 6, 16 * 7],
+        // &[0, 32, 32 * 2, 32 * 3, 4, 32 + 4, 32 * 2 + 4, 32 * 3 + 4],
+        // &[0, 32, 32 * 2, 32 * 3],
+        // &[0, 64, 4, 64 + 4],
+        // &[0, 64],
         &[0], // any
->>>>>>> 7240709 (refactor: restructure multiset type and add point enumeration utilities)
     ];
     let sectional_patterns: &[&[Index]] = &[];
     let sections: &[Range<Index>] = &[];
@@ -138,16 +135,23 @@ fn test_sectional_matching() {
     // 输出 litematic
     let projection_clusters: Vec<Notes> = all_matched.iter().map(|mg| mg.templates()).collect();
 
-    let mut builder = SchematicBuilder::new().with_wrap_length(wrap_length);
+    let tempo = song.header.tempo;
+    let scale = (20.0 / tempo).round() as u32;
 
-    for cluster in projection_clusters {
-        builder.add_track(
-            cluster.into_iter().map(|(pos, note)| (pos.tick(), note)),
-            coarse,
-        );
-    }
-
-    let litematic = builder.build("Sectional from source.nbs", "Planet");
+    let tracks = projection_clusters.into_iter().map(|cluster| {
+        let mut notes: BTreeMap<Tick, Vec<Note>> = BTreeMap::new();
+        for (pos, note) in cluster {
+            let tick = if scale > 1 {
+                pos.tick() * scale
+            } else {
+                pos.tick()
+            };
+            notes.entry(tick).or_default().push(note);
+        }
+        (notes, NonZero::new(coarse))
+    });
+    let layout = CompactLayout::new(tracks, NonZero::new(wrap_length), 0);
+    let litematic = SchematicBuilder(layout).build("Sectional from source.nbs", "Planet");
     litematic
         .write_file("fixtures/generated_sectional.litematic")
         .unwrap();

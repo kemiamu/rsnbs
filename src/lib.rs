@@ -10,6 +10,11 @@ pub use note::*;
 pub use song::*;
 pub use types::*;
 
+pub mod layout {
+    mod compact;
+    pub use compact::*;
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -288,8 +293,15 @@ mod types {
         }
     }
 
+    /// Represents the layer index
     pub type Index = u32;
-    pub type Tick = Index;
+    /// Represents the time step
+    pub type Tick = u32;
+
+    #[allow(dead_code)]
+    pub(crate) type RedStoneTick = u32;
+    #[allow(dead_code)]
+    pub(crate) type GameTick = u32;
 
     // error
     //
