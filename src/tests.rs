@@ -683,3 +683,29 @@ fn dump_litematic() {
     }
     panic!("stop here");
 }
+
+#[test]
+fn test_linear_layout() {
+    use crate::layout::LinearLayout;
+    use crate::schematic::SchematicBuilder;
+
+    let song = Song::open_nbs("fixtures/source.nbs").unwrap();
+    let scale = (20.0 / song.header.tempo).round() as u32;
+    let notes: Notes = song
+        .notes
+        .into_iter()
+        .map(|(pos, note)| {
+            let tick = if scale > 1 {
+                pos.tick() * scale
+            } else {
+                pos.tick()
+            };
+            (Position::new(tick, pos.layer()), note)
+        })
+        .collect();
+    let layout = LinearLayout::new(notes, 0);
+    let litematic = SchematicBuilder(layout).build("Linear from source.nbs", "rustnbs");
+    litematic
+        .write_file("fixtures/generated_linear.litematic")
+        .unwrap();
+}

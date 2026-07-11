@@ -1,6 +1,6 @@
 //! Generate Minecraft litematic projections from NBS songs.
 
-use crate::{Note, RedStoneTick};
+use crate::Note;
 use itertools::iproduct;
 use mcdata::{GenericBlockState, util::BlockPos};
 use rustmatica::{Litematic, Region};
@@ -77,11 +77,14 @@ pub fn redstone_wire() -> GenericBlockState {
 }
 
 /// Repeater block with delay and facing.
-pub fn repeater(delay: &RedStoneTick, facing: impl Into<Cow<'static, str>>) -> GenericBlockState {
+pub fn repeater(
+    delay: impl Into<Cow<'static, str>>,
+    facing: impl Into<Cow<'static, str>>,
+) -> GenericBlockState {
     GenericBlockState {
         name: "minecraft:repeater".into(),
         properties: HashMap::from([
-            ("delay".into(), delay.to_string().into()),
+            ("delay".into(), delay.into()),
             ("facing".into(), facing.into()),
             ("locked".into(), "false".into()),
             ("powered".into(), "false".into()),
@@ -90,7 +93,7 @@ pub fn repeater(delay: &RedStoneTick, facing: impl Into<Cow<'static, str>>) -> G
 }
 
 /// Note block, or fallback on None.
-pub fn note_block(note: &Option<Note>, fallback: fn() -> GenericBlockState) -> GenericBlockState {
+pub fn note_block(note: Option<&Note>, fallback: fn() -> GenericBlockState) -> GenericBlockState {
     note.as_ref()
         .and_then(|n| n.note_block_state())
         .unwrap_or_else(fallback)
@@ -98,7 +101,7 @@ pub fn note_block(note: &Option<Note>, fallback: fn() -> GenericBlockState) -> G
 
 /// Instrument block, or fallback on None.
 pub fn instrument_block(
-    note: &Option<Note>,
+    note: Option<&Note>,
     fallback: fn() -> GenericBlockState,
 ) -> GenericBlockState {
     note.as_ref()

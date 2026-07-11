@@ -13,6 +13,8 @@ pub use types::*;
 pub mod layout {
     mod compact;
     pub use compact::*;
+    mod linear;
+    pub use linear::*;
 }
 
 #[cfg(test)]

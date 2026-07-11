@@ -69,7 +69,11 @@ impl Layout for CompactLayout {
     }
 
     fn get_block(&self, pos: BlockPos) -> GenericBlockState {
-        let (easting, elevation, southing) = (pos.x, pos.y, pos.z);
+        let BlockPos {
+            x: easting,
+            y: elevation,
+            z: southing,
+        } = pos;
 
         debug_assert!((0..Self::ELEVATION).contains(&elevation), "y out of range");
         debug_assert!((0..self.easting).contains(&easting), "x out of range");
@@ -320,7 +324,7 @@ impl Tile {
         match self {
             Self::Delay(delay) => match layout_index {
                 0 => chain_block(),
-                1 => repeater(delay, facing),
+                1 => repeater(delay.to_string(), facing),
                 _ => GenericBlockState::air(),
             },
             Self::Link => match layout_index {
@@ -329,22 +333,22 @@ impl Tile {
                 _ => GenericBlockState::air(),
             },
             Self::Terminal(center, left, right) => match layout_index {
-                0 => instrument_block(center, chain_block),
-                1 => note_block(center, chain_block),
-                3 => instrument_block(left, GenericBlockState::air),
-                4 => note_block(left, GenericBlockState::air),
-                6 => instrument_block(right, GenericBlockState::air),
-                7 => note_block(right, GenericBlockState::air),
+                0 => instrument_block(center.as_ref(), chain_block),
+                1 => note_block(center.as_ref(), chain_block),
+                3 => instrument_block(left.as_ref(), GenericBlockState::air),
+                4 => note_block(left.as_ref(), GenericBlockState::air),
+                6 => instrument_block(right.as_ref(), GenericBlockState::air),
+                7 => note_block(right.as_ref(), GenericBlockState::air),
                 _ => GenericBlockState::air(),
             },
             Self::Node(left, right) => match layout_index {
                 0 => chain_block(),
                 1 => chain_block(),
                 2 => redstone_wire(),
-                3 => instrument_block(left, GenericBlockState::air),
-                4 => note_block(left, GenericBlockState::air),
-                6 => instrument_block(right, GenericBlockState::air),
-                7 => note_block(right, GenericBlockState::air),
+                3 => instrument_block(left.as_ref(), GenericBlockState::air),
+                4 => note_block(left.as_ref(), GenericBlockState::air),
+                6 => instrument_block(right.as_ref(), GenericBlockState::air),
+                7 => note_block(right.as_ref(), GenericBlockState::air),
                 _ => GenericBlockState::air(),
             },
         }
