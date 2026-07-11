@@ -14,6 +14,7 @@ pub struct LinearLayout {
     track_notes: Vec<Notes>,
     plan: Plan,
     scale: Tick,
+    gap: i32,
     easting: i32,
     southing: i32,
 }
@@ -32,6 +33,7 @@ impl LinearLayout {
             track_notes,
             plan,
             scale,
+            gap: gap as i32,
             easting,
             southing,
         }
@@ -88,10 +90,14 @@ impl Layout for LinearLayout {
     }
 
     fn get_block(&self, pos: BlockPos) -> GenericBlockState {
-        let mapping = BlockPos::new(pos.x, pos.y, self.southing - pos.z - 1);
-        let track_idx = (mapping.x / self.plan.width()) as usize;
+        let track_idx = (pos.x / (self.plan.width() + self.gap)) as usize;
+        let local_pos = BlockPos::new(
+            pos.x % (self.plan.width() + self.gap),
+            pos.y,
+            self.southing - pos.z - 1,
+        );
         match self.track_notes.get(track_idx) {
-            Some(track_notes) => self.plan.get_block(track_notes, mapping, self.scale),
+            Some(track_notes) => self.plan.get_block(track_notes, local_pos, self.scale),
             None => GenericBlockState::air(),
         }
     }
@@ -121,12 +127,11 @@ impl Plan {
 
     fn get_block(&self, notes: &Notes, pos: BlockPos, scale: Tick) -> GenericBlockState {
         let BlockPos {
-            x: easting,
+            x: local_easting,
             y: elevation,
             z: southing,
         } = pos;
 
-        let local_easting = easting.rem_euclid(self.width());
         let flat_southing = southing - if local_easting <= 2 { 0 } else { 1 };
         let local_southing = flat_southing.rem_euclid(Self::SOUTHING);
 
@@ -138,7 +143,7 @@ impl Plan {
             notes.get(&Position::new(tick, layer))
         };
         let has_branch = match self {
-            Plan::Repeater => note(scale / 2, 0).or_else(|| note(scale / 2, 1)).is_some(),
+            Plan::Repeater => note(scale, 0).or_else(|| note(scale, 1)).is_some(),
             Plan::Piston => note(3, 0).or_else(|| note(3, 1)).is_some(),
         };
         let air = GenericBlockState::air;
@@ -152,10 +157,10 @@ impl Plan {
             (Plan::Piston, true, 1, 4, 1) => note_block(note(3, 1), air),
             (Plan::Repeater, true, 1, 2, 0) => chain_block(),
             (Plan::Repeater, true, 1, 2, 1) => repeater((scale / 2).to_string(), "west"),
-            (Plan::Repeater, true, 0, 3, 0) => instrument_block(note(scale / 2, 0), chain_block),
-            (Plan::Repeater, true, 0, 3, 1) => note_block(note(scale / 2, 0), chain_block),
-            (Plan::Repeater, true, 0, 4, 0) => instrument_block(note(scale / 2, 1), air),
-            (Plan::Repeater, true, 0, 4, 1) => note_block(note(scale / 2, 1), air),
+            (Plan::Repeater, true, 0, 3, 0) => instrument_block(note(scale, 0), chain_block),
+            (Plan::Repeater, true, 0, 3, 1) => note_block(note(scale, 0), chain_block),
+            (Plan::Repeater, true, 0, 4, 0) => instrument_block(note(scale, 1), air),
+            (Plan::Repeater, true, 0, 4, 1) => note_block(note(scale, 1), air),
             (_, _, 0, 1, 0) => chain_block(),
             (_, _, 0, 1, 1) => repeater(scale.to_string(), "south"),
             (_, _, 1, 1, 0) => instrument_block(note(0, 0), chain_block),
