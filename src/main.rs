@@ -47,21 +47,15 @@ impl Compact {
     fn run(self) {
         let song = Song::open_nbs(&self.input).unwrap();
         let name = self.input.clone();
-        let tempo = song.header.tempo;
-        let scale = (20.0 / tempo).round() as u32;
+        let notes = scale_notes(song.notes, song.header.tempo);
 
         let mut by_layer: Vec<Vec<(Tick, Note)>> = Vec::new();
-        for (pos, note) in song.notes {
+        for (pos, note) in notes {
             let layer = pos.layer() as usize;
             while by_layer.len() <= layer {
                 by_layer.push(Vec::new());
             }
-            let tick = if scale > 1 {
-                pos.tick() * scale
-            } else {
-                pos.tick()
-            };
-            by_layer[layer].push((tick, note));
+            by_layer[layer].push((pos.tick(), note));
         }
 
         let tracks = by_layer.into_iter().map(|notes| {
@@ -99,21 +93,21 @@ impl Linear {
     fn run(self) {
         let song = Song::open_nbs(&self.input).unwrap();
         let name = self.input.clone();
-        let tempo = song.header.tempo;
-        let scale = (20.0 / tempo).round() as u32;
-
-        let notes: Notes = if scale > 1 {
-            song.notes
-                .into_iter()
-                .map(|(pos, note)| (Position::new(pos.tick() * scale, pos.layer()), note))
-                .collect()
-        } else {
-            song.notes
-        };
-
+        let notes = scale_notes(song.notes, song.header.tempo);
         let layout = LinearLayout::new(notes, self.gap);
         let litematic = SchematicBuilder(layout).build(name, "rsnbs");
         litematic.write_file(&self.output).unwrap();
         eprintln!("Wrote {}", self.output);
+    }
+}
+
+fn scale_notes(notes: Notes, tempo: f32) -> Notes {
+    let scale = (20.0 / tempo).round() as u32;
+    match scale > 1 {
+        true => notes
+            .into_iter()
+            .map(|(pos, note)| (Position::new(pos.tick() * scale, pos.layer()), note))
+            .collect(),
+        false => notes,
     }
 }
