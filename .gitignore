@@ -7,5 +7,6 @@
 /research/
 /junkyard/
 
-/src/main.rs
 *.py
+*.litematic
+*.nbs
