@@ -2,6 +2,7 @@ use clap::Parser;
 use rsnbs::layout::{CompactLayout, LinearLayout};
 use rsnbs::schematic::SchematicBuilder;
 use rsnbs::{Note, Notes, Position, Song, Tick};
+use std::collections::BTreeMap;
 use std::num::NonZero;
 
 // Cli
@@ -35,9 +36,9 @@ struct Compact {
     input: String,
     #[arg(default_value = "generated_compact.litematic")]
     output: String,
-    #[arg(long, default_value = None)]
-    wrap: Option<usize>,
-    #[arg(long, default_value_t = 4)]
+    #[arg(long, default_value_t = 16)]
+    wrap: usize,
+    #[arg(long, default_value_t = 0)]
     coarse: u32,
     #[arg(long, default_value_t = 0)]
     gap: u32,
@@ -49,27 +50,16 @@ impl Compact {
         let name = self.input.clone();
         let notes = scale_notes(song.notes, song.header.tempo);
 
-        let mut by_layer: Vec<Vec<(Tick, Note)>> = Vec::new();
+        let mut by_tick: BTreeMap<Tick, Vec<Note>> = Default::default();
         for (pos, note) in notes {
-            let layer = pos.layer() as usize;
-            while by_layer.len() <= layer {
-                by_layer.push(Vec::new());
-            }
-            by_layer[layer].push((pos.tick(), note));
+            by_tick.entry(pos.tick()).or_default().push(note);
         }
 
-        let tracks = by_layer.into_iter().map(|notes| {
-            let mut map: std::collections::BTreeMap<Tick, Vec<Note>> =
-                std::collections::BTreeMap::new();
-            for (tick, note) in notes {
-                map.entry(tick).or_default().push(note);
-            }
-            (map, NonZero::new(self.coarse))
-        });
+        let tracks = std::iter::once((by_tick, NonZero::new(self.coarse)));
 
-        let wrap = self.wrap.and_then(NonZero::new);
+        let wrap = NonZero::new(self.wrap);
         let layout = CompactLayout::new(tracks, wrap, self.gap);
-        let litematic = SchematicBuilder(layout).build(name, "rsnbs");
+        let litematic = SchematicBuilder(layout).build(format!("Sectional from {}", name), "rsnbs");
         litematic.write_file(&self.output).unwrap();
         eprintln!("Wrote {}", self.output);
     }
@@ -95,7 +85,7 @@ impl Linear {
         let name = self.input.clone();
         let notes = scale_notes(song.notes, song.header.tempo);
         let layout = LinearLayout::new(notes, self.gap);
-        let litematic = SchematicBuilder(layout).build(name, "rsnbs");
+        let litematic = SchematicBuilder(layout).build(format!("Sectional from {}", name), "rsnbs");
         litematic.write_file(&self.output).unwrap();
         eprintln!("Wrote {}", self.output);
     }
