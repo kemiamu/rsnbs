@@ -1,9 +1,9 @@
 //! Linear time-proportional layout for NBS song projection.
 
-use crate::schematic::{Layout, chain_block, instrument_block, note_block};
+use crate::schematic::{Layout, air, chain_block, instrument_block, note_block};
 use crate::schematic::{redstone_block, repeater, sticky_piston};
 use crate::{Index, Notes, Position, Tick};
-use mcdata::{BlockState, GenericBlockState, util::BlockPos};
+use mcdata::{GenericBlockState, util::BlockPos};
 
 // LinearLayout
 //
@@ -98,7 +98,7 @@ impl Layout for LinearLayout {
         );
         match self.track_notes.get(track_idx) {
             Some(track_notes) => self.plan.get_block(track_notes, local_pos, self.scale),
-            None => GenericBlockState::air(),
+            None => air(),
         }
     }
 }
@@ -146,8 +146,6 @@ impl Plan {
             Plan::Repeater => note(scale, 0).or_else(|| note(scale, 1)).is_some(),
             Plan::Piston => note(3, 0).or_else(|| note(3, 1)).is_some(),
         };
-        let air = GenericBlockState::air;
-
         match (self, has_branch, local_southing, local_easting, elevation) {
             (Plan::Piston, true, 1, 2, 1) => sticky_piston("east"),
             (Plan::Piston, true, 0, 3, 1) => redstone_block(),
@@ -169,7 +167,7 @@ impl Plan {
             (_, _, 1, 0, 1) => note_block(note(0, 1), air),
             (_, false, 1, 2, 0) => instrument_block(note(0, 2), air),
             (_, false, 1, 2, 1) => note_block(note(0, 2), air),
-            _ => GenericBlockState::air(),
+            _ => air(),
         }
     }
 }

@@ -2,6 +2,7 @@
 
 use crate::Note;
 use itertools::iproduct;
+use mcdata::BlockState;
 use mcdata::{GenericBlockState, util::BlockPos};
 use rustmatica::{Litematic, Region};
 use std::borrow::Cow;
@@ -44,6 +45,14 @@ pub trait Layout {
 // Helpers
 //
 // ++++++++++++============++++++++++++============++++++++++++============
+
+/// Air block (no block).
+pub fn air<B>() -> B
+where
+    B: BlockState,
+{
+    BlockState::air()
+}
 
 /// A chain block (smooth stone) used for structural support.
 pub fn chain_block() -> GenericBlockState {
@@ -93,18 +102,21 @@ pub fn repeater(
 }
 
 /// Note block, or fallback on None.
-pub fn note_block(note: Option<&Note>, fallback: fn() -> GenericBlockState) -> GenericBlockState {
-    note.as_ref()
+pub fn note_block<'a, N>(note: N, fallback: fn() -> GenericBlockState) -> GenericBlockState
+where
+    N: Into<Option<&'a Note>>,
+{
+    note.into()
         .and_then(|n| n.note_block_state())
         .unwrap_or_else(fallback)
 }
 
 /// Instrument block, or fallback on None.
-pub fn instrument_block(
-    note: Option<&Note>,
-    fallback: fn() -> GenericBlockState,
-) -> GenericBlockState {
-    note.as_ref()
+pub fn instrument_block<'a, N>(note: N, fallback: fn() -> GenericBlockState) -> GenericBlockState
+where
+    N: Into<Option<&'a Note>>,
+{
+    note.into()
         .and_then(|n| n.instrument.instrument_block())
         .unwrap_or_else(fallback)
 }

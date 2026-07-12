@@ -1,7 +1,7 @@
 //! Compact cursor-based layout for NBS song projection.
 
 use crate::schematic::{Layout, chain_block, floor_block, instrument_block};
-use crate::schematic::{note_block, redstone_wire, repeater};
+use crate::schematic::{air, note_block, redstone_wire, repeater};
 use crate::{GameTick, Note, RedStoneTick};
 use mcdata::{BlockState, GenericBlockState, util::BlockPos};
 use std::collections::BTreeMap;
@@ -321,36 +321,24 @@ impl Tile {
             true => "north",
             false => "south",
         };
-        match self {
-            Self::Delay(delay) => match layout_index {
-                0 => chain_block(),
-                1 => repeater(delay.to_string(), facing),
-                _ => GenericBlockState::air(),
-            },
-            Self::Link => match layout_index {
-                0 => chain_block(),
-                1 => redstone_wire(),
-                _ => GenericBlockState::air(),
-            },
-            Self::Terminal(center, left, right) => match layout_index {
-                0 => instrument_block(center.as_ref(), chain_block),
-                1 => note_block(center.as_ref(), chain_block),
-                3 => instrument_block(left.as_ref(), GenericBlockState::air),
-                4 => note_block(left.as_ref(), GenericBlockState::air),
-                6 => instrument_block(right.as_ref(), GenericBlockState::air),
-                7 => note_block(right.as_ref(), GenericBlockState::air),
-                _ => GenericBlockState::air(),
-            },
-            Self::Node(left, right) => match layout_index {
-                0 => chain_block(),
-                1 => chain_block(),
-                2 => redstone_wire(),
-                3 => instrument_block(left.as_ref(), GenericBlockState::air),
-                4 => note_block(left.as_ref(), GenericBlockState::air),
-                6 => instrument_block(right.as_ref(), GenericBlockState::air),
-                7 => note_block(right.as_ref(), GenericBlockState::air),
-                _ => GenericBlockState::air(),
-            },
+        match (self, layout_index) {
+            (Self::Delay(_), 0) => chain_block(),
+            (Self::Delay(delay), 1) => repeater(delay.to_string(), facing),
+            (Self::Link, 0) => chain_block(),
+            (Self::Link, 1) => redstone_wire(),
+            (Self::Terminal(center, _, _), 0) => instrument_block(center, chain_block),
+            (Self::Terminal(center, _, _), 1) => note_block(center, chain_block),
+            (Self::Terminal(_, left, _), 3) => instrument_block(left, air),
+            (Self::Terminal(_, left, _), 4) => note_block(left, air),
+            (Self::Terminal(_, _, right), 6) => instrument_block(right, air),
+            (Self::Terminal(_, _, right), 7) => note_block(right, air),
+            (Self::Node(_, _), 0 | 1) => chain_block(),
+            (Self::Node(_, _), 2) => redstone_wire(),
+            (Self::Node(left, _), 3) => instrument_block(left, air),
+            (Self::Node(left, _), 4) => note_block(left, air),
+            (Self::Node(_, right), 6) => instrument_block(right, air),
+            (Self::Node(_, right), 7) => note_block(right, air),
+            _ => air(),
         }
     }
 }
