@@ -1,4 +1,4 @@
-//! Compact layout for NBS song projection.
+//! Compact note block layouts for NBS song projection.
 
 use crate::schematic::{Layout, chain_block, instrument_block};
 use crate::schematic::{air, note_block, redstone_wire, repeater};
@@ -9,21 +9,23 @@ use std::iter;
 use std::num::{NonZero, NonZeroUsize};
 use std::ops::{Deref, DerefMut};
 
-// CompactLayout
+// MultiCompactLayout
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// Compact noteblocks layout
-pub struct CompactLayout {
-    tracks: Vec<(Track, i32)>,
+/// Multiple compact note block tracks placed side-by-side.
+///
+/// Each song track is split into even/odd redstone tick sub-tracks,
+/// each built as a [`CompactLayout`], then arranged east-to-west
+/// with configurable spacing between song tracks.
+pub struct MultiCompactLayout {
+    bands: Vec<(CompactLayout, i32)>,
     easting: i32,
     southing: i32,
 }
 
-impl CompactLayout {
-    const ELEVATION: i32 = 3;
-
-    /// Create a compact layout from note tracks.
+impl MultiCompactLayout {
+    /// Create a multi-track compact layout from multiple note groups.
     pub fn new<N>(
         tracks: impl IntoIterator<Item = (N, Option<NonZero<GameTick>>)>,
         wrap_length: Option<NonZeroUsize>,
@@ -33,27 +35,82 @@ impl CompactLayout {
         N: IntoIterator<Item = (GameTick, Vec<Note>)>,
     {
         let mut cursor: i32 = -(gap as i32);
-        let place_track = |track: Track| {
+        let place_band = |band: CompactLayout| {
             let start = cursor + gap as i32;
-            cursor = start + (track.rows() as i32) * 2 + 1;
-            (track, start)
+            cursor = start + band.easting;
+            (band, start)
         };
-        let tracks: Vec<(Track, i32)> = tracks
+        let bands: Vec<(CompactLayout, i32)> = tracks
             .into_iter()
             .flat_map(|(notes, coarse)| split_even_odd(notes, coarse))
             .filter(|(notes, _)| !notes.is_empty())
-            .map(|(notes_map, coarse)| Track::new(notes_map, coarse, wrap_length))
-            .map(place_track)
+            .map(|(notes, coarse)| CompactLayout::new(notes, coarse, wrap_length))
+            .map(place_band)
             .collect();
-        let clos = tracks
+        let southing = bands
             .iter()
-            .map(|(track, _)| track.cols_or_len())
+            .map(|(band, _)| band.southing)
             .max()
             .unwrap_or(0);
         Self {
+            bands,
             easting: cursor,
-            southing: clos as i32,
-            tracks,
+            southing,
+        }
+    }
+}
+
+impl Layout for MultiCompactLayout {
+    fn size(&self) -> BlockPos {
+        BlockPos::new(self.easting, CompactLayout::ELEVATION, self.southing)
+    }
+
+    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+        debug_assert!((0..self.southing).contains(&pos.z), "z out of range");
+        let idx = self.bands.partition_point(|(_, s)| *s <= pos.x) - 1;
+        let (band, start) = &self.bands[idx];
+        let local_easting = pos.x - start;
+        match local_easting < band.easting && pos.z < band.southing {
+            true => band.get_block(BlockPos::new(local_easting, pos.y, pos.z)),
+            false => air(),
+        }
+    }
+}
+
+// CompactLayout
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// A single compact note block track.
+///
+/// One redstone sub-track's tiles arranged in a compact 3-high
+/// zigzag pattern with tooth-interlocked rows.
+pub struct CompactLayout {
+    track: Track,
+    easting: i32,
+    southing: i32,
+}
+
+impl CompactLayout {
+    const ELEVATION: i32 = 3;
+
+    /// Create a compact layout from redstone-tick–grouped notes.
+    ///
+    /// The input must already be split into a single redstone tick line.
+    /// See [`MultiCompactLayout`] for the high-level constructor that handles
+    /// the split automatically.
+    pub fn new(
+        notes: BTreeMap<RedStoneTick, Vec<Note>>,
+        coarse: Option<NonZero<GameTick>>,
+        wrap_length: Option<NonZeroUsize>,
+    ) -> Self {
+        let track = Track::new(notes, coarse, wrap_length);
+        let easting = (track.rows() as i32) * 2 + 1;
+        let southing = track.cols_or_len() as i32;
+        Self {
+            track,
+            easting,
+            southing,
         }
     }
 }
@@ -69,15 +126,9 @@ impl Layout for CompactLayout {
             y: elevation,
             z: southing,
         } = pos;
-
         debug_assert!((0..Self::ELEVATION).contains(&elevation), "y out of range");
         debug_assert!((0..self.easting).contains(&easting), "x out of range");
         debug_assert!((0..self.southing).contains(&southing), "z out of range");
-        debug_assert!(self.tracks.iter().any(|(_, start)| *start == 0));
-
-        let track_idx = self.tracks.partition_point(|(_, s)| *s <= easting) - 1;
-        let (track, track_start) = &self.tracks[track_idx];
-        let local_easting = easting - track_start;
 
         let tile_col = |s: i32, row: i32| match row & 1 {
             0 => s + 1,
@@ -85,27 +136,34 @@ impl Layout for CompactLayout {
         };
 
         if southing == 0 {
-            let group = (local_easting + 1) & 3;
-            let row = (local_easting + 1) / 4 * 2;
+            // North edge turn
+            let easting = easting + 1;
+            let group = easting & 3;
+            let row = easting / 4 * 2;
             let col = group as usize / 2;
             let layout_idx = (elevation + (group & 1) * 3) as u8;
-            track.block_at(row, col, layout_idx)
+            self.track.block_at(row, col, layout_idx)
         } else if southing + 1 == self.southing {
-            let group = (local_easting + 3) & 3;
-            let row = (local_easting + 3) / 4 * 2 - 1;
+            // South edge turn
+            let easting = easting + 3;
+            let group = easting & 3;
+            let row = easting / 4 * 2 - 1;
             let col = group as usize / 2;
             let layout_idx = (elevation + (group & 1) * 3) as u8;
-            track.block_at(row, col, layout_idx)
-        } else if local_easting & 1 == 1 {
-            let row = local_easting / 2;
+            self.track.block_at(row, col, layout_idx)
+        } else if easting & 1 == 1 {
+            // Trunk row
+            let row = easting / 2;
             let col = tile_col(southing, row) as usize;
-            track.block_at(row, col, elevation as u8)
+            self.track.block_at(row, col, elevation as u8)
         } else {
-            let cell = local_easting / 2;
-            let row = cell - ((cell + southing) & 1);
+            // Tooth row
+            let cell = easting / 2;
+            let zig = (cell + southing) & 1;
+            let row = cell - zig;
             let col = tile_col(southing, row) as usize;
-            let layout_idx = (elevation + 3 + (cell & 1) * 3) as u8;
-            track.block_at(row, col, layout_idx)
+            let layout_idx = (elevation + 3 + zig * 3) as u8;
+            self.track.block_at(row, col, layout_idx)
         }
     }
 }
@@ -314,6 +372,7 @@ impl Tile {
     fn get_block(&self, layout_index: u8, repeater_facing: &'static str) -> GenericBlockState {
         // The repeater facing direction is reversed.
         match (self, layout_index) {
+            // main straight track
             (Self::Delay(_), 0) => chain_block(),
             (Self::Delay(delay), 1) => repeater(delay.to_string(), repeater_facing),
             (Self::Link, 0) => chain_block(),
@@ -330,7 +389,7 @@ impl Tile {
             (Self::Node(left, _), 4) => note_block(left, air),
             (Self::Node(_, right), 6) => instrument_block(right, air),
             (Self::Node(_, right), 7) => note_block(right, air),
-            // turning variants – same block placement as regular variants
+            // turning variants
             (Self::TurningDelay(_), 0 | 3) => chain_block(),
             (Self::TurningDelay(_), 1) => redstone_wire(),
             (Self::TurningDelay(delay), 4) => repeater(delay.to_string(), repeater_facing),

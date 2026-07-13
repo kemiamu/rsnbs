@@ -1,5 +1,5 @@
 use clap::Parser;
-use rsnbs::layout::{CompactLayout, LinearLayout};
+use rsnbs::layout::{LinearLayout, MultiCompactLayout};
 use rsnbs::schematic::{SchematicBuilder, WithFloor};
 use rsnbs::{Note, Notes, Position, Song, Tick};
 use std::collections::BTreeMap;
@@ -64,9 +64,8 @@ impl Compact {
         }
 
         let tracks = std::iter::once((by_tick, NonZero::new(self.coarse)));
-
         let wrap = NonZero::new(self.wrap);
-        let layout = CompactLayout::new(tracks, wrap, self.gap);
+        let layout = MultiCompactLayout::new(tracks, wrap, self.gap);
         let description = format!("Sectional from {}", name);
         let litematic = match self.floor {
             true => SchematicBuilder(WithFloor(layout)).build(description, "rsnbs"),
