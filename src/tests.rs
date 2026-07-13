@@ -1,5 +1,5 @@
 use crate::layout::CompactLayout;
-use crate::schematic::SchematicBuilder;
+use crate::schematic::{SchematicBuilder, WithFloor};
 use crate::util::{MatchedGroups, reassign_layers};
 use crate::{GameTick, Index, Note, Notes, Position, Song, Tick, Tone, Version};
 use counter::Counter;
@@ -150,7 +150,7 @@ fn test_sectional_matching() {
         }
         (notes, NonZero::new(coarse))
     });
-    let layout = CompactLayout::new(tracks, NonZero::new(wrap_length), 0);
+    let layout = WithFloor(CompactLayout::new(tracks, NonZero::new(wrap_length), 0));
     let litematic = SchematicBuilder(layout).build("Sectional from source.nbs", "Planet");
     litematic
         .write_file("fixtures/generated_sectional.litematic")

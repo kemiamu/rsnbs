@@ -42,6 +42,28 @@ pub trait Layout {
     fn get_block(&self, pos: BlockPos) -> GenericBlockState;
 }
 
+// Floor
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// A layout wrapper that adds a floor layer beneath another layout.
+pub struct WithFloor<L: Layout>(pub L);
+
+impl<L: Layout> Layout for WithFloor<L> {
+    fn size(&self) -> BlockPos {
+        let Self(inner) = self;
+        let size = inner.size();
+        BlockPos::new(size.x, size.y + 1, size.z)
+    }
+
+    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+        match pos.y {
+            0 => floor_block(),
+            _ => self.0.get_block(BlockPos::new(pos.x, pos.y - 1, pos.z)),
+        }
+    }
+}
+
 // Helpers
 //
 // ++++++++++++============++++++++++++============++++++++++++============

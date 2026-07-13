@@ -1,10 +1,11 @@
 //! Compact cursor-based layout for NBS song projection.
 
-use crate::schematic::{Layout, chain_block, floor_block, instrument_block};
+use crate::schematic::{Layout, chain_block, instrument_block};
 use crate::schematic::{air, note_block, redstone_wire, repeater};
 use crate::{GameTick, Note, RedStoneTick};
 use mcdata::{GenericBlockState, util::BlockPos};
 use std::collections::BTreeMap;
+use std::iter;
 use std::num::{NonZero, NonZeroUsize};
 use std::ops::{Deref, DerefMut};
 
@@ -24,7 +25,7 @@ pub struct CompactLayout {
 
 impl CompactLayout {
     /// Total elevation (Y) of the layout, in blocks.
-    const ELEVATION: i32 = 4;
+    const ELEVATION: i32 = 3;
 
     /// Create a compact layout from note tracks.
     pub fn new<N>(
@@ -48,16 +49,14 @@ impl CompactLayout {
             .map(|(notes_map, coarse)| Track::new(notes_map, coarse, wrap_length))
             .map(place_track)
             .collect();
-
-        let columns = tracks
+        let clos = tracks
             .iter()
             .map(|(track, _)| track.cols_or_len())
             .max()
             .unwrap_or(0);
-
         Self {
             easting: cursor,
-            southing: columns as i32 * 2,
+            southing: clos as i32,
             tracks,
         }
     }
@@ -78,58 +77,39 @@ impl Layout for CompactLayout {
         debug_assert!((0..Self::ELEVATION).contains(&elevation), "y out of range");
         debug_assert!((0..self.easting).contains(&easting), "x out of range");
         debug_assert!((0..self.southing).contains(&southing), "z out of range");
-
-        // find track
         debug_assert!(self.tracks.iter().any(|(_, start)| *start == 0));
+
         let track_idx = self.tracks.partition_point(|(_, s)| *s <= easting) - 1;
         let (track, track_start) = &self.tracks[track_idx];
         let local_easting = easting - track_start;
 
-        let is_trunk = local_easting % 2 == 1;
-        let offset = |southing, south_facing| match south_facing {
-            true => southing + 1,
-            false => self.southing - southing,
+        let tile_col = |s: i32, row: i32| match row & 1 {
+            0 => s + 1,
+            _ => self.southing - s,
         };
 
-        if elevation == 0 {
-            // is floor
-            floor_block()
-        } else if southing == 0 {
-            // is northern turning
+        if southing == 0 {
+            let group = (local_easting + 1) & 3;
             let row = (local_easting + 1) / 4 * 2;
-            let offset = (local_easting + 1) % 4;
-            let layout_idx = (elevation + offset % 2 * 3 - 1) as u8;
-            let tile = track.get_tile(row, offset as usize / 2);
-            tile.map_or_else(air, |t| t.get_block(layout_idx, true))
+            let col = group as usize / 2;
+            let layout_idx = (elevation + (group & 1) * 3) as u8;
+            track.block_at(row, col, layout_idx)
         } else if southing + 1 == self.southing {
-            // is southern turning
+            let group = (local_easting + 3) & 3;
             let row = (local_easting + 3) / 4 * 2 - 1;
-            let offset = (local_easting + 3) % 4;
-            let layout_idx = (elevation + offset % 2 * 3 - 1) as u8;
-            let tile = track.get_tile(row, offset as usize / 2);
-            tile.map_or_else(air, |t| t.get_block(layout_idx, false))
-        } else if is_trunk {
-            // is trunk
+            let col = group as usize / 2;
+            let layout_idx = (elevation + (group & 1) * 3) as u8;
+            track.block_at(row, col, layout_idx)
+        } else if local_easting & 1 == 1 {
             let row = local_easting / 2;
-            let south_facing = row % 2 == 0;
-            let offset = offset(southing, south_facing);
-            let layout_idx = elevation as u8 - 1;
-            let tile = track.get_tile(row, offset as usize);
-            tile.map_or_else(air, |t| t.get_block(layout_idx, south_facing))
+            let col = tile_col(southing, row) as usize;
+            track.block_at(row, col, elevation as u8)
         } else {
-            // is cogs
-            let south_facing = southing % 2 == 0;
-            let row = match south_facing {
-                true => local_easting / 4 * 2,
-                false => (local_easting + 2) / 4 * 2 - 1,
-            };
-            let offset = offset(southing, south_facing);
-            let layout_idx = match local_easting / 2 % 2 == 0 {
-                true => elevation + 2,
-                false => elevation + 5,
-            } as u8;
-            let tile = track.get_tile(row, offset as usize);
-            tile.map_or_else(air, |t| t.get_block(layout_idx, south_facing))
+            let cell = local_easting / 2;
+            let row = cell - ((cell + southing) & 1);
+            let col = tile_col(southing, row) as usize;
+            let layout_idx = (elevation + 3 + (cell & 1) * 3) as u8;
+            track.block_at(row, col, layout_idx)
         }
     }
 }
@@ -140,41 +120,44 @@ impl Layout for CompactLayout {
 
 /// A track's tiles with its row-column metadata.
 struct Track {
-    tiles: Vec<[Tile; 2]>,
+    tiles: Vec<Tile>,
     cols: Option<NonZeroUsize>,
 }
 
 impl Track {
-    /// Returns `cols()` if set, otherwise falls back to total tile count.
-    fn cols_or_len(&self) -> usize {
-        self.cols.map_or(self.len(), NonZeroUsize::get)
-    }
-
-    /// Number of rows occupied by this track.
     fn rows(&self) -> usize {
         self.cols.map_or(1, |c| self.len().div_ceil(c.get()))
     }
 
-    /// Get tile at (row, offset).
+    fn cols_or_len(&self) -> usize {
+        self.cols.map_or(self.len(), |c| c.get())
+    }
+
     fn get_tile(&self, row: impl TryInto<usize>, offset: usize) -> Option<&Tile> {
-        let idx = row.try_into().ok()? * self.cols_or_len() + offset / 2;
-        let [stem, canopy] = self.tiles.get(idx)?;
-        match offset % 2 == 0 {
-            true => Some(stem),
-            false => Some(canopy),
-        }
+        self.tiles
+            .get(row.try_into().ok()? * self.cols_or_len() + offset)
+    }
+
+    fn block_at(&self, row: i32, col: usize, layout_idx: u8) -> GenericBlockState {
+        let repeater_facing = match ((row & 1) == 0, col < 2) {
+            (_, true) => "west",
+            (true, false) => "north",
+            (false, false) => "south",
+        };
+        self.get_tile(row, col)
+            .map_or_else(air, |t| t.get_block(layout_idx, repeater_facing))
     }
 
     fn at_row_start(&self) -> bool {
         match self.cols {
             Some(c) => self.len() % c.get() == 0,
-            None => self.len() == 0,
+            None => true,
         }
     }
 
     fn at_row_end(&self) -> bool {
         match self.cols {
-            Some(c) => (self.len() + 1) % c.get() == 0,
+            Some(c) => (self.len() + 2) % c.get() == 0,
             None => false,
         }
     }
@@ -186,9 +169,9 @@ impl Track {
         columns: Option<NonZeroUsize>,
     ) -> Self {
         let repeater_coarse = coarse.map_or(RedStoneTick::MAX, |l| l.get() / 4);
-        let mut this = Self {
+        let mut track = Self {
             tiles: Default::default(),
-            cols: columns,
+            cols: columns.map(|c| NonZeroUsize::new(c.get() * 2).unwrap()),
         };
         let mut current_tick: RedStoneTick = RedStoneTick::MAX;
 
@@ -196,68 +179,40 @@ impl Track {
             let mut delay = redstone_tick.wrapping_sub(current_tick);
             current_tick = redstone_tick;
 
-            while let Some((part, consume)) = Self::_pop_delay(delay, repeater_coarse, &this) {
-                this.push(part);
+            while let Some((stem, canopy, consume)) =
+                Self::_pop_delay(delay, repeater_coarse, &track)
+            {
+                track.push(stem);
+                track.push(canopy);
                 delay -= consume;
             }
 
-            let stem = match this.at_row_start() {
-                true => Tile::TurningDelay(delay),
-                false => Tile::Delay(delay),
-            };
-            let canopy = match (this.at_row_start(), this.at_row_end()) {
-                (true, true) => Tile::TurningNode(notes.pop()),
-                (true, false) => Tile::TurningTerminal(notes.pop(), notes.pop()),
-                (false, true) => Tile::Node(notes.pop(), notes.pop()),
-                (false, false) => Tile::Terminal(notes.pop(), notes.pop(), notes.pop()),
-            };
-            this.push([stem, canopy]);
+            let at_start = track.at_row_start();
+            let at_end = track.at_row_end();
+            let stem = Tile::stem(delay, at_start);
+            let canopy = Tile::canopy(iter::from_fn(|| notes.pop()), at_start, !at_end);
+            track.push(stem);
+            track.push(canopy);
 
-            if notes.len() > 0 {
-                let (stem, canopy);
-                match (this.at_row_start(), this.at_row_end()) {
-                    (true, false) if notes.len() <= 2 => {
-                        stem = Tile::TurningLink;
-                        canopy = Tile::TurningTerminal(notes.pop(), notes.pop());
-                    }
-                    (true, _) => {
-                        stem = Tile::TurningLink;
-                        canopy = Tile::TurningNode(notes.pop());
-                    }
-                    (false, _) => {
-                        stem = Tile::Link;
-                        canopy = Tile::Node(notes.pop(), notes.pop());
-                    }
-                }
-                this.push([stem, canopy]);
+            if !notes.is_empty() {
+                let at_start = track.at_row_start();
+                let is_terminal = at_start && notes.len() <= 2;
+                let stem = Tile::stem(0, at_start);
+                let canopy = Tile::canopy(iter::from_fn(|| notes.pop()), at_start, is_terminal);
+                track.push(stem);
+                track.push(canopy);
             }
-
-            loop {
-                let (stem, canopy);
-                match (this.at_row_start(), this.at_row_end()) {
-                    _ if notes.is_empty() => break,
-                    (true, _) if notes.len() <= 2 => {
-                        stem = Tile::TurningLink;
-                        canopy = Tile::TurningTerminal(notes.pop(), notes.pop());
-                    }
-                    (true, _) => {
-                        stem = Tile::TurningLink;
-                        canopy = Tile::TurningNode(notes.pop());
-                    }
-                    (false, false) if notes.len() <= 3 => {
-                        stem = Tile::Link;
-                        canopy = Tile::Terminal(notes.pop(), notes.pop(), notes.pop());
-                    }
-                    (false, _) => {
-                        stem = Tile::Link;
-                        canopy = Tile::Node(notes.pop(), notes.pop());
-                    }
-                }
-                this.push([stem, canopy]);
+            while !notes.is_empty() {
+                let at_start = track.at_row_start();
+                let at_end = track.at_row_end();
+                let is_terminal = !at_end && notes.len() <= if at_start { 2 } else { 3 };
+                let stem = Tile::stem(0, at_start);
+                let canopy = Tile::canopy(iter::from_fn(|| notes.pop()), at_start, is_terminal);
+                track.push(stem);
+                track.push(canopy);
             }
         }
-
-        this
+        track
     }
 
     /// Pop a delay tile pair from the start of a gap, if any remains.
@@ -265,43 +220,28 @@ impl Track {
         delay: RedStoneTick,
         coarse: RedStoneTick,
         track: &Track,
-    ) -> Option<([Tile; 2], RedStoneTick)> {
-        let chain = track.last().is_some_and(|[_, canopy]| {
+    ) -> Option<(Tile, Tile, RedStoneTick)> {
+        let chain = track.last().is_some_and(|canopy| {
             // Chain state if no signal was previously output
             matches!(canopy, Tile::Delay(c) if c == &coarse)
         });
         let at_start = track.at_row_start();
         let at_end = track.at_row_end();
-        let pair = |stem_delay: RedStoneTick, canopy: RedStoneTick| {
-            let consumed = stem_delay + canopy;
-            let stem = Tile::Delay(stem_delay);
-            let canopy = match (canopy, at_end) {
-                (0, true) => Tile::Node(None, None),
-                (0, false) => Tile::Terminal(None, None, None),
-                _ => Tile::Delay(canopy),
-            };
-            Some(([stem, canopy], consumed))
-        };
-        let turn = |delay: RedStoneTick| {
-            let stem = Tile::TurningDelay(delay);
-            let canopy = match at_end {
-                true => Tile::TurningNode(None),
-                false => Tile::TurningTerminal(None, None),
-            };
-            Some(([stem, canopy], delay))
-        };
+        let pair = |stem, canopy| Self::_place_delay(stem, canopy, at_start);
+        let turn = |stem| Self::_place_delay(stem, 0, at_start);
+
+        debug_assert!(!((2..=4).contains(&coarse) && chain && at_start));
+        debug_assert!(!(coarse == 1 && chain));
+
         match (coarse, chain, at_start, at_end) {
             // Micro-timing (coarse 2..=4)
-            // TODO 也许应该尝试用 panic 作为闭包返回
             (2..=4, _, false, false) if delay > coarse * 2 => pair(coarse, coarse),
-            (2..=4, true, true, _) => panic!(),
             (2..=4, true, false, true) if delay >= coarse => pair(coarse - 1, 0),
             (2..=4, true, false, false) if delay >= coarse => pair(coarse - 1, 0),
             (2..=4, false, false, false) if delay > coarse => pair(coarse, 0),
             (2..=4, false, true, _) if delay > coarse => turn(coarse),
             (2..=4, false, false, true) if delay > coarse => pair(coarse, 0),
             // Pulse (coarse == 1)
-            (1, true, _, _) => panic!(),
             (1, false, true, _) if delay > 1 => turn(coarse),
             (1, false, false, _) if delay > 1 => pair(coarse, 0),
             // Unaffected (else)
@@ -311,17 +251,31 @@ impl Track {
             _ => None,
         }
     }
+
+    fn _place_delay(
+        stem_delay: RedStoneTick,
+        canopy_delay: RedStoneTick,
+        at_start: bool,
+    ) -> Option<(Tile, Tile, RedStoneTick)> {
+        let stem = Tile::stem(stem_delay, at_start);
+        let canopy = match canopy_delay {
+            0 => Tile::canopy(iter::empty(), at_start, true),
+            _ if at_start => panic!(),
+            _ => Tile::stem(canopy_delay, false),
+        };
+        Some((stem, canopy, stem_delay + canopy_delay))
+    }
 }
 
 impl Deref for Track {
-    fn deref(&self) -> &Vec<[Tile; 2]> {
+    fn deref(&self) -> &Vec<Tile> {
         &self.tiles
     }
-    type Target = Vec<[Tile; 2]>;
+    type Target = Vec<Tile>;
 }
 
 impl DerefMut for Track {
-    fn deref_mut(&mut self) -> &mut Vec<[Tile; 2]> {
+    fn deref_mut(&mut self) -> &mut Vec<Tile> {
         &mut self.tiles
     }
 }
@@ -351,16 +305,29 @@ enum Tile {
 }
 
 impl Tile {
-    /// Block at the given layout index.
-    fn get_block(&self, layout_index: u8, facing_south: bool) -> GenericBlockState {
+    fn stem(delay: RedStoneTick, is_turning: bool) -> Tile {
+        match (delay, is_turning) {
+            (0, true) => Tile::TurningLink,
+            (0, false) => Tile::Link,
+            (_, true) => Tile::TurningDelay(delay),
+            (_, false) => Tile::Delay(delay),
+        }
+    }
+
+    fn canopy(mut notes: impl Iterator<Item = Note>, is_turning: bool, is_terminal: bool) -> Tile {
+        match (is_turning, is_terminal) {
+            (true, true) => Tile::TurningTerminal(notes.next(), notes.next()),
+            (true, false) => Tile::TurningNode(notes.next()),
+            (false, true) => Tile::Terminal(notes.next(), notes.next(), notes.next()),
+            (false, false) => Tile::Node(notes.next(), notes.next()),
+        }
+    }
+
+    fn get_block(&self, layout_index: u8, repeater_facing: &'static str) -> GenericBlockState {
         // The repeater facing direction is reversed.
-        let facing = match facing_south {
-            true => "north",
-            false => "south",
-        };
         match (self, layout_index) {
             (Self::Delay(_), 0) => chain_block(),
-            (Self::Delay(delay), 1) => repeater(delay.to_string(), facing),
+            (Self::Delay(delay), 1) => repeater(delay.to_string(), repeater_facing),
             (Self::Link, 0) => chain_block(),
             (Self::Link, 1) => redstone_wire(),
             (Self::Terminal(center, _, _), 0) => instrument_block(center, chain_block),
@@ -378,7 +345,7 @@ impl Tile {
             // turning variants – same block placement as regular variants
             (Self::TurningDelay(_), 0 | 3) => chain_block(),
             (Self::TurningDelay(_), 1) => redstone_wire(),
-            (Self::TurningDelay(delay), 4) => repeater(delay.to_string(), "west"),
+            (Self::TurningDelay(delay), 4) => repeater(delay.to_string(), repeater_facing),
             (Self::TurningLink, 0 | 3) => chain_block(),
             (Self::TurningLink, 1 | 4) => redstone_wire(),
             (Self::TurningTerminal(center, _), 0) => instrument_block(center, chain_block),
@@ -405,7 +372,7 @@ fn split_even_odd(
 ) -> impl Iterator<Item = (BTreeMap<RedStoneTick, Vec<Note>>, Option<NonZero<GameTick>>)> {
     let mut buckets: [BTreeMap<RedStoneTick, Vec<Note>>; 2] = Default::default();
     for (game_tick, notes) in tracks {
-        buckets[(game_tick & 1) as usize]
+        buckets[(game_tick.rem_euclid(2)) as usize]
             .entry(game_tick / 2)
             .or_default()
             .extend(notes);
