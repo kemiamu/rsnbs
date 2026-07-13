@@ -31,17 +31,23 @@ fn main() {
 // ++++++++++++============++++++++++++============++++++++++++============
 
 #[derive(clap::Args)]
-/// Compact cursor-based layout
+/// Compact layout
 struct Compact {
+    /// Path to input NBS file
     input: String,
+    /// Path to output litematic file
     #[arg(default_value = "generated_compact.litematic")]
     output: String,
+    /// Max tiles per row before wrapping (0 = no wrap)
     #[arg(long, default_value_t = 16)]
     wrap: usize,
+    /// Minimum repeat interval in game ticks, controls repeater granularity (0 = unlimited)
     #[arg(long, default_value_t = 0)]
     coarse: u32,
+    /// Block spacing between adjacent tracks
     #[arg(long, default_value_t = 0)]
     gap: u32,
+    /// Add a floor platform below the build
     #[arg(long)]
     floor: bool,
 }
@@ -78,11 +84,15 @@ impl Compact {
 #[derive(clap::Args)]
 /// Linear time-proportional layout
 struct Linear {
+    /// Path to input NBS file
     input: String,
+    /// Path to output litematic file
     #[arg(default_value = "generated_linear.litematic")]
     output: String,
+    /// Block spacing between adjacent tracks
     #[arg(long, default_value_t = 0)]
     gap: u32,
+    /// Add a floor platform below the build
     #[arg(long)]
     floor: bool,
 }
@@ -108,7 +118,7 @@ fn scale_notes(notes: Notes, tempo: f32) -> Notes {
     match scale > 1 {
         true => notes
             .into_iter()
-            .map(|(pos, note)| (Position(pos.tick() * scale, pos.layer()), note))
+            .map(|(pos, note)| (Position::new(pos.tick() * scale, pos.layer()), note))
             .collect(),
         false => notes,
     }

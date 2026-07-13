@@ -51,7 +51,6 @@ impl LinearLayout {
         (factor, plan)
     }
 
-    /// Group consecutive layers, remapping each track's notes to 0-based layer indices.
     fn _group_tracks(notes: Notes) -> Vec<Notes> {
         let max = notes.keys().map(|p| p.layer()).max().unwrap_or_default();
         let mut cuts: Vec<Index> = vec![0];
@@ -61,7 +60,7 @@ impl LinearLayout {
         let mut buckets: Vec<Notes> = vec![Default::default(); cuts.len()];
         for (pos, note) in notes {
             let track = cuts.partition_point(|&c| c <= pos.layer()) - 1;
-            buckets[track].insert(Position(pos.tick(), pos.layer() - cuts[track]), note);
+            buckets[track].insert(Position::new(pos.tick(), pos.layer() - cuts[track]), note);
         }
         buckets
     }
@@ -140,7 +139,7 @@ impl Plan {
             let head = if scale == 1 { 1 } else { 0 };
             let base_tick = (groups - head) * scale as i32 * 2;
             let tick = (base_tick + tick as i32).try_into().ok()?;
-            notes.get(&Position(tick, layer))
+            notes.get(&Position::new(tick, layer))
         };
         let has_branch = match self {
             Plan::Repeater => note(scale, 0).or_else(|| note(scale, 1)).is_some(),

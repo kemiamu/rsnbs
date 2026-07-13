@@ -230,22 +230,22 @@ mod types {
 
     /// represents a position with tick and layer index.
     #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-    pub struct Position(pub Tick, pub Index);
+    pub struct Position {
+        tick: Tick,
+        layer: Index,
+    }
 
     impl Position {
-        #[deprecated]
         pub fn new(tick: Tick, layer: Index) -> Self {
-            Self(tick, layer)
+            Self { tick, layer }
         }
 
         pub fn tick(&self) -> Index {
-            let Self(tick, _) = self;
-            *tick
+            self.tick
         }
 
         pub fn layer(&self) -> Index {
-            let Self(_, layer) = self;
-            *layer
+            self.layer
         }
     }
 

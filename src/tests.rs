@@ -27,7 +27,7 @@ fn test_scale_ticks() {
         .into_iter()
         .map(|(pos, note)| {
             let new_tick = pos.tick() * NUM / DEN;
-            let new_pos = Position(new_tick, pos.layer());
+            let new_pos = Position::new(new_tick, pos.layer());
             (new_pos, note)
         })
         .collect();
@@ -700,7 +700,7 @@ fn test_linear_layout() {
             } else {
                 pos.tick()
             };
-            (Position(tick, pos.layer()), note)
+            (Position::new(tick, pos.layer()), note)
         })
         .collect();
     let layout = LinearLayout::new(notes, 0);

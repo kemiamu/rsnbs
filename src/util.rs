@@ -217,7 +217,7 @@ where
             prev_layer = if tick == prev_tick { prev_layer + 1 } else { 0 };
             layers = layers.max(prev_layer + 2);
             prev_tick = tick;
-            result.insert(Position(tick, base_layer + prev_layer), note);
+            result.insert(Position::new(tick, base_layer + prev_layer), note);
         }
         base_layer += layers;
     }

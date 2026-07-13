@@ -51,8 +51,7 @@ pub struct WithFloor<L: Layout>(pub L);
 
 impl<L: Layout> Layout for WithFloor<L> {
     fn size(&self) -> BlockPos {
-        let Self(inner) = self;
-        let size = inner.size();
+        let size = self.0.size();
         BlockPos::new(size.x, size.y + 1, size.z)
     }
 

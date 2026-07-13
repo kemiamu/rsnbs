@@ -1,4 +1,4 @@
-//! Compact cursor-based layout for NBS song projection.
+//! Compact layout for NBS song projection.
 
 use crate::schematic::{Layout, chain_block, instrument_block};
 use crate::schematic::{air, note_block, redstone_wire, repeater};
@@ -15,16 +15,12 @@ use std::ops::{Deref, DerefMut};
 
 /// Compact noteblocks layout
 pub struct CompactLayout {
-    /// `(track, start_easting)` for each track.
     tracks: Vec<(Track, i32)>,
-    /// Easting extent (X dimension) of the layout.
     easting: i32,
-    /// Southing extent (Z dimension) of the layout.
     southing: i32,
 }
 
 impl CompactLayout {
-    /// Total elevation (Y) of the layout, in blocks.
     const ELEVATION: i32 = 3;
 
     /// Create a compact layout from note tracks.
@@ -215,7 +211,6 @@ impl Track {
         track
     }
 
-    /// Pop a delay tile pair from the start of a gap, if any remains.
     fn _pop_delay(
         delay: RedStoneTick,
         coarse: RedStoneTick,
@@ -257,10 +252,11 @@ impl Track {
         canopy_delay: RedStoneTick,
         at_start: bool,
     ) -> Option<(Tile, Tile, RedStoneTick)> {
+        debug_assert!(!(canopy_delay != 0 && at_start));
+
         let stem = Tile::stem(stem_delay, at_start);
         let canopy = match canopy_delay {
             0 => Tile::canopy(iter::empty(), at_start, true),
-            _ if at_start => panic!(),
             _ => Tile::stem(canopy_delay, false),
         };
         Some((stem, canopy, stem_delay + canopy_delay))
@@ -286,21 +282,13 @@ impl DerefMut for Track {
 
 /// A stem–canopy tile pair.
 enum Tile {
-    /// Delay connection.
     Delay(RedStoneTick),
-    /// Direct connection.
     Link,
-    /// Terminal.
     Terminal(Option<Note>, Option<Note>, Option<Note>),
-    /// Node.
     Node(Option<Note>, Option<Note>),
-    /// Turning delay connection.
     TurningDelay(RedStoneTick),
-    /// Turning direct connection.
     TurningLink,
-    /// Turning terminal.
     TurningTerminal(Option<Note>, Option<Note>),
-    /// Turning node.
     TurningNode(Option<Note>),
 }
 
