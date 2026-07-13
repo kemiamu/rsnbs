@@ -26,6 +26,7 @@ impl Notes {
     }
 
     /// builds point enumeration (PE) from note pairs
+    #[deprecated]
     pub fn build_pe<T, F>(
         &self,
         loop_length: Option<Tick>,
@@ -196,41 +197,32 @@ impl Notes {
             unmatched.into(),
         )
     }
+}
 
-    /// reassign layers across multiple note groups so they don't overlap.
-    pub fn reassign_layers<I, J>(slices: I) -> Notes
-    where
-        I: IntoIterator<Item = J>,
-        J: IntoIterator<Item = (Index, Note)>,
-    {
-        let mut base_layer: Index = Default::default();
-        let mut result: BTreeMap<Position, Note> = Default::default();
+/// reassign layers across multiple note groups so they don't overlap.
+pub fn reassign_layers<I, J>(slices: I) -> Notes
+where
+    I: IntoIterator<Item = J>,
+    J: IntoIterator<Item = (Tick, Note)>,
+{
+    let mut base_layer: Tick = Default::default();
+    let mut result: BTreeMap<Position, Note> = Default::default();
 
-        for notes in slices {
-            let mut notes: Vec<(Index, Note)> = notes.into_iter().collect();
-            notes.sort_unstable_by_key(|(tick, _)| *tick);
-            let mut notes = notes
-                .into_iter()
-                .map(|(tick, note)| (Position::new(tick, 0), note))
-                .peekable();
+    for notes in slices {
+        let mut prev_tick: Tick = Tick::MAX;
+        let mut prev_layer: Index = Default::default();
+        let mut layers: Index = Default::default();
 
-            let mut current_layer: Index = Default::default();
-            let mut max_layer: Index = Default::default();
-
-            while let Some((pos, note)) = notes.next() {
-                let pos = Position::new(pos.tick(), base_layer + current_layer);
-                max_layer = max_layer.max(current_layer + 2);
-                match notes.peek().map(|(p, _)| p.tick()) == Some(pos.tick()) {
-                    true => current_layer += 1,
-                    false => current_layer = 0,
-                }
-                result.insert(pos, note);
-            }
-            base_layer += max_layer;
+        for (tick, note) in notes.into_iter().sorted_unstable() {
+            prev_layer = if tick == prev_tick { prev_layer + 1 } else { 0 };
+            layers = layers.max(prev_layer + 2);
+            prev_tick = tick;
+            result.insert(Position(tick, base_layer + prev_layer), note);
         }
-
-        result.into()
+        base_layer += layers;
     }
+
+    result.into()
 }
 
 /// pattern match result with group boundaries preserved.

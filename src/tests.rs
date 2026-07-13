@@ -1,6 +1,6 @@
 use crate::layout::CompactLayout;
 use crate::schematic::SchematicBuilder;
-use crate::util::MatchedGroups;
+use crate::util::{MatchedGroups, reassign_layers};
 use crate::{GameTick, Index, Note, Notes, Position, Song, Tick, Tone, Version};
 use counter::Counter;
 use ordered_float::OrderedFloat;
@@ -27,7 +27,7 @@ fn test_scale_ticks() {
         .into_iter()
         .map(|(pos, note)| {
             let new_tick = pos.tick() * NUM / DEN;
-            let new_pos = Position::new(new_tick, pos.layer());
+            let new_pos = Position(new_tick, pos.layer());
             (new_pos, note)
         })
         .collect();
@@ -124,7 +124,7 @@ fn test_sectional_matching() {
     }
 
     // 输出 nbs
-    song.notes = Notes::reassign_layers(all_matched.iter().map(|mg| {
+    song.notes = reassign_layers(all_matched.iter().map(|mg| {
         mg.groups()
             .iter()
             .flat_map(|g| g.iter().map(|(p, n)| (p.tick(), n.clone())))
@@ -170,7 +170,7 @@ fn analyze_tones() {
         .map(|v| v.into_iter().collect())
         .collect();
 
-    song.notes = Notes::reassign_layers(
+    song.notes = reassign_layers(
         slices
             .into_iter()
             .map(|m| m.into_iter().map(|(p, n)| (p.tick(), n))),
@@ -335,7 +335,7 @@ fn test_analyze_transposition_equivalence() {
         remaining_notes.push((tick, note));
     }
 
-    song.notes = Notes::reassign_layers(vec![matched_notes, remaining_notes]);
+    song.notes = reassign_layers(vec![matched_notes, remaining_notes]);
     song.header.is_loop = true;
     song.save_nbs("fixtures/transposition.nbs").unwrap();
 }
@@ -518,7 +518,7 @@ pub fn test_deconvolve_d1() {
         }
     }
 
-    song.notes = Notes::reassign_layers(vec![matched, remaining]);
+    song.notes = reassign_layers(vec![matched, remaining]);
     song.header.is_loop = true;
     song.save_nbs("fixtures/deconvolve.nbs").unwrap();
 }
@@ -651,7 +651,7 @@ pub fn test_deconvolve() {
         }
     }
 
-    song.notes = Notes::reassign_layers(vec![matched, remaining]);
+    song.notes = reassign_layers(vec![matched, remaining]);
     song.header.is_loop = true;
     song.save_nbs("fixtures/deconvolve.nbs").unwrap();
 }
@@ -700,7 +700,7 @@ fn test_linear_layout() {
             } else {
                 pos.tick()
             };
-            (Position::new(tick, pos.layer()), note)
+            (Position(tick, pos.layer()), note)
         })
         .collect();
     let layout = LinearLayout::new(notes, 0);

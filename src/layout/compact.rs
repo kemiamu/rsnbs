@@ -214,41 +214,46 @@ impl Track {
             this.push([stem, canopy]);
 
             if notes.len() > 0 {
-                let stem = match this.at_row_start() {
-                    true => Tile::TurningLink,
-                    false => Tile::Link,
-                };
-                let canopy = match this.at_row_start() {
-                    true => Tile::TurningNode(notes.pop()),
-                    false => Tile::Node(notes.pop(), notes.pop()),
-                };
+                let (stem, canopy);
+                match (this.at_row_start(), this.at_row_end()) {
+                    (true, false) if notes.len() <= 2 => {
+                        stem = Tile::TurningLink;
+                        canopy = Tile::TurningTerminal(notes.pop(), notes.pop());
+                    }
+                    (true, _) => {
+                        stem = Tile::TurningLink;
+                        canopy = Tile::TurningNode(notes.pop());
+                    }
+                    (false, _) => {
+                        stem = Tile::Link;
+                        canopy = Tile::Node(notes.pop(), notes.pop());
+                    }
+                }
                 this.push([stem, canopy]);
             }
 
             loop {
+                let (stem, canopy);
                 match (this.at_row_start(), this.at_row_end()) {
                     _ if notes.is_empty() => break,
                     (true, _) if notes.len() <= 2 => {
-                        let stem = Tile::TurningLink;
-                        let canopy = Tile::TurningTerminal(notes.pop(), notes.pop());
-                        this.push([stem, canopy]);
+                        stem = Tile::TurningLink;
+                        canopy = Tile::TurningTerminal(notes.pop(), notes.pop());
                     }
                     (true, _) => {
-                        let stem = Tile::TurningLink;
-                        let canopy = Tile::TurningNode(notes.pop());
-                        this.push([stem, canopy]);
+                        stem = Tile::TurningLink;
+                        canopy = Tile::TurningNode(notes.pop());
                     }
                     (false, false) if notes.len() <= 3 => {
-                        let stem = Tile::Link;
-                        let canopy = Tile::Terminal(notes.pop(), notes.pop(), notes.pop());
-                        this.push([stem, canopy]);
+                        stem = Tile::Link;
+                        canopy = Tile::Terminal(notes.pop(), notes.pop(), notes.pop());
                     }
                     (false, _) => {
-                        let stem = Tile::Link;
-                        let canopy = Tile::Node(notes.pop(), notes.pop());
-                        this.push([stem, canopy]);
+                        stem = Tile::Link;
+                        canopy = Tile::Node(notes.pop(), notes.pop());
                     }
                 }
+                this.push([stem, canopy]);
             }
         }
 

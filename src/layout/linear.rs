@@ -61,7 +61,7 @@ impl LinearLayout {
         let mut buckets: Vec<Notes> = vec![Default::default(); cuts.len()];
         for (pos, note) in notes {
             let track = cuts.partition_point(|&c| c <= pos.layer()) - 1;
-            buckets[track].insert(Position::new(pos.tick(), pos.layer() - cuts[track]), note);
+            buckets[track].insert(Position(pos.tick(), pos.layer() - cuts[track]), note);
         }
         buckets
     }
@@ -140,7 +140,7 @@ impl Plan {
             let head = if scale == 1 { 1 } else { 0 };
             let base_tick = (groups - head) * scale as i32 * 2;
             let tick = (base_tick + tick as i32).try_into().ok()?;
-            notes.get(&Position::new(tick, layer))
+            notes.get(&Position(tick, layer))
         };
         let has_branch = match self {
             Plan::Repeater => note(scale, 0).or_else(|| note(scale, 1)).is_some(),

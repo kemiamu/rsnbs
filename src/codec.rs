@@ -194,7 +194,7 @@ impl Codec for Notes {
                 layer_cursor = layer_cursor.wrapping_add(layer_jump.get());
 
                 let note = Note::parse(reader, version)?;
-                notes.insert(Position::new(tick_cursor, layer_cursor), note);
+                notes.insert(Position(tick_cursor, layer_cursor), note);
             }
         }
 

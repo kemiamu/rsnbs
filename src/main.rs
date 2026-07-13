@@ -96,7 +96,7 @@ fn scale_notes(notes: Notes, tempo: f32) -> Notes {
     match scale > 1 {
         true => notes
             .into_iter()
-            .map(|(pos, note)| (Position::new(pos.tick() * scale, pos.layer()), note))
+            .map(|(pos, note)| (Position(pos.tick() * scale, pos.layer()), note))
             .collect(),
         false => notes,
     }

@@ -29,7 +29,7 @@ let song_path = "test_song.nbs";
 let mut song = Song::new();
 song.header.is_loop = true;
 for i in 0..25 {
-    let pos = Position::new(i, 0);
+    let pos = Position(i, 0);
     let note = Note::new(Instrument::Harp, Key::from_minecraft_note(i).unwrap());
     song.notes.insert(pos, note);
 }
