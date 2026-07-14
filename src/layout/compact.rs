@@ -2,7 +2,8 @@
 
 use crate::schematic::{Layout, chain_block, instrument_block};
 use crate::schematic::{air, note_block, redstone_wire, repeater};
-use crate::{GameTick, Note, RedStoneTick};
+use crate::note::Note;
+use crate::types::{GameTick, RedStoneTick};
 use mcdata::{GenericBlockState, util::BlockPos};
 use std::collections::BTreeMap;
 use std::iter;

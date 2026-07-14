@@ -1,8 +1,9 @@
 //! NBS (Note Block Studio) file format parser and writer.
 
 use crate::nbs_ext::{NbsReadExt, NbsWriteExt};
-use crate::{CustomInstrument, Header, Instrument, Key, Layer, Note, Notes, Position, Song};
-use crate::{Index, Panning, Result, Version, Volume};
+use crate::note::{Instrument, Key, Note, Notes};
+use crate::song::{CustomInstrument, Header, Layer, Song};
+use crate::types::{Index, Panning, Position, Result, Version, Volume};
 use std::collections::BTreeMap;
 use std::io;
 use std::num::NonZeroU32;

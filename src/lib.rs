@@ -2,18 +2,15 @@
 
 mod codec;
 mod nbs_ext;
-mod note;
 
+pub mod note;
 pub mod schematic;
 pub mod util;
-pub use note::*;
-pub use song::*;
-pub use types::*;
 
 pub mod layout {
-    mod compact;
+    pub mod compact;
+    pub mod linear;
     pub use compact::*;
-    mod linear;
     pub use linear::*;
 }
 
@@ -24,9 +21,9 @@ mod tests;
 //
 // ============================================================================
 
-mod song {
-    use super::types::{Index, Panning, Version, Volume};
-    use super::{Notes, Result};
+pub mod song {
+    use crate::note::Notes;
+    use crate::types::{Index, Panning, Result, Version, Volume};
 
     /// represents a complete nbs song with header, notes, layers, and instruments.
     #[derive(Debug, Default, Clone, PartialEq, PartialOrd)]
@@ -70,7 +67,7 @@ mod song {
         }
 
         /// returns the tick count (max tick + 1) of the song.
-        pub fn len(&self) -> super::Index {
+        pub fn len(&self) -> Index {
             self.notes
                 .last_key_value()
                 .map(|(p, _)| p.tick() + 1)
@@ -201,7 +198,7 @@ mod song {
 //
 // ============================================================================
 
-mod types {
+pub mod types {
     /// the current nbs (note block studio) file format version.
     const CURRENT_NBS_VERSION: u8 = 6;
 
@@ -210,10 +207,10 @@ mod types {
     pub struct Version(u8);
 
     impl Version {
-        pub fn new(version: u8) -> super::Result<Self> {
+        pub fn new(version: u8) -> Result<Self> {
             match version {
                 0..=CURRENT_NBS_VERSION => Ok(Self(version)),
-                _ => Err(super::Error::InvalidVersion(version.to_string())),
+                _ => Err(Error::InvalidVersion(version.to_string())),
             }
         }
 
@@ -240,11 +237,11 @@ mod types {
             Self { tick, layer }
         }
 
-        pub fn tick(&self) -> Index {
+        pub fn tick(self) -> Index {
             self.tick
         }
 
-        pub fn layer(&self) -> Index {
+        pub fn layer(self) -> Index {
             self.layer
         }
     }
@@ -260,10 +257,10 @@ mod types {
     }
 
     impl Volume {
-        pub fn new(volume: u8) -> super::Result<Self> {
+        pub fn new(volume: u8) -> Result<Self> {
             match volume {
                 0..=100 => Ok(Self(volume)),
-                _ => Err(super::Error::InvalidVolume(volume.to_string())),
+                _ => Err(Error::InvalidVolume(volume.to_string())),
             }
         }
 
@@ -283,10 +280,10 @@ mod types {
     }
 
     impl Panning {
-        pub fn new(panning: i8) -> super::Result<Self> {
+        pub fn new(panning: i8) -> Result<Self> {
             match &panning {
                 (-100..=100) => Ok(Self(panning)),
-                _ => Err(super::Error::InvalidPanning(panning.to_string())),
+                _ => Err(Error::InvalidPanning(panning.to_string())),
             }
         }
 

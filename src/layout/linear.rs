@@ -1,8 +1,9 @@
 //! Linear time-proportional layout for NBS song projection.
 
+use crate::note::Notes;
 use crate::schematic::{Layout, air, chain_block, instrument_block, note_block};
 use crate::schematic::{redstone_block, repeater, sticky_piston};
-use crate::{Index, Notes, Position, Tick};
+use crate::types::{Position, Tick};
 use mcdata::{GenericBlockState, util::BlockPos};
 
 // LinearLayout
@@ -11,7 +12,7 @@ use mcdata::{GenericBlockState, util::BlockPos};
 
 /// Linear noteblocks layout
 pub struct LinearLayout {
-    track_notes: Vec<Notes>,
+    tracks: Vec<Notes>,
     plan: Plan,
     scale: Tick,
     gap: i32,
@@ -23,14 +24,13 @@ impl LinearLayout {
     const TEMPL: [Tick; 3] = [4, 2, 3];
 
     /// Create a linear layout from per-tick notes.
-    pub fn new(notes: Notes, gap: u32) -> Self {
-        let (scale, plan) = Self::_scale(&notes);
-        let track_notes = Self::_group_tracks(notes);
-        let easting = Self::_width(&track_notes, plan, gap);
-        let southing = Self::_length(&track_notes, scale);
+    pub fn new(tracks: Vec<Notes>, gap: u32) -> Self {
+        let (scale, plan) = Self::_scale(&tracks);
+        let easting = Self::_width(&tracks, plan, gap);
+        let southing = Self::_length(&tracks, scale);
 
         Self {
-            track_notes,
+            tracks,
             plan,
             scale,
             gap: gap as i32,
@@ -39,30 +39,18 @@ impl LinearLayout {
         }
     }
 
-    fn _scale(notes: &Notes) -> (Tick, Plan) {
+    fn _scale(tracks: &[Notes]) -> (Tick, Plan) {
+        let positions = tracks.iter().flat_map(|n| n.keys());
         let factor = Self::TEMPL
             .into_iter()
-            .find(|templ| notes.keys().all(|pos| pos.tick() % templ == 0))
+            .find(|&templ| positions.clone().all(|pos| pos.tick() % templ == 0))
             .unwrap_or(1);
         let plan = match factor {
             4 | 2 => Plan::Repeater,
-            _ => Plan::Piston,
+            3 | 1 => Plan::Piston,
+            _ => panic!(),
         };
         (factor, plan)
-    }
-
-    fn _group_tracks(notes: Notes) -> Vec<Notes> {
-        let max = notes.keys().map(|p| p.layer()).max().unwrap_or_default();
-        let mut cuts: Vec<Index> = vec![0];
-        for x in (0..=max).filter(|x| !notes.keys().any(|p| p.layer() == *x)) {
-            cuts.push(x + 1);
-        }
-        let mut buckets: Vec<Notes> = vec![Default::default(); cuts.len()];
-        for (pos, note) in notes {
-            let track = cuts.partition_point(|&c| c <= pos.layer()) - 1;
-            buckets[track].insert(Position::new(pos.tick(), pos.layer() - cuts[track]), note);
-        }
-        buckets
     }
 
     fn _width(track_notes: &[Notes], plan: Plan, gap: u32) -> i32 {
@@ -95,7 +83,7 @@ impl Layout for LinearLayout {
             pos.y,
             self.southing - pos.z - 1,
         );
-        match self.track_notes.get(track_idx) {
+        match self.tracks.get(track_idx) {
             Some(track_notes) => self.plan.get_block(track_notes, local_pos, self.scale),
             None => air(),
         }

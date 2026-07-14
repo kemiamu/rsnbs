@@ -1,28 +1,108 @@
-use crate::{Index, Note, Notes, Position, Tick, Tone};
+use crate::note::{Note, Notes, Tone};
+use crate::types::{Index, Position, Tick};
 use itertools::Itertools;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::num::NonZero;
 
-impl Notes {
-    /// flattens notes into the TP (tick–tone) plane multiset,
-    /// collapsing layers by summing counts per (tick, tone).
-    pub fn to_tp_multiset(&self) -> HashMap<Tick, HashMap<Tone, NonZero<usize>>> {
-        let mut tp: HashMap<Tick, HashMap<Tone, usize>> = HashMap::new();
-        for (pos, note) in self.iter() {
-            *tp.entry(pos.tick())
-                .or_default()
-                .entry(note.tone())
-                .or_default() += 1;
+// TpPlane
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// A point in the TP (tick–tone) plane.
+pub type Point = (Tick, Tone);
+
+/// TP (tick–tone) plane multiset.
+///
+/// Collapses all layers by summing note counts at each (tick, tone) point.
+/// Each distinct point has multiplicity ≥ 1.
+#[deprecated]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct TpPlane {
+    points: BTreeMap<Point, NonZero<usize>>,
+}
+
+impl TpPlane {
+    /// Build the TP plane from notes, collapsing layers.
+    pub fn from_notes(notes: &Notes) -> Self {
+        let mut points: BTreeMap<Point, usize> = BTreeMap::new();
+        for (pos, note) in notes.iter() {
+            *points.entry((pos.tick(), note.tone())).or_default() += 1;
         }
-        tp.into_iter()
-            .map(|(tick, tones)| {
-                let tones = tones
-                    .into_iter()
-                    .filter_map(|(tone, count)| NonZero::new(count).map(|c| (tone, c)))
-                    .collect();
-                (tick, tones)
-            })
-            .collect()
+        let points = points
+            .into_iter()
+            .filter_map(|(p, count)| NonZero::new(count).map(|c| (p, c)))
+            .collect();
+        Self { points }
+    }
+
+    /// Returns the multiplicity at the given point (0 if absent).
+    pub fn get(&self, tick: Tick, tone: &Tone) -> usize {
+        self.points.get(&(tick, *tone)).map_or(0, |c| c.get())
+    }
+
+    /// Returns `true` if the point exists.
+    pub fn contains(&self, tick: Tick, tone: &Tone) -> bool {
+        self.points.contains_key(&(tick, *tone))
+    }
+
+    /// Iterates over all (point, multiplicity) pairs.
+    pub fn iter(&self) -> impl Iterator<Item = (&Point, usize)> {
+        self.points.iter().map(|(p, c)| (p, c.get()))
+    }
+
+    /// Number of distinct points.
+    pub fn len(&self) -> usize {
+        self.points.len()
+    }
+
+    /// Returns `true` if the plane has no points.
+    pub fn is_empty(&self) -> bool {
+        self.points.is_empty()
+    }
+}
+
+// Notes util
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+impl Notes {
+    /// Rescales ticks from arbitrary tempo (tick/s) to standard 20 tick/s.
+    pub fn rescale(self, tempo: f32) -> Notes {
+        let scale = (20.0 / tempo).round() as u32;
+        let map_pos = |pos: Position| Position::new(pos.tick() * scale, pos.layer());
+        match scale > 1 {
+            true => self.into_iter().map(|(p, n)| (map_pos(p), n)).collect(),
+            false => self,
+        }
+    }
+
+    /// Groups notes into contiguous blocks separated by empty layers.
+    pub fn split_by_layer_gaps(self) -> Vec<Notes> {
+        let layers: BTreeSet<Index> = self.keys().map(|pos| pos.layer()).collect();
+        let block_start = |prev: &mut Option<Index>, curr: Index| {
+            let keep = prev.map_or(true, |p| p + 1 != curr);
+            *prev = Some(curr);
+            Some(keep.then_some(curr))
+        };
+        let starts: Vec<Index> = layers
+            .into_iter()
+            .scan(None, block_start)
+            .flatten()
+            .collect();
+
+        let mut groups: Vec<Notes> = vec![Default::default(); starts.len()];
+        for (pos, note) in self {
+            let idx = starts.partition_point(|&s| s <= pos.layer()) - 1;
+            let pos = Position::new(pos.tick(), pos.layer() - starts[idx]);
+            groups[idx].insert(pos, note);
+        }
+        groups
+    }
+
+    /// Collapses layers into a TP (tick–tone) plane multiset.
+    #[deprecated]
+    pub fn to_tp_plane(&self) -> TpPlane {
+        TpPlane::from_notes(self)
     }
 
     /// builds point enumeration (PE) from note pairs

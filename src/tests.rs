@@ -1,7 +1,9 @@
 use crate::layout::MultiCompactLayout;
+use crate::note::{Note, Notes, Tone};
 use crate::schematic::{SchematicBuilder, WithFloor};
+use crate::song::Song;
+use crate::types::{GameTick, Index, Position, Tick, Version};
 use crate::util::{MatchedGroups, reassign_layers};
-use crate::{GameTick, Index, Note, Notes, Position, Song, Tick, Tone, Version};
 use counter::Counter;
 use ordered_float::OrderedFloat;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -707,7 +709,7 @@ fn test_linear_layout() {
             (Position::new(tick, pos.layer()), note)
         })
         .collect();
-    let layout = LinearLayout::new(notes, 0);
+    let layout = LinearLayout::new(notes.split_by_layer_gaps(), 0);
     let litematic = SchematicBuilder(layout).build("Linear from source.nbs", "rustnbs");
     litematic
         .write_file("fixtures/generated_linear.litematic")

@@ -1,4 +1,4 @@
-use crate::{Panning, Position, Volume};
+use crate::types::{Panning, Position, Volume};
 use mcdata::GenericBlockState;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};

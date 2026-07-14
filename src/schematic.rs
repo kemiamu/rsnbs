@@ -1,6 +1,6 @@
 //! Generate Minecraft litematic projections from NBS songs.
 
-use crate::Note;
+use crate::note::Note;
 use itertools::iproduct;
 use mcdata::BlockState;
 use mcdata::{GenericBlockState, util::BlockPos};

@@ -1,7 +1,9 @@
 use clap::Parser;
 use rsnbs::layout::{LinearLayout, MultiCompactLayout};
 use rsnbs::schematic::{SchematicBuilder, WithFloor};
-use rsnbs::{Note, Notes, Position, Song, Tick};
+use rsnbs::note::Note;
+use rsnbs::song::Song;
+use rsnbs::types::Tick;
 use std::collections::BTreeMap;
 use std::num::NonZero;
 
@@ -56,7 +58,7 @@ impl Compact {
     fn run(self) {
         let song = Song::open_nbs(&self.input).unwrap();
         let name = self.input.clone();
-        let notes = scale_notes(song.notes, song.header.tempo);
+        let notes = song.notes.rescale(song.header.tempo);
 
         let mut by_tick: BTreeMap<Tick, Vec<Note>> = Default::default();
         for (pos, note) in notes {
@@ -100,8 +102,10 @@ impl Linear {
     fn run(self) {
         let song = Song::open_nbs(&self.input).unwrap();
         let name = self.input.clone();
-        let notes = scale_notes(song.notes, song.header.tempo);
-        let layout = LinearLayout::new(notes, self.gap);
+        let layout = LinearLayout::new(
+            song.notes.rescale(song.header.tempo).split_by_layer_gaps(),
+            self.gap,
+        );
         let description = format!("Sectional from {}", name);
         let litematic = match self.floor {
             true => SchematicBuilder(WithFloor(layout)).build(description, "rsnbs"),
@@ -109,16 +113,5 @@ impl Linear {
         };
         litematic.write_file(&self.output).unwrap();
         eprintln!("Wrote {}", self.output);
-    }
-}
-
-fn scale_notes(notes: Notes, tempo: f32) -> Notes {
-    let scale = (20.0 / tempo).round() as u32;
-    match scale > 1 {
-        true => notes
-            .into_iter()
-            .map(|(pos, note)| (Position::new(pos.tick() * scale, pos.layer()), note))
-            .collect(),
-        false => notes,
     }
 }
