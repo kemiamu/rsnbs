@@ -251,6 +251,7 @@ impl Track {
 
             if !notes.is_empty() {
                 let at_start = track.at_row_start();
+                let at_end = track.at_row_end();
                 let is_terminal = !at_end && at_start && notes.len() <= 2;
                 let stem = Tile::stem(0, at_start);
                 let canopy = Tile::canopy(iter::from_fn(|| notes.pop()), at_start, is_terminal);
