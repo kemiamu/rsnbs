@@ -19,7 +19,7 @@ mod tests;
 
 // song
 //
-// ============================================================================
+// ++++++++++++============++++++++++++============++++++++++++============
 
 pub mod song {
     use crate::note::Notes;
@@ -89,7 +89,7 @@ pub mod song {
 
     // header
     //
-    // ============================================================================
+    // ++++++++++++============++++++++++++============++++++++++++============
 
     /// contains metadata and song information from the nbs file header.
     #[derive(Debug, Clone, PartialEq, PartialOrd)]
@@ -147,7 +147,7 @@ pub mod song {
 
     // layer
     //
-    // ============================================================================
+    // ++++++++++++============++++++++++++============++++++++++++============
 
     /// represents a layer with volume, panning, and lock settings.
     #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -171,7 +171,7 @@ pub mod song {
 
     // custom instrument
     //
-    // ============================================================================
+    // ++++++++++++============++++++++++++============++++++++++++============
 
     /// represents an instrument with sound file, pitch, and playback settings.
     #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -196,7 +196,7 @@ pub mod song {
 
 // types
 //
-// ============================================================================
+// ++++++++++++============++++++++++++============++++++++++++============
 
 pub mod types {
     /// the current nbs (note block studio) file format version.
@@ -304,7 +304,7 @@ pub mod types {
 
     // error
     //
-    // ============================================================================
+    // ++++++++++++============++++++++++++============++++++++++++============
 
     /// custom error types
     #[derive(Debug, thiserror::Error)]

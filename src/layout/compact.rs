@@ -1,13 +1,13 @@
 //! Compact note block layouts for NBS song projection.
 
+use crate::note::Note;
 use crate::schematic::{Layout, chain_block, instrument_block};
 use crate::schematic::{air, note_block, redstone_wire, repeater};
-use crate::note::Note;
-use crate::types::{GameTick, RedStoneTick};
+use crate::types::{GameTick, RedStoneTick, Tick};
 use mcdata::{GenericBlockState, util::BlockPos};
 use std::collections::BTreeMap;
 use std::iter;
-use std::num::{NonZero, NonZeroUsize};
+use std::num::NonZero;
 use std::ops::{Deref, DerefMut};
 
 // MultiCompactLayout
@@ -28,8 +28,8 @@ pub struct MultiCompactLayout {
 impl MultiCompactLayout {
     /// Create a multi-track compact layout from multiple note groups.
     pub fn new<N>(
-        tracks: impl IntoIterator<Item = (N, Option<NonZero<GameTick>>)>,
-        wrap_length: Option<NonZeroUsize>,
+        tracks: impl IntoIterator<Item = (N, Option<NonZero<RedStoneTick>>)>,
+        wrap_length: Option<NonZero<usize>>,
         gap: u32,
     ) -> Self
     where
@@ -102,8 +102,8 @@ impl CompactLayout {
     /// the split automatically.
     pub fn new(
         notes: BTreeMap<RedStoneTick, Vec<Note>>,
-        coarse: Option<NonZero<GameTick>>,
-        wrap_length: Option<NonZeroUsize>,
+        coarse: Option<NonZero<Tick>>,
+        wrap_length: Option<NonZero<usize>>,
     ) -> Self {
         let track = Track::new(notes, coarse, wrap_length);
         let easting = (track.rows() as i32) * 2 + 1;
@@ -176,7 +176,7 @@ impl Layout for CompactLayout {
 /// A track's tiles with its row-column metadata.
 struct Track {
     tiles: Vec<Tile>,
-    cols: Option<NonZeroUsize>,
+    cols: Option<NonZero<usize>>,
 }
 
 impl Track {
@@ -206,7 +206,7 @@ impl Track {
     fn at_row_start(&self) -> bool {
         match self.cols {
             Some(c) => self.len() % c.get() == 0,
-            None => true,
+            None => self.len() < 2,
         }
     }
 
@@ -220,13 +220,13 @@ impl Track {
     /// Build a `Track` from timed notes, packing them into tiles.
     fn new(
         timed_notes: BTreeMap<RedStoneTick, Vec<Note>>,
-        coarse: Option<NonZero<GameTick>>,
-        columns: Option<NonZeroUsize>,
+        repeater_coarse: Option<NonZero<Tick>>,
+        columns: Option<NonZero<usize>>,
     ) -> Self {
-        let repeater_coarse = coarse.map_or(RedStoneTick::MAX, |l| l.get() / 4);
+        let repeater_coarse = repeater_coarse.map_or(Tick::MAX, |l| l.get());
         let mut track = Self {
             tiles: Default::default(),
-            cols: columns.map(|c| NonZeroUsize::new(c.get() * 2).unwrap()),
+            cols: columns.map(|c| NonZero::new(c.get() * 2).unwrap()),
         };
         let mut current_tick: RedStoneTick = RedStoneTick::MAX;
 
@@ -251,7 +251,7 @@ impl Track {
 
             if !notes.is_empty() {
                 let at_start = track.at_row_start();
-                let is_terminal = at_start && notes.len() <= 2;
+                let is_terminal = !at_end && at_start && notes.len() <= 2;
                 let stem = Tile::stem(0, at_start);
                 let canopy = Tile::canopy(iter::from_fn(|| notes.pop()), at_start, is_terminal);
                 track.push(stem);
@@ -272,7 +272,7 @@ impl Track {
 
     fn _pop_delay(
         delay: RedStoneTick,
-        coarse: RedStoneTick,
+        coarse: Tick,
         track: &Track,
     ) -> Option<(Tile, Tile, RedStoneTick)> {
         let chain = track.last().is_some_and(|canopy| {
@@ -281,8 +281,8 @@ impl Track {
         });
         let at_start = track.at_row_start();
         let at_end = track.at_row_end();
-        let pair = |stem, canopy| Self::_place_delay(stem, canopy, at_start);
-        let turn = |stem| Self::_place_delay(stem, 0, at_start);
+        let pair = |stem, canopy| Self::_place_delay(stem, canopy, at_start, at_end);
+        let turn = |stem| Self::_place_delay(stem, 0, at_start, at_end);
 
         debug_assert!(!((2..=4).contains(&coarse) && chain && at_start));
         debug_assert!(!(coarse == 1 && chain));
@@ -308,12 +308,13 @@ impl Track {
         stem_delay: RedStoneTick,
         canopy_delay: RedStoneTick,
         at_start: bool,
+        at_end: bool,
     ) -> Option<(Tile, Tile, RedStoneTick)> {
         debug_assert!(!(canopy_delay != 0 && at_start));
 
         let stem = Tile::stem(stem_delay, at_start);
         let canopy = match canopy_delay {
-            0 => Tile::canopy(iter::empty(), at_start, true),
+            0 => Tile::canopy(iter::empty(), at_start, !at_end),
             _ => Tile::stem(canopy_delay, false),
         };
         Some((stem, canopy, stem_delay + canopy_delay))
@@ -414,8 +415,8 @@ impl Tile {
 /// Split game tick notes into even/odd redstone tick buckets.
 fn split_even_odd(
     tracks: impl IntoIterator<Item = (GameTick, Vec<Note>)>,
-    coarse: Option<NonZero<GameTick>>,
-) -> impl Iterator<Item = (BTreeMap<RedStoneTick, Vec<Note>>, Option<NonZero<GameTick>>)> {
+    coarse: Option<NonZero<Tick>>,
+) -> impl Iterator<Item = (BTreeMap<RedStoneTick, Vec<Note>>, Option<NonZero<Tick>>)> {
     let mut buckets: [BTreeMap<RedStoneTick, Vec<Note>>; 2] = Default::default();
     for (game_tick, notes) in tracks {
         buckets[(game_tick.rem_euclid(2)) as usize]

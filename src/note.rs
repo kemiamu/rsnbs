@@ -1,4 +1,5 @@
-use crate::types::{Panning, Position, Volume};
+use crate::types::{Index, Panning, Position, Tick, Volume};
+use itertools::Itertools;
 use mcdata::GenericBlockState;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
@@ -7,7 +8,7 @@ use std::ops::{Deref, DerefMut};
 
 // note
 //
-// ============================================================================
+// ++++++++++++============++++++++++++============++++++++++++============
 
 /// a single note with timing, instrument, and modulation data.
 #[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -71,7 +72,7 @@ pub type Tone = (Instrument, Key);
 
 // instrument
 //
-// ============================================================================
+// ++++++++++++============++++++++++++============++++++++++++============
 
 /// built-in minecraft note block instruments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -355,7 +356,7 @@ impl Display for Instrument {
 
 // key
 //
-// ============================================================================
+// ++++++++++++============++++++++++++============++++++++++++============
 
 /// a musical key (f#3-f#5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -440,7 +441,7 @@ impl Display for Key {
 
 // notes collection
 //
-// ============================================================================
+// ++++++++++++============++++++++++++============++++++++++++============
 
 /// ordered note set, guarantees position order for nbs serialization.
 #[derive(Debug, Default, Clone, PartialEq, PartialOrd)]
@@ -484,5 +485,19 @@ impl From<BTreeMap<Position, Note>> for Notes {
 impl FromIterator<(Position, Note)> for Notes {
     fn from_iter<T: IntoIterator<Item = (Position, Note)>>(iter: T) -> Self {
         Notes(iter.into_iter().collect())
+    }
+}
+
+impl<C> FromIterator<(Tick, C)> for Notes
+where
+    C: IntoIterator<Item = Tone>,
+{
+    fn from_iter<T: IntoIterator<Item = (Tick, C)>>(iter: T) -> Self {
+        let ticked = iter.into_iter().sorted_by_key(|(tick, _)| *tick);
+        let notes = ticked.flat_map(|(tick, tones)| {
+            let indexed = tones.into_iter().enumerate();
+            indexed.map(move |(idx, tone)| (Position::new(tick, idx as Index), Note::from(tone)))
+        });
+        notes.collect()
     }
 }
