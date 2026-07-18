@@ -290,7 +290,9 @@ impl Track {
 
         match (coarse, chain, at_start, at_end) {
             // Micro-timing (coarse 2..=4)
+            (2..=4, false, false, _) if delay == coarse * 3 => pair(coarse, 0),
             (2..=4, _, false, false) if delay > coarse * 2 => pair(coarse, coarse),
+            (2..=4, true, false, _) if delay == coarse * 2 => pair(coarse, 1),
             (2..=4, true, false, _) if delay >= coarse => pair(coarse - 1, 0),
             (2..=4, false, false, _) if delay > coarse => pair(coarse, 0),
             (2..=4, false, true, _) if delay > coarse => turn(coarse),
