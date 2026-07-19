@@ -35,11 +35,12 @@ impl MultiCompactLayout {
     where
         N: IntoIterator<Item = (GameTick, Vec<Note>)>,
     {
-        let mut cursor: i32 = -(gap as i32);
+        let gap = gap as i32;
+        let mut cursor: i32 = -gap;
         let place_band = |band: CompactLayout| {
-            let start = cursor + gap as i32;
-            cursor = start + band.easting;
-            (band, start)
+            let anchor = cursor + gap;
+            cursor = anchor + band.easting;
+            (band, anchor)
         };
         let bands: Vec<(CompactLayout, i32)> = tracks
             .into_iter()
@@ -55,7 +56,7 @@ impl MultiCompactLayout {
             .unwrap_or(0);
         Self {
             bands,
-            easting: cursor,
+            easting: cursor.max(0),
             southing,
         }
     }
@@ -67,11 +68,16 @@ impl Layout for MultiCompactLayout {
     }
 
     fn get_block(&self, pos: BlockPos) -> GenericBlockState {
-        debug_assert!((0..self.southing).contains(&pos.z), "z out of range");
-        let idx = self.bands.partition_point(|(_, s)| *s <= pos.x) - 1;
+        debug_assert!((0..self.easting).contains(&pos.x));
+        debug_assert!((0..self.southing).contains(&pos.z));
+        debug_assert!((0..CompactLayout::ELEVATION).contains(&pos.y));
+        let idx = self.bands.partition_point(|(_, a)| *a <= pos.x) - 1;
         let (band, start) = &self.bands[idx];
         let local_easting = pos.x - start;
-        match local_easting < band.easting && pos.z < band.southing {
+        match (0..CompactLayout::ELEVATION).contains(&pos.y)
+            && (0..band.easting).contains(&local_easting)
+            && (0..band.southing).contains(&pos.z)
+        {
             true => band.get_block(BlockPos::new(local_easting, pos.y, pos.z)),
             false => air(),
         }

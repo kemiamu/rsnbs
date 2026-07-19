@@ -63,6 +63,108 @@ impl<L: Layout> Layout for WithFloor<L> {
     }
 }
 
+// Arranged
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// Which spatial direction sub-layouts are placed along.
+#[derive(Clone, Copy)]
+pub enum Axis {
+    /// East–west axis (X).
+    Easting,
+    /// Vertical axis (Y).
+    Elevation,
+    /// South–north axis (Z).
+    Southing,
+}
+
+impl Axis {
+    /// The unit vector for this axis.
+    pub fn unit(self) -> BlockPos {
+        match self {
+            Axis::Easting => BlockPos::new(1, 0, 0),
+            Axis::Elevation => BlockPos::new(0, 1, 0),
+            Axis::Southing => BlockPos::new(0, 0, 1),
+        }
+    }
+}
+
+/// A layout wrapper that arranges sub-layouts along an [`Axis`].
+///
+/// Sub-layouts are placed one after another along the chosen axis,
+/// with the cross-axes sized to the maximum among all children.
+/// Always aligns toward 0.
+pub struct Arranged<L: Layout> {
+    bands: Vec<(L, BlockPos)>,
+    size: BlockPos,
+}
+
+impl<L: Layout> Arranged<L> {
+    pub fn new(layouts: impl IntoIterator<Item = L>, axis: Axis, gap: u32) -> Self {
+        let unit = axis.unit();
+        let gap = gap as i32;
+        let gap_vec = BlockPos::new(unit.x * gap, unit.y * gap, unit.z * gap);
+        let mut cursor = BlockPos::new(-gap_vec.x, -gap_vec.y, -gap_vec.z);
+        let mut extent = BlockPos::new(0, 0, 0);
+
+        let placed = layouts.into_iter().map(|layout| {
+            let size = layout.size();
+            // Anchor along the primary axis (cross-axes stay 0)
+            let anchor_pos = BlockPos::new(
+                cursor.x + gap_vec.x,
+                cursor.y + gap_vec.y,
+                cursor.z + gap_vec.z,
+            );
+            // Advance cursor along the primary axis
+            cursor = BlockPos::new(
+                anchor_pos.x + size.x * unit.x,
+                anchor_pos.y + size.y * unit.y,
+                anchor_pos.z + size.z * unit.z,
+            );
+            // Accumulate max across all axes
+            extent = BlockPos::new(
+                extent.x.max(size.x),
+                extent.y.max(size.y),
+                extent.z.max(size.z),
+            );
+            (layout, anchor_pos)
+        });
+        let bands = placed.collect();
+
+        // max picks primary from cursor, cross from extent
+        let size = BlockPos::new(
+            cursor.x.max(0).max(extent.x),
+            cursor.y.max(0).max(extent.y),
+            cursor.z.max(0).max(extent.z),
+        );
+        Self { bands, size }
+    }
+}
+
+impl<L: Layout> Layout for Arranged<L> {
+    fn size(&self) -> BlockPos {
+        self.size
+    }
+
+    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+        debug_assert!((0..self.size.x).contains(&pos.x), "x out of range");
+        debug_assert!((0..self.size.y).contains(&pos.y), "y out of range");
+        debug_assert!((0..self.size.z).contains(&pos.z), "z out of range");
+
+        for (layout, anchor) in &self.bands {
+            let local = BlockPos::new(pos.x - anchor.x, pos.y - anchor.y, pos.z - anchor.z);
+            let size = layout.size();
+            if (0..size.x).contains(&local.x)
+                && (0..size.y).contains(&local.y)
+                && (0..size.z).contains(&local.z)
+            {
+                return layout.get_block(local);
+            }
+        }
+        air()
+    }
+}
+
 // Helpers
 //
 // ++++++++++++============++++++++++++============++++++++++++============

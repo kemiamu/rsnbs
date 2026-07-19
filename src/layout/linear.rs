@@ -77,6 +77,9 @@ impl Layout for LinearLayout {
     }
 
     fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+        debug_assert!((0..self.easting).contains(&pos.x));
+        debug_assert!((0..self.southing).contains(&pos.z));
+        debug_assert!((0..Plan::ELEVATION).contains(&pos.y));
         let track_idx = (pos.x / (self.plan.width() + self.gap)) as usize;
         let local_pos = BlockPos::new(
             pos.x % (self.plan.width() + self.gap),
