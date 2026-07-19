@@ -11,7 +11,7 @@ use mcdata::{GenericBlockState, util::BlockPos};
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// Linear noteblocks layout.
-pub struct LinearLayout(Arranged<LinearTrackLayout>);
+pub struct LinearLayout(Arranged<SingleLinearLayout>);
 
 impl LinearLayout {
     const TEMPL: [Tick; 3] = [4, 2, 3];
@@ -28,9 +28,14 @@ impl LinearLayout {
             3 | 1 => Plan::Piston,
             _ => unreachable!(),
         };
+        let song_length = tracks
+            .iter()
+            .flat_map(|n| n.keys().map(|pos| pos.tick()))
+            .max()
+            .map_or(0, |t| t + 1);
         let layouts = tracks
             .into_iter()
-            .map(|notes| LinearTrackLayout::new(notes, plan, factor));
+            .map(|notes| SingleLinearLayout::new(notes, song_length, plan, factor));
         Self(Arranged::new(layouts, Axis::Easting, gap))
     }
 }
@@ -45,25 +50,23 @@ impl Layout for LinearLayout {
     }
 }
 
-// TrackLayout
+// SingleLinearLayout
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// A single linear track layout.
-pub struct LinearTrackLayout {
+pub struct SingleLinearLayout {
     notes: Notes,
     plan: Plan,
     scale: Tick,
     southing: i32,
 }
 
-impl LinearTrackLayout {
-    pub fn new(notes: Notes, plan: Plan, scale: Tick) -> Self {
-        let max_tick = notes.keys().map(|pos| pos.tick()).max();
-        let ticks = max_tick.map_or(0, |t| t + 1);
+impl SingleLinearLayout {
+    pub fn new(notes: Notes, song_length: Tick, plan: Plan, scale: Tick) -> Self {
         let southing = match scale {
-            1 => (ticks.div_ceil(2) as i32) * Plan::SOUTHING + Plan::SOUTHING + 1,
-            _ => (ticks.div_ceil(scale * 2) as i32) * Plan::SOUTHING + 1,
+            1 => (song_length.div_ceil(2) as i32) * Plan::SOUTHING + Plan::SOUTHING + 1,
+            _ => (song_length.div_ceil(scale * 2) as i32) * Plan::SOUTHING + 1,
         };
         Self {
             notes,
@@ -74,7 +77,7 @@ impl LinearTrackLayout {
     }
 }
 
-impl Layout for LinearTrackLayout {
+impl Layout for SingleLinearLayout {
     fn size(&self) -> BlockPos {
         BlockPos::new(self.plan.width(), Plan::ELEVATION, self.southing)
     }

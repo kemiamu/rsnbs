@@ -153,7 +153,7 @@ impl<L: Layout> Layout for Arranged<L> {
 
         let idx = self
             .bands
-            .partition_point(|(_, a)| (a.y, a.z, a.x) <= (pos.y, pos.z, pos.x))
+            .partition_point(|(_, a)| a.y <= pos.y && a.z <= pos.z && a.x <= pos.x)
             .checked_sub(1)?;
         let (layout, anchor) = &self.bands[idx];
         let local = BlockPos::new(pos.x - anchor.x, pos.y - anchor.y, pos.z - anchor.z);
