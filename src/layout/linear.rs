@@ -23,11 +23,6 @@ impl LinearLayout {
             .into_iter()
             .find(|&templ| positions.clone().all(|pos| pos.tick() % templ == 0))
             .unwrap_or(1);
-        let plan = match factor {
-            4 | 2 => Plan::Repeater,
-            3 | 1 => Plan::Piston,
-            _ => unreachable!(),
-        };
         let song_length = tracks
             .iter()
             .flat_map(|n| n.keys().map(|pos| pos.tick()))
@@ -35,7 +30,7 @@ impl LinearLayout {
             .map_or(0, |t| t + 1);
         let layouts = tracks
             .into_iter()
-            .map(|notes| SingleLinearLayout::new(notes, song_length, plan, factor));
+            .map(|notes| SingleLinearLayout::new(notes, song_length, factor));
         Self(Arranged::new(layouts, Axis::Easting, gap))
     }
 }
@@ -57,93 +52,76 @@ impl Layout for LinearLayout {
 /// A single linear track layout.
 pub struct SingleLinearLayout {
     notes: Notes,
-    plan: Plan,
     scale: Tick,
     southing: i32,
 }
 
 impl SingleLinearLayout {
-    pub fn new(notes: Notes, song_length: Tick, plan: Plan, scale: Tick) -> Self {
+    pub const SOUTHING: i32 = 2;
+    pub const ELEVATION: i32 = 2;
+
+    pub fn new(notes: Notes, song_length: Tick, scale: Tick) -> Self {
         let southing = match scale {
-            1 => (song_length.div_ceil(2) as i32) * Plan::SOUTHING + Plan::SOUTHING + 1,
-            _ => (song_length.div_ceil(scale * 2) as i32) * Plan::SOUTHING + 1,
+            1 => (song_length.div_ceil(2) as i32) * Self::SOUTHING + Self::SOUTHING + 1,
+            _ => (song_length.div_ceil(scale * 2) as i32) * Self::SOUTHING + 1,
         };
         Self {
             notes,
-            plan,
             scale,
             southing,
         }
     }
-}
 
-impl Layout for SingleLinearLayout {
-    fn size(&self) -> BlockPos {
-        BlockPos::new(self.plan.width(), Plan::ELEVATION, self.southing)
-    }
-
-    fn get_block(&self, pos: BlockPos) -> Option<GenericBlockState> {
-        let local_pos = BlockPos::new(pos.x, pos.y, self.southing - pos.z - 1);
-        Some(self.plan.get_block(&self.notes, local_pos, self.scale))
-    }
-}
-
-// Plan
-//
-// ++++++++++++============++++++++++++============++++++++++++============
-
-#[derive(Clone, Copy)]
-pub enum Plan {
-    Repeater,
-    Piston,
-}
-
-impl Plan {
-    pub const SOUTHING: i32 = 2;
-
-    pub const ELEVATION: i32 = 2;
-
-    pub fn width(&self) -> i32 {
-        match self {
-            Plan::Repeater => 5,
-            Plan::Piston => 6,
+    fn is_piston(&self) -> bool {
+        match self.scale {
+            4 | 2 => false,
+            3 | 1 => true,
+            _ => unreachable!(),
         }
     }
 
-    pub fn get_block(&self, notes: &Notes, pos: BlockPos, scale: Tick) -> GenericBlockState {
+    fn width(&self) -> i32 {
+        if self.is_piston() { 6 } else { 5 }
+    }
+
+    fn track_block(&self, pos: BlockPos) -> GenericBlockState {
         let BlockPos {
-            x: local_easting,
+            x: easting,
             y: elevation,
             z: southing,
         } = pos;
 
-        let flat_southing = southing - if local_easting <= 2 { 0 } else { 1 };
+        let flat_southing = southing - if easting <= 2 { 0 } else { 1 };
         let local_southing = flat_southing.rem_euclid(Self::SOUTHING);
+        let is_piston = self.is_piston();
+        let scale = self.scale;
 
         let note = move |tick, layer| {
             let groups = flat_southing.div_euclid(Self::SOUTHING);
             let head = if scale == 1 { 1 } else { 0 };
             let base_tick = (groups - head) * scale as i32 * 2;
             let tick = (base_tick + tick as i32).try_into().ok()?;
-            notes.get(&Position::new(tick, layer))
+            self.notes.get(&Position::new(tick, layer))
         };
-        let has_branch = match self {
-            Plan::Repeater => note(scale, 0).or_else(|| note(scale, 1)).is_some(),
-            Plan::Piston => note(3, 0).or_else(|| note(3, 1)).is_some(),
-        };
-        match (self, has_branch, local_southing, local_easting, elevation) {
-            (Plan::Piston, true, 1, 2, 1) => sticky_piston("east"),
-            (Plan::Piston, true, 0, 3, 1) => redstone_block(),
-            (Plan::Piston, true, 0, 5, 0) => instrument_block(note(3, 0), air),
-            (Plan::Piston, true, 0, 5, 1) => note_block(note(3, 0), air),
-            (Plan::Piston, true, 1, 4, 0) => instrument_block(note(3, 1), air),
-            (Plan::Piston, true, 1, 4, 1) => note_block(note(3, 1), air),
-            (Plan::Repeater, true, 1, 2, 0) => chain_block(),
-            (Plan::Repeater, true, 1, 2, 1) => repeater((scale / 2).to_string(), "west"),
-            (Plan::Repeater, true, 0, 3, 0) => instrument_block(note(scale, 0), chain_block),
-            (Plan::Repeater, true, 0, 3, 1) => note_block(note(scale, 0), chain_block),
-            (Plan::Repeater, true, 0, 4, 0) => instrument_block(note(scale, 1), air),
-            (Plan::Repeater, true, 0, 4, 1) => note_block(note(scale, 1), air),
+
+        let branch_tick = if is_piston { 3 } else { scale };
+        let has_branch = note(branch_tick, 0)
+            .or_else(|| note(branch_tick, 1))
+            .is_some();
+
+        match (is_piston, has_branch, local_southing, easting, elevation) {
+            (true, true, 1, 2, 1) => sticky_piston("east"),
+            (true, true, 0, 3, 1) => redstone_block(),
+            (true, true, 0, 5, 0) => instrument_block(note(3, 0), air),
+            (true, true, 0, 5, 1) => note_block(note(3, 0), air),
+            (true, true, 1, 4, 0) => instrument_block(note(3, 1), air),
+            (true, true, 1, 4, 1) => note_block(note(3, 1), air),
+            (false, true, 1, 2, 0) => chain_block(),
+            (false, true, 1, 2, 1) => repeater((scale / 2).to_string(), "west"),
+            (false, true, 0, 3, 0) => instrument_block(note(scale, 0), chain_block),
+            (false, true, 0, 3, 1) => note_block(note(scale, 0), chain_block),
+            (false, true, 0, 4, 0) => instrument_block(note(scale, 1), air),
+            (false, true, 0, 4, 1) => note_block(note(scale, 1), air),
             (_, _, 0, 1, 0) => chain_block(),
             (_, _, 0, 1, 1) => repeater(scale.to_string(), "south"),
             (_, _, 1, 1, 0) => instrument_block(note(0, 0), chain_block),
@@ -154,5 +132,16 @@ impl Plan {
             (_, false, 1, 2, 1) => note_block(note(0, 2), air),
             _ => air(),
         }
+    }
+}
+
+impl Layout for SingleLinearLayout {
+    fn size(&self) -> BlockPos {
+        BlockPos::new(self.width(), Self::ELEVATION, self.southing)
+    }
+
+    fn get_block(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        let local = BlockPos::new(pos.x, pos.y, self.southing - pos.z - 1);
+        Some(self.track_block(local))
     }
 }
