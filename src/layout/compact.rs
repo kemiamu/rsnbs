@@ -60,7 +60,7 @@ impl Layout for MultiCompactLayout {
         self.0.size()
     }
 
-    fn get_block(&self, pos: BlockPos) -> Option<GenericBlockState> {
+    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
         self.0.get_block(pos)
     }
 }
@@ -108,7 +108,7 @@ impl Layout for CompactLayout {
         BlockPos::new(self.easting, Self::ELEVATION, self.southing)
     }
 
-    fn get_block(&self, pos: BlockPos) -> Option<GenericBlockState> {
+    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
         let BlockPos {
             x: easting,
             y: elevation,
@@ -180,14 +180,14 @@ impl Track {
             .get(row.try_into().ok()? * self.cols_or_len() + offset)
     }
 
-    fn block_at(&self, row: i32, col: usize, layout_idx: u8) -> Option<GenericBlockState> {
+    fn block_at(&self, row: i32, col: usize, layout_idx: u8) -> GenericBlockState {
         let repeater_facing = match ((row & 1) == 0, col < 2) {
             (_, true) => "west",
             (true, false) => "north",
             (false, false) => "south",
         };
         self.get_tile(row, col)
-            .map(|t| t.get_block(layout_idx, repeater_facing))
+            .map_or_else(air, |t| t.get_block(layout_idx, repeater_facing))
     }
 
     fn at_row_start(&self) -> bool {

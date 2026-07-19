@@ -40,7 +40,7 @@ impl Layout for LinearLayout {
         self.0.size()
     }
 
-    fn get_block(&self, pos: BlockPos) -> Option<GenericBlockState> {
+    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
         self.0.get_block(pos)
     }
 }
@@ -140,8 +140,8 @@ impl Layout for SingleLinearLayout {
         BlockPos::new(self.width(), Self::ELEVATION, self.southing)
     }
 
-    fn get_block(&self, pos: BlockPos) -> Option<GenericBlockState> {
+    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
         let local = BlockPos::new(pos.x, pos.y, self.southing - pos.z - 1);
-        Some(self.track_block(local))
+        self.track_block(local)
     }
 }

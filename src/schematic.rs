@@ -27,8 +27,7 @@ impl<L: Layout> SchematicBuilder<L> {
 
         for (y, z, x) in iproduct!(0..size.y, 0..size.z, 0..size.x) {
             let pos = BlockPos::new(x, y, z);
-            let block = layout.get_block(pos).unwrap_or_else(air);
-            region.set_block(pos, block);
+            region.set_block(pos, layout.get_block(pos));
         }
         region.as_litematic(description, author)
     }
@@ -39,7 +38,7 @@ pub trait Layout {
     /// Total size of the bounding box.
     fn size(&self) -> BlockPos;
     /// Block at the given world position.
-    fn get_block(&self, pos: BlockPos) -> Option<GenericBlockState>;
+    fn get_block(&self, pos: BlockPos) -> GenericBlockState;
 }
 
 // Floor
@@ -55,9 +54,13 @@ impl<L: Layout> Layout for WithFloor<L> {
         BlockPos::new(size.x, size.y + 1, size.z)
     }
 
-    fn get_block(&self, pos: BlockPos) -> Option<GenericBlockState> {
+    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+        debug_assert!((0..self.size().x).contains(&pos.x), "x out of range");
+        debug_assert!((0..self.size().y).contains(&pos.y), "y out of range");
+        debug_assert!((0..self.size().z).contains(&pos.z), "z out of range");
+
         match pos.y {
-            0 => Some(floor_block()),
+            0 => floor_block(),
             _ => self.0.get_block(BlockPos::new(pos.x, pos.y - 1, pos.z)),
         }
     }
@@ -90,10 +93,6 @@ impl Axis {
 }
 
 /// A layout wrapper that arranges sub-layouts along an [`Axis`].
-///
-/// Sub-layouts are placed one after another along the chosen axis,
-/// with the cross-axes sized to the maximum among all children.
-/// Always aligns toward 0.
 pub struct Arranged<L: Layout> {
     bands: Vec<(L, BlockPos)>,
     size: BlockPos,
@@ -146,24 +145,28 @@ impl<L: Layout> Layout for Arranged<L> {
         self.size
     }
 
-    fn get_block(&self, pos: BlockPos) -> Option<GenericBlockState> {
+    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
         debug_assert!((0..self.size.x).contains(&pos.x), "x out of range");
         debug_assert!((0..self.size.y).contains(&pos.y), "y out of range");
         debug_assert!((0..self.size.z).contains(&pos.z), "z out of range");
 
-        let idx = self
+        let Some(idx) = self
             .bands
             .partition_point(|(_, a)| a.y <= pos.y && a.z <= pos.z && a.x <= pos.x)
-            .checked_sub(1)?;
+            .checked_sub(1)
+        else {
+            return air();
+        };
         let (layout, anchor) = &self.bands[idx];
         let local = BlockPos::new(pos.x - anchor.x, pos.y - anchor.y, pos.z - anchor.z);
         let size = layout.size();
+
         match (0..size.x).contains(&local.x)
             && (0..size.y).contains(&local.y)
             && (0..size.z).contains(&local.z)
         {
             true => layout.get_block(local),
-            false => None,
+            false => air(),
         }
     }
 }

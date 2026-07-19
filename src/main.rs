@@ -20,7 +20,6 @@ use std::num::NonZero;
 enum Cli {
     Compact(Compact),
     Linear(Linear),
-    /// Decompose an NBS song into pattern and residual notes using FP-Growth.
     Decompose(Decompose),
 }
 
