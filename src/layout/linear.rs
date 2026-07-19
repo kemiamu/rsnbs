@@ -6,20 +6,18 @@ use crate::schematic::{redstone_block, repeater, sticky_piston};
 use crate::types::{Position, Tick};
 use mcdata::{GenericBlockState, util::BlockPos};
 
-//  LinearLayout
+//  MultiLinearLayout
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// Linear noteblocks layout.
-pub struct LinearLayout(Arranged<SingleLinearLayout>);
+/// Multi-line linear noteblocks layout.
+pub struct MultiLinearLayout(Arranged<LinearLayout>);
 
-impl LinearLayout {
-    const TEMPL: [Tick; 3] = [4, 2, 3];
-
+impl MultiLinearLayout {
     /// Create a linear layout from per-track notes.
     pub fn new(tracks: Vec<Notes>, gap: u32) -> Self {
         let positions = tracks.iter().flat_map(|n| n.keys());
-        let factor = Self::TEMPL
+        let factor = LinearLayout::TEMPL
             .into_iter()
             .find(|&templ| positions.clone().all(|pos| pos.tick() % templ == 0))
             .unwrap_or(1);
@@ -30,12 +28,12 @@ impl LinearLayout {
             .map_or(0, |t| t + 1);
         let layouts = tracks
             .into_iter()
-            .map(|notes| SingleLinearLayout::new(notes, song_length, factor));
+            .map(|notes| LinearLayout::new(notes, song_length, factor));
         Self(Arranged::new(layouts, Axis::Easting, gap))
     }
 }
 
-impl Layout for LinearLayout {
+impl Layout for MultiLinearLayout {
     fn size(&self) -> BlockPos {
         self.0.size()
     }
@@ -45,20 +43,21 @@ impl Layout for LinearLayout {
     }
 }
 
-// SingleLinearLayout
+// LinearLayout
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// A single linear track layout.
-pub struct SingleLinearLayout {
+pub struct LinearLayout {
     notes: Notes,
     scale: Tick,
     southing: i32,
 }
 
-impl SingleLinearLayout {
+impl LinearLayout {
     pub const SOUTHING: i32 = 2;
     pub const ELEVATION: i32 = 2;
+    pub const TEMPL: [Tick; 3] = [4, 2, 3];
 
     pub fn new(notes: Notes, song_length: Tick, scale: Tick) -> Self {
         let southing = match scale {
@@ -135,7 +134,7 @@ impl SingleLinearLayout {
     }
 }
 
-impl Layout for SingleLinearLayout {
+impl Layout for LinearLayout {
     fn size(&self) -> BlockPos {
         BlockPos::new(self.width(), Self::ELEVATION, self.southing)
     }

@@ -1,5 +1,5 @@
 use clap::Parser;
-use rsnbs::layout::{LinearLayout, MultiCompactLayout};
+use rsnbs::layout::{MultiCompactLayout, MultiLinearLayout};
 use rsnbs::note::{Note, Notes};
 use rsnbs::schematic::{SchematicBuilder, WithFloor};
 use rsnbs::song::Song;
@@ -73,7 +73,7 @@ impl Compact {
         let layout = MultiCompactLayout::new(tracks, wrap, self.gap);
         let description = format!("Sectional from {}", name);
         let litematic = match self.floor {
-            true => SchematicBuilder(WithFloor(layout)).build(description, "rsnbs"),
+            true => SchematicBuilder(WithFloor::new(layout, true)).build(description, "rsnbs"),
             false => SchematicBuilder(layout).build(description, "rsnbs"),
         };
         litematic.write_file(&self.output).unwrap();
@@ -112,10 +112,10 @@ impl Linear {
             .into_iter()
             .flat_map(|notes| notes.split_by_layer_count(NonZero::new(3)))
             .collect();
-        let layout = LinearLayout::new(tracks, self.gap);
+        let layout = MultiLinearLayout::new(tracks, self.gap);
         let description = format!("Sectional from {}", name);
         let litematic = match self.floor {
-            true => SchematicBuilder(WithFloor(layout)).build(description, "rsnbs"),
+            true => SchematicBuilder(WithFloor::new(layout, true)).build(description, "rsnbs"),
             false => SchematicBuilder(layout).build(description, "rsnbs"),
         };
         litematic.write_file(&self.output).unwrap();

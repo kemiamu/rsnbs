@@ -700,7 +700,7 @@ fn dump_litematic() {
 
 #[test]
 fn test_linear_layout() {
-    use crate::layout::LinearLayout;
+    use crate::layout::MultiLinearLayout;
     use crate::schematic::SchematicBuilder;
 
     let song = Song::open_nbs("fixtures/source.nbs").unwrap();
@@ -717,7 +717,7 @@ fn test_linear_layout() {
             (Position::new(tick, pos.layer()), note)
         })
         .collect();
-    let layout = LinearLayout::new(notes.split_by_layer_gaps(), 0);
+    let layout = MultiLinearLayout::new(notes.split_by_layer_gaps(), 0);
     let litematic = SchematicBuilder(layout).build("Linear from source.nbs", "rustnbs");
     litematic
         .write_file("fixtures/generated_linear.litematic")

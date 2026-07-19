@@ -46,11 +46,22 @@ pub trait Layout {
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// A layout wrapper that adds a floor layer beneath another layout.
-pub struct WithFloor<L: Layout>(pub L);
+pub struct WithFloor<L: Layout> {
+    layout: L,
+    full: bool,
+}
+
+impl<L: Layout> WithFloor<L> {
+    /// Whether the floor fully covers the entire bounding box.
+    /// When `false`, only positions with a block above get a floor.
+    pub fn new(layout: L, full: bool) -> Self {
+        Self { layout, full }
+    }
+}
 
 impl<L: Layout> Layout for WithFloor<L> {
     fn size(&self) -> BlockPos {
-        let size = self.0.size();
+        let size = self.layout.size();
         BlockPos::new(size.x, size.y + 1, size.z)
     }
 
@@ -59,9 +70,18 @@ impl<L: Layout> Layout for WithFloor<L> {
         debug_assert!((0..self.size().y).contains(&pos.y), "y out of range");
         debug_assert!((0..self.size().z).contains(&pos.z), "z out of range");
 
+        let floor = || match self.full {
+            true => floor_block(),
+            false => match self.layout.get_block(pos).name == "minecraft:air" {
+                true => air(),
+                false => floor_block(),
+            },
+        };
+        let local_pos = || BlockPos::new(pos.x, pos.y - 1, pos.z);
+
         match pos.y {
-            0 => floor_block(),
-            _ => self.0.get_block(BlockPos::new(pos.x, pos.y - 1, pos.z)),
+            0 => floor(),
+            _ => self.layout.get_block(local_pos()),
         }
     }
 }
