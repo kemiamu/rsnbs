@@ -1,7 +1,7 @@
 //! Compact note block layouts for NBS song projection.
 
 use crate::note::Note;
-use crate::schematic::{Layout, chain_block, instrument_block};
+use crate::schematic::{Arranged, Axis, Layout, chain_block, instrument_block};
 use crate::schematic::{air, note_block, redstone_wire, repeater};
 use crate::types::{GameTick, RedStoneTick, Tick};
 use mcdata::{GenericBlockState, util::BlockPos};
@@ -19,11 +19,7 @@ use std::ops::{Deref, DerefMut};
 /// Each song track is split into even/odd redstone tick sub-tracks,
 /// each built as a [`CompactLayout`], then arranged east-to-west
 /// with configurable spacing between song tracks.
-pub struct MultiCompactLayout {
-    bands: Vec<(CompactLayout, i32)>,
-    easting: i32,
-    southing: i32,
-}
+pub struct MultiCompactLayout(Arranged<CompactLayout>);
 
 impl MultiCompactLayout {
     /// Create a multi-track compact layout from multiple note groups.
@@ -35,53 +31,37 @@ impl MultiCompactLayout {
     where
         N: IntoIterator<Item = (GameTick, Vec<Note>)>,
     {
-        let gap = gap as i32;
-        let mut cursor: i32 = -gap;
-        let place_band = |band: CompactLayout| {
-            let anchor = cursor + gap;
-            cursor = anchor + band.easting;
-            (band, anchor)
-        };
-        let bands: Vec<(CompactLayout, i32)> = tracks
+        let layouts = tracks
             .into_iter()
-            .flat_map(|(notes, coarse)| split_even_odd(notes, coarse))
+            .flat_map(|(notes, coarse)| Self::split_even_odd(notes, coarse))
             .filter(|(notes, _)| !notes.is_empty())
-            .map(|(notes, coarse)| CompactLayout::new(notes, coarse, wrap_length))
-            .map(place_band)
-            .collect();
-        let southing = bands
-            .iter()
-            .map(|(band, _)| band.southing)
-            .max()
-            .unwrap_or(0);
-        Self {
-            bands,
-            easting: cursor.max(0),
-            southing,
+            .map(|(notes, coarse)| CompactLayout::new(notes, coarse, wrap_length));
+        Self(Arranged::new(layouts, Axis::Easting, gap))
+    }
+
+    /// Split game tick notes into even/odd redstone tick buckets.
+    fn split_even_odd(
+        tracks: impl IntoIterator<Item = (GameTick, Vec<Note>)>,
+        coarse: Option<NonZero<Tick>>,
+    ) -> impl Iterator<Item = (BTreeMap<RedStoneTick, Vec<Note>>, Option<NonZero<Tick>>)> {
+        let mut buckets: [BTreeMap<RedStoneTick, Vec<Note>>; 2] = Default::default();
+        for (game_tick, notes) in tracks {
+            buckets[(game_tick.rem_euclid(2)) as usize]
+                .entry(game_tick / 2)
+                .or_default()
+                .extend(notes);
         }
+        buckets.into_iter().map(move |m| (m, coarse))
     }
 }
 
 impl Layout for MultiCompactLayout {
     fn size(&self) -> BlockPos {
-        BlockPos::new(self.easting, CompactLayout::ELEVATION, self.southing)
+        self.0.size()
     }
 
     fn get_block(&self, pos: BlockPos) -> Option<GenericBlockState> {
-        debug_assert!((0..self.easting).contains(&pos.x));
-        debug_assert!((0..self.southing).contains(&pos.z));
-        debug_assert!((0..CompactLayout::ELEVATION).contains(&pos.y));
-
-        let idx = self.bands.partition_point(|(_, a)| *a <= pos.x) - 1;
-        let (band, start) = &self.bands[idx];
-        let local_easting = pos.x - start;
-        match (0..CompactLayout::ELEVATION).contains(&pos.y)
-            && (0..band.easting).contains(&local_easting)
-            && (0..band.southing).contains(&pos.z)
-        {
-            true => band.get_block(BlockPos::new(local_easting, pos.y, pos.z)),
-            false => None,
-        }
+        self.0.get_block(pos)
     }
 }
 
@@ -416,23 +396,4 @@ impl Tile {
             _ => air(),
         }
     }
-}
-
-// Helpers
-//
-// ++++++++++++============++++++++++++============++++++++++++============
-
-/// Split game tick notes into even/odd redstone tick buckets.
-fn split_even_odd(
-    tracks: impl IntoIterator<Item = (GameTick, Vec<Note>)>,
-    coarse: Option<NonZero<Tick>>,
-) -> impl Iterator<Item = (BTreeMap<RedStoneTick, Vec<Note>>, Option<NonZero<Tick>>)> {
-    let mut buckets: [BTreeMap<RedStoneTick, Vec<Note>>; 2] = Default::default();
-    for (game_tick, notes) in tracks {
-        buckets[(game_tick.rem_euclid(2)) as usize]
-            .entry(game_tick / 2)
-            .or_default()
-            .extend(notes);
-    }
-    buckets.into_iter().map(move |m| (m, coarse))
 }

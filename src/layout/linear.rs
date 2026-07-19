@@ -1,45 +1,23 @@
 //! Linear time-proportional layout for NBS song projection.
 
 use crate::note::Notes;
-use crate::schematic::{Layout, air, chain_block, instrument_block, note_block};
+use crate::schematic::{Arranged, Axis, Layout, air, chain_block, instrument_block, note_block};
 use crate::schematic::{redstone_block, repeater, sticky_piston};
 use crate::types::{Position, Tick};
 use mcdata::{GenericBlockState, util::BlockPos};
 
-// LinearLayout
+//  LinearLayout
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// Linear noteblocks layout
-pub struct LinearLayout {
-    tracks: Vec<Notes>,
-    plan: Plan,
-    scale: Tick,
-    gap: i32,
-    easting: i32,
-    southing: i32,
-}
+/// Linear noteblocks layout.
+pub struct LinearLayout(Arranged<LinearTrackLayout>);
 
 impl LinearLayout {
     const TEMPL: [Tick; 3] = [4, 2, 3];
 
-    /// Create a linear layout from per-tick notes.
+    /// Create a linear layout from per-track notes.
     pub fn new(tracks: Vec<Notes>, gap: u32) -> Self {
-        let (scale, plan) = Self::_scale(&tracks);
-        let easting = Self::_width(&tracks, plan, gap);
-        let southing = Self::_length(&tracks, scale);
-
-        Self {
-            tracks,
-            plan,
-            scale,
-            gap: gap as i32,
-            easting,
-            southing,
-        }
-    }
-
-    fn _scale(tracks: &[Notes]) -> (Tick, Plan) {
         let positions = tracks.iter().flat_map(|n| n.keys());
         let factor = Self::TEMPL
             .into_iter()
@@ -48,47 +26,62 @@ impl LinearLayout {
         let plan = match factor {
             4 | 2 => Plan::Repeater,
             3 | 1 => Plan::Piston,
-            _ => panic!(),
+            _ => unreachable!(),
         };
-        (factor, plan)
-    }
-
-    fn _width(track_notes: &[Notes], plan: Plan, gap: u32) -> i32 {
-        (plan.width() + gap as i32) * track_notes.len() as i32 - gap as i32
-    }
-
-    fn _length(track_notes: &[Notes], scale: Tick) -> i32 {
-        let ticks = track_notes
-            .iter()
-            .flat_map(|n| n.keys().map(|pos| pos.tick()))
-            .max()
-            .map(|t| t + 1)
-            .unwrap_or_default();
-        match scale {
-            1 => ticks.div_ceil(scale * 2) as i32 * Plan::SOUTHING + 1 + Plan::SOUTHING,
-            _ => ticks.div_ceil(scale * 2) as i32 * Plan::SOUTHING + 1,
-        }
+        let layouts = tracks
+            .into_iter()
+            .map(|notes| LinearTrackLayout::new(notes, plan, factor));
+        Self(Arranged::new(layouts, Axis::Easting, gap))
     }
 }
 
 impl Layout for LinearLayout {
     fn size(&self) -> BlockPos {
-        BlockPos::new(self.easting, Plan::ELEVATION, self.southing)
+        self.0.size()
     }
 
     fn get_block(&self, pos: BlockPos) -> Option<GenericBlockState> {
-        debug_assert!((0..self.easting).contains(&pos.x));
-        debug_assert!((0..self.southing).contains(&pos.z));
-        debug_assert!((0..Plan::ELEVATION).contains(&pos.y));
-        let track_idx = (pos.x / (self.plan.width() + self.gap)) as usize;
-        let local_pos = BlockPos::new(
-            pos.x % (self.plan.width() + self.gap),
-            pos.y,
-            self.southing - pos.z - 1,
-        );
-        self.tracks
-            .get(track_idx)
-            .map(|track_notes| self.plan.get_block(track_notes, local_pos, self.scale))
+        self.0.get_block(pos)
+    }
+}
+
+// TrackLayout
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// A single linear track layout.
+pub struct LinearTrackLayout {
+    notes: Notes,
+    plan: Plan,
+    scale: Tick,
+    southing: i32,
+}
+
+impl LinearTrackLayout {
+    pub fn new(notes: Notes, plan: Plan, scale: Tick) -> Self {
+        let max_tick = notes.keys().map(|pos| pos.tick()).max();
+        let ticks = max_tick.map_or(0, |t| t + 1);
+        let southing = match scale {
+            1 => (ticks.div_ceil(2) as i32) * Plan::SOUTHING + Plan::SOUTHING + 1,
+            _ => (ticks.div_ceil(scale * 2) as i32) * Plan::SOUTHING + 1,
+        };
+        Self {
+            notes,
+            plan,
+            scale,
+            southing,
+        }
+    }
+}
+
+impl Layout for LinearTrackLayout {
+    fn size(&self) -> BlockPos {
+        BlockPos::new(self.plan.width(), Plan::ELEVATION, self.southing)
+    }
+
+    fn get_block(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        let local_pos = BlockPos::new(pos.x, pos.y, self.southing - pos.z - 1);
+        Some(self.plan.get_block(&self.notes, local_pos, self.scale))
     }
 }
 
@@ -97,24 +90,24 @@ impl Layout for LinearLayout {
 // ++++++++++++============++++++++++++============++++++++++++============
 
 #[derive(Clone, Copy)]
-enum Plan {
+pub enum Plan {
     Repeater,
     Piston,
 }
 
 impl Plan {
-    const SOUTHING: i32 = 2;
+    pub const SOUTHING: i32 = 2;
 
-    const ELEVATION: i32 = 2;
+    pub const ELEVATION: i32 = 2;
 
-    fn width(&self) -> i32 {
+    pub fn width(&self) -> i32 {
         match self {
             Plan::Repeater => 5,
             Plan::Piston => 6,
         }
     }
 
-    fn get_block(&self, notes: &Notes, pos: BlockPos, scale: Tick) -> GenericBlockState {
+    pub fn get_block(&self, notes: &Notes, pos: BlockPos, scale: Tick) -> GenericBlockState {
         let BlockPos {
             x: local_easting,
             y: elevation,
