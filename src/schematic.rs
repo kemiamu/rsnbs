@@ -27,9 +27,9 @@ impl<L: Layout> SchematicBuilder<L> {
 
         for (y, z, x) in iproduct!(0..size.y, 0..size.z, 0..size.x) {
             let pos = BlockPos::new(x, y, z);
-            region.set_block(pos, layout.get_block(pos));
+            let block = layout.get_block(pos).unwrap_or_else(air);
+            region.set_block(pos, block);
         }
-
         region.as_litematic(description, author)
     }
 }
@@ -39,7 +39,7 @@ pub trait Layout {
     /// Total size of the bounding box.
     fn size(&self) -> BlockPos;
     /// Block at the given world position.
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState;
+    fn get_block(&self, pos: BlockPos) -> Option<GenericBlockState>;
 }
 
 // Floor
@@ -55,9 +55,9 @@ impl<L: Layout> Layout for WithFloor<L> {
         BlockPos::new(size.x, size.y + 1, size.z)
     }
 
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+    fn get_block(&self, pos: BlockPos) -> Option<GenericBlockState> {
         match pos.y {
-            0 => floor_block(),
+            0 => Some(floor_block()),
             _ => self.0.get_block(BlockPos::new(pos.x, pos.y - 1, pos.z)),
         }
     }
@@ -146,22 +146,25 @@ impl<L: Layout> Layout for Arranged<L> {
         self.size
     }
 
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+    fn get_block(&self, pos: BlockPos) -> Option<GenericBlockState> {
         debug_assert!((0..self.size.x).contains(&pos.x), "x out of range");
         debug_assert!((0..self.size.y).contains(&pos.y), "y out of range");
         debug_assert!((0..self.size.z).contains(&pos.z), "z out of range");
 
-        for (layout, anchor) in &self.bands {
-            let local = BlockPos::new(pos.x - anchor.x, pos.y - anchor.y, pos.z - anchor.z);
-            let size = layout.size();
-            if (0..size.x).contains(&local.x)
-                && (0..size.y).contains(&local.y)
-                && (0..size.z).contains(&local.z)
-            {
-                return layout.get_block(local);
-            }
+        let idx = self
+            .bands
+            .partition_point(|(_, a)| (a.y, a.z, a.x) <= (pos.y, pos.z, pos.x))
+            .checked_sub(1)?;
+        let (layout, anchor) = &self.bands[idx];
+        let local = BlockPos::new(pos.x - anchor.x, pos.y - anchor.y, pos.z - anchor.z);
+        let size = layout.size();
+        match (0..size.x).contains(&local.x)
+            && (0..size.y).contains(&local.y)
+            && (0..size.z).contains(&local.z)
+        {
+            true => layout.get_block(local),
+            false => None,
         }
-        air()
     }
 }
 

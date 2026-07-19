@@ -67,10 +67,11 @@ impl Layout for MultiCompactLayout {
         BlockPos::new(self.easting, CompactLayout::ELEVATION, self.southing)
     }
 
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+    fn get_block(&self, pos: BlockPos) -> Option<GenericBlockState> {
         debug_assert!((0..self.easting).contains(&pos.x));
         debug_assert!((0..self.southing).contains(&pos.z));
         debug_assert!((0..CompactLayout::ELEVATION).contains(&pos.y));
+
         let idx = self.bands.partition_point(|(_, a)| *a <= pos.x) - 1;
         let (band, start) = &self.bands[idx];
         let local_easting = pos.x - start;
@@ -79,7 +80,7 @@ impl Layout for MultiCompactLayout {
             && (0..band.southing).contains(&pos.z)
         {
             true => band.get_block(BlockPos::new(local_easting, pos.y, pos.z)),
-            false => air(),
+            false => None,
         }
     }
 }
@@ -127,7 +128,7 @@ impl Layout for CompactLayout {
         BlockPos::new(self.easting, Self::ELEVATION, self.southing)
     }
 
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+    fn get_block(&self, pos: BlockPos) -> Option<GenericBlockState> {
         let BlockPos {
             x: easting,
             y: elevation,
@@ -199,14 +200,14 @@ impl Track {
             .get(row.try_into().ok()? * self.cols_or_len() + offset)
     }
 
-    fn block_at(&self, row: i32, col: usize, layout_idx: u8) -> GenericBlockState {
+    fn block_at(&self, row: i32, col: usize, layout_idx: u8) -> Option<GenericBlockState> {
         let repeater_facing = match ((row & 1) == 0, col < 2) {
             (_, true) => "west",
             (true, false) => "north",
             (false, false) => "south",
         };
         self.get_tile(row, col)
-            .map_or_else(air, |t| t.get_block(layout_idx, repeater_facing))
+            .map(|t| t.get_block(layout_idx, repeater_facing))
     }
 
     fn at_row_start(&self) -> bool {

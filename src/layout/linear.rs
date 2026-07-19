@@ -76,7 +76,7 @@ impl Layout for LinearLayout {
         BlockPos::new(self.easting, Plan::ELEVATION, self.southing)
     }
 
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+    fn get_block(&self, pos: BlockPos) -> Option<GenericBlockState> {
         debug_assert!((0..self.easting).contains(&pos.x));
         debug_assert!((0..self.southing).contains(&pos.z));
         debug_assert!((0..Plan::ELEVATION).contains(&pos.y));
@@ -86,10 +86,9 @@ impl Layout for LinearLayout {
             pos.y,
             self.southing - pos.z - 1,
         );
-        match self.tracks.get(track_idx) {
-            Some(track_notes) => self.plan.get_block(track_notes, local_pos, self.scale),
-            None => air(),
-        }
+        self.tracks
+            .get(track_idx)
+            .map(|track_notes| self.plan.get_block(track_notes, local_pos, self.scale))
     }
 }
 
