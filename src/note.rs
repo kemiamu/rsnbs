@@ -13,20 +13,29 @@ use std::ops::{Deref, DerefMut};
 /// a single note with timing, instrument, and modulation data.
 #[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Note {
-    pub instrument: Instrument,
-    pub key: Key,
-    pub velocity: Volume,
-    pub panning: Panning,
-    pub pitch: i16,
+    pub(super) instrument: Instrument,
+    pub(super) key: Key,
+    pub(super) velocity: Volume,
+    pub(super) panning: Panning,
+    pub(super) pitch: i16,
 }
 
 impl Note {
     /// creates a new note with the given instrument and key.
     pub fn new(instrument: Instrument, key: Key) -> Self {
-        let mut note = Self::default();
-        note.instrument = instrument;
-        note.key = key;
-        note
+        Self {
+            instrument,
+            key,
+            ..Default::default()
+        }
+    }
+
+    pub fn instrument(&self) -> Instrument {
+        self.instrument
+    }
+
+    pub fn key(&self) -> Key {
+        self.key
     }
 
     /// returns the tone as a tuple (instrument, key).

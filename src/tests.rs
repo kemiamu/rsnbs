@@ -511,7 +511,7 @@ pub fn test_deconvolve_d1() {
     let points_mset: Vec<Point> = song
         .notes
         .iter()
-        .map(|(pos, note)| (pos.tick(), (note.instrument, note.key)))
+        .map(|(pos, note)| (pos.tick(), (note.tone())))
         .collect();
 
     // 找到最大重复模式
@@ -523,7 +523,7 @@ pub fn test_deconvolve_d1() {
     let mut remaining: Vec<(Index, Note)> = Vec::new();
 
     for (pos, note) in &song.notes {
-        let p = (pos.tick(), (note.instrument, note.key));
+        let p = (pos.tick(), note.tone());
         if pattern_counter.get(&p).copied().unwrap_or(0) > 0 {
             *pattern_counter.get_mut(&p).unwrap() -= 1;
             matched.push((pos.tick(), note.clone()));
@@ -644,7 +644,7 @@ pub fn test_deconvolve() {
     let points_mset: Vec<Point> = song
         .notes
         .iter()
-        .map(|(pos, note)| (pos.tick(), (note.instrument, note.key)))
+        .map(|(pos, note)| (pos.tick(), note.tone()))
         .collect();
 
     // 找到最大重复模式
@@ -656,7 +656,7 @@ pub fn test_deconvolve() {
     let mut remaining: Vec<(Index, Note)> = Vec::new();
 
     for (pos, note) in &song.notes {
-        let p = (pos.tick(), (note.instrument, note.key));
+        let p = (pos.tick(), note.tone());
         if pattern_counter.get(&p).copied().unwrap_or(0) > 0 {
             *pattern_counter.get_mut(&p).unwrap() -= 1;
             matched.push((pos.tick(), note.clone()));

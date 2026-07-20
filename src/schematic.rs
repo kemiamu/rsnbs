@@ -266,7 +266,7 @@ where
     N: Into<Option<&'a Note>>,
 {
     note.into()
-        .and_then(|n| n.instrument.instrument_block())
+        .and_then(|n| n.instrument().instrument_block())
         .unwrap_or_else(fallback)
 }
 
