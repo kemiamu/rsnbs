@@ -75,7 +75,7 @@ impl Compact {
         let wrap = NonZero::new(self.wrap);
         let layout = MultiCompactLayout::new(tracks, wrap, self.gap);
         let description = format!("Sectional from {}", name);
-        let litematic = match self.floor {
+        let litematic = match self.floor || self.sparse_floor {
             true => SchematicBuilder(WithFloor::new(layout, !self.sparse_floor))
                 .build(description, "rsnbs"),
             false => SchematicBuilder(layout).build(description, "rsnbs"),
@@ -128,7 +128,7 @@ impl Linear {
         let litematic = if let Some(wrap) = NonZero::new(self.wrap) {
             let layout = StackedLinearLayout::new(tracks, Some(wrap), self.gap, !self.sparse_floor);
             SchematicBuilder(layout).build(description, author)
-        } else if self.floor {
+        } else if self.floor || self.sparse_floor {
             let layout = MultiLinearLayout::new(tracks, self.gap);
             SchematicBuilder(WithFloor::new(layout, !self.sparse_floor)).build(description, author)
         } else {
