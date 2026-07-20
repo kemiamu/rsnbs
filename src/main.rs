@@ -44,16 +44,16 @@ struct Compact {
     #[arg(default_value = "generated_compact.litematic")]
     output: String,
     /// Max tiles per row before wrapping (0 = no wrap)
-    #[arg(long, default_value_t = 16)]
+    #[arg(short, long, default_value_t = 16)]
     wrap: usize,
     /// Repeater delay coarseness 1-4 (0 = unlimited)
-    #[arg(long, default_value_t = 0)]
+    #[arg(short, long, default_value_t = 0)]
     coarse: u32,
     /// Block spacing between adjacent tracks
-    #[arg(long, default_value_t = 0)]
+    #[arg(short, long, default_value_t = 0)]
     gap: u32,
     /// Add a floor platform below the build
-    #[arg(long)]
+    #[arg(short, long)]
     floor: bool,
 }
 
@@ -94,17 +94,17 @@ struct Linear {
     #[arg(default_value = "generated_linear.litematic")]
     output: String,
     /// Block spacing between adjacent tracks
-    #[arg(long, default_value_t = 0)]
+    #[arg(short, long, default_value_t = 0)]
     gap: u32,
     /// Column wrapping length per track (0 = no wrap)
-    #[arg(long, default_value_t = 0)]
+    #[arg(short, long, default_value_t = 0)]
     wrap_length: u32,
     /// Add a floor platform below the build (only when wrap_length = 0)
-    #[arg(long)]
+    #[arg(short, long)]
     floor: bool,
-    /// Full floor coverage when stacked vertically (wrap_length > 0)
-    #[arg(long)]
-    full_floor: bool,
+    /// Only place floor where blocks exist above (default: full coverage)
+    #[arg(short, long)]
+    sparse_floor: bool,
 }
 
 impl Linear {
@@ -120,18 +120,17 @@ impl Linear {
             .collect();
         let description = format!("Sectional from {}", name);
         let author = "rsnbs";
-        let litematic;
 
-        if let Some(wrap) = NonZero::new(self.wrap_length) {
-            let layout = StackedLinearLayout::new(tracks, Some(wrap), self.gap, self.full_floor);
-            litematic = SchematicBuilder(layout).build(description, author);
+        let litematic = if let Some(wrap) = NonZero::new(self.wrap_length) {
+            let layout = StackedLinearLayout::new(tracks, Some(wrap), self.gap, !self.sparse_floor);
+            SchematicBuilder(layout).build(description, author)
         } else if self.floor {
-            let layout = WithFloor::new(MultiLinearLayout::new(tracks, self.gap), self.full_floor);
-            litematic = SchematicBuilder(layout).build(description, author);
+            let layout = MultiLinearLayout::new(tracks, self.gap);
+            SchematicBuilder(WithFloor::new(layout, !self.sparse_floor)).build(description, author)
         } else {
             let layout = MultiLinearLayout::new(tracks, self.gap);
-            litematic = SchematicBuilder(layout).build(description, author);
-        }
+            SchematicBuilder(layout).build(description, author)
+        };
 
         litematic.write_file(&self.output).unwrap();
         eprintln!("Wrote {}", self.output);
