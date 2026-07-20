@@ -1,12 +1,17 @@
 //! Generate Minecraft litematic projections from NBS songs.
 
-use crate::note::Note;
+use crate::note::{Instrument, Note};
 use itertools::iproduct;
 use mcdata::BlockState;
 use mcdata::{GenericBlockState, util::BlockPos};
 use rustmatica::{Litematic, Region};
 use std::borrow::Cow;
 use std::collections::HashMap;
+
+mod compact;
+mod linear;
+pub use compact::*;
+pub use linear::*;
 
 /// Output a [`Layout`] as a litematic file.
 ///
@@ -191,36 +196,144 @@ impl<L: Layout> Layout for Arranged<L> {
     }
 }
 
+// Block state projection methods
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+impl Note {
+    /// returns the minecraft note block block state for this note.
+    pub fn note_block_state(&self) -> Option<GenericBlockState> {
+        let note = self.key().minecraft_note()?;
+        let instr = self.instrument().instrument_property();
+        let properties = HashMap::from([
+            ("note".into(), note.to_string().into()),
+            ("powered".into(), "false".into()),
+            ("instrument".into(), instr.into()),
+        ]);
+        Some(GenericBlockState {
+            name: "minecraft:note_block".into(),
+            properties,
+        })
+    }
+}
+
+impl Instrument {
+    /// Minecraft render data, indexed parallel to Instrument::NBS_INDEX.
+    const INSTRUMENT_MAP: &[(&'static str, &'static str)] = &[
+        ("harp", "minecraft:dirt"),
+        ("bass", "minecraft:oak_planks"),
+        ("basedrum", "minecraft:stone"),
+        ("snare", "minecraft:sand"),
+        ("hat", "minecraft:glass"),
+        ("guitar", "minecraft:white_wool"),
+        ("flute", "minecraft:clay"),
+        ("bell", "minecraft:gold_block"),
+        ("chime", "minecraft:packed_ice"),
+        ("xylophone", "minecraft:bone_block"),
+        ("iron_xylophone", "minecraft:iron_block"),
+        ("cow_bell", "minecraft:soul_sand"),
+        ("didgeridoo", "minecraft:pumpkin"),
+        ("bit", "minecraft:emerald_block"),
+        ("banjo", "minecraft:hay_block"),
+        ("pling", "minecraft:glowstone"),
+        ("trumpet", "minecraft:waxed_copper_block"),
+        ("trumpet_exposed", "minecraft:waxed_exposed_copper"),
+        ("trumpet_weathered", "minecraft:waxed_weathered_copper"),
+        ("trumpet_oxidized", "minecraft:waxed_oxidized_copper"),
+        ("creeper", "minecraft:creeper_head"),
+        ("skeleton", "minecraft:skeleton_skull"),
+        ("ender_dragon", "minecraft:dragon_head"),
+        ("wither_skeleton", "minecraft:wither_skeleton_skull"),
+        ("piglin", "minecraft:piglin_head"),
+        ("zombie", "minecraft:zombie_head"),
+        ("custom_head", "minecraft:player_head"),
+    ];
+
+    /// returns the instrument property string for minecraft note block state.
+    pub fn instrument_property(&self) -> &'static str {
+        let idx = u8::from(*self) as usize;
+        Self::INSTRUMENT_MAP
+            .get(idx)
+            .map(|(prop, _)| *prop)
+            .unwrap_or("custom")
+    }
+
+    /// returns the block resource name for this instrument.
+    pub fn block_resource(&self) -> Option<&'static str> {
+        let idx = u8::from(*self) as usize;
+        Self::INSTRUMENT_MAP.get(idx).map(|(_, block)| *block)
+    }
+
+    /// returns the block under the note block for this instrument's sound.
+    pub fn instrument_block(&self) -> Option<GenericBlockState> {
+        if matches!(self, Self::Imitate(_)) {
+            return None;
+        }
+        let block = self.block_resource()?;
+        Some(GenericBlockState {
+            name: Cow::Borrowed(block),
+            properties: HashMap::new(),
+        })
+    }
+
+    /// returns the mob head block for this instrument, if it is a mob head instrument.
+    pub fn head_block(&self) -> Option<GenericBlockState> {
+        if !matches!(self, Self::Imitate(_)) {
+            return None;
+        }
+        let block = self.block_resource()?;
+        Some(GenericBlockState {
+            name: block.into(),
+            properties: HashMap::new(),
+        })
+    }
+}
+
 // Helpers
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// Air block (no block).
-pub fn air<B>() -> B
+/// Note block, or fallback on None.
+fn note_block<'a, N>(note: N, fallback: fn() -> GenericBlockState) -> GenericBlockState
+where
+    N: Into<Option<&'a Note>>,
+{
+    note.into()
+        .and_then(|n| n.note_block_state())
+        .unwrap_or_else(fallback)
+}
+
+fn instrument_block<'a, N>(note: N, fallback: fn() -> GenericBlockState) -> GenericBlockState
+where
+    N: Into<Option<&'a Note>>,
+{
+    note.into()
+        .and_then(|n| n.instrument().instrument_block())
+        .unwrap_or_else(fallback)
+}
+
+fn air<B>() -> B
 where
     B: BlockState,
 {
     BlockState::air()
 }
 
-/// A chain block (smooth stone) used for structural support.
-pub fn chain_block() -> GenericBlockState {
+fn chain_block() -> GenericBlockState {
     GenericBlockState {
         name: "minecraft:smooth_stone".into(),
         properties: Default::default(),
     }
 }
 
-/// Floor block.
-pub fn floor_block() -> GenericBlockState {
+fn floor_block() -> GenericBlockState {
     GenericBlockState {
         name: "minecraft:gray_stained_glass".into(),
         properties: Default::default(),
     }
 }
 
-/// A redstone wire block with all-side connections.
-pub fn redstone_wire() -> GenericBlockState {
+fn redstone_wire() -> GenericBlockState {
     let properties = HashMap::from([
         ("power".into(), "0".into()),
         ("north".into(), "side".into()),
@@ -235,7 +348,7 @@ pub fn redstone_wire() -> GenericBlockState {
 }
 
 /// Repeater block with delay and facing.
-pub fn repeater(
+fn repeater(
     delay: impl Into<Cow<'static, str>>,
     facing: impl Into<Cow<'static, str>>,
 ) -> GenericBlockState {
@@ -250,28 +363,8 @@ pub fn repeater(
     }
 }
 
-/// Note block, or fallback on None.
-pub fn note_block<'a, N>(note: N, fallback: fn() -> GenericBlockState) -> GenericBlockState
-where
-    N: Into<Option<&'a Note>>,
-{
-    note.into()
-        .and_then(|n| n.note_block_state())
-        .unwrap_or_else(fallback)
-}
-
-/// Instrument block, or fallback on None.
-pub fn instrument_block<'a, N>(note: N, fallback: fn() -> GenericBlockState) -> GenericBlockState
-where
-    N: Into<Option<&'a Note>>,
-{
-    note.into()
-        .and_then(|n| n.instrument().instrument_block())
-        .unwrap_or_else(fallback)
-}
-
 /// Sticky piston block, not extended.
-pub fn sticky_piston(facing: impl Into<Cow<'static, str>>) -> GenericBlockState {
+fn sticky_piston(facing: impl Into<Cow<'static, str>>) -> GenericBlockState {
     GenericBlockState {
         name: "minecraft:sticky_piston".into(),
         properties: HashMap::from([
@@ -282,7 +375,7 @@ pub fn sticky_piston(facing: impl Into<Cow<'static, str>>) -> GenericBlockState 
 }
 
 /// Redstone block.
-pub fn redstone_block() -> GenericBlockState {
+fn redstone_block() -> GenericBlockState {
     GenericBlockState {
         name: "minecraft:redstone_block".into(),
         properties: Default::default(),

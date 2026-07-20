@@ -1,8 +1,8 @@
 //! Linear time-proportional layout for NBS song projection.
 
+use super::{Arranged, Axis, Layout, WithFloor, air, chain_block, instrument_block};
+use super::{note_block, redstone_block, redstone_wire, repeater, sticky_piston};
 use crate::note::Notes;
-use crate::schematic::{Arranged, Axis, Layout, WithFloor, air, chain_block, instrument_block};
-use crate::schematic::{note_block, redstone_block, redstone_wire, repeater, sticky_piston};
 use crate::types::{Index, Position, Tick};
 use mcdata::{GenericBlockState, util::BlockPos};
 use std::num::NonZero;

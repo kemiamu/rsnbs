@@ -1,8 +1,8 @@
 //! Compact note block layouts for NBS song projection.
 
+use super::{Arranged, Axis, Layout, chain_block, instrument_block};
+use super::{air, note_block, redstone_wire, repeater};
 use crate::note::Note;
-use crate::schematic::{Arranged, Axis, Layout, chain_block, instrument_block};
-use crate::schematic::{air, note_block, redstone_wire, repeater};
 use crate::types::{GameTick, RedStoneTick, Tick};
 use mcdata::{GenericBlockState, util::BlockPos};
 use std::collections::BTreeMap;

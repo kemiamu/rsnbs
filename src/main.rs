@@ -1,6 +1,6 @@
 use clap::Parser;
-use rsnbs::layout::{MultiCompactLayout, MultiLinearLayout, StackedLinearLayout};
 use rsnbs::note::{Note, Notes};
+use rsnbs::schematic::{MultiCompactLayout, MultiLinearLayout, StackedLinearLayout};
 use rsnbs::schematic::{SchematicBuilder, WithFloor};
 use rsnbs::song::Song;
 use rsnbs::types::Tick;

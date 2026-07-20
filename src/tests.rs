@@ -1,5 +1,5 @@
-use crate::layout::MultiCompactLayout;
 use crate::note::{Note, Notes, Tone};
+use crate::schematic::MultiCompactLayout;
 use crate::schematic::{SchematicBuilder, WithFloor};
 use crate::song::Song;
 use crate::types::{GameTick, Index, Position, Tick, Version};
@@ -700,7 +700,7 @@ fn dump_litematic() {
 
 #[test]
 fn test_linear_layout() {
-    use crate::layout::MultiLinearLayout;
+    use crate::schematic::MultiLinearLayout;
     use crate::schematic::SchematicBuilder;
 
     let song = Song::open_nbs("fixtures/source.nbs").unwrap();

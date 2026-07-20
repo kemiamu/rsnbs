@@ -7,13 +7,6 @@ pub mod note;
 pub mod schematic;
 pub mod util;
 
-pub mod layout {
-    pub mod compact;
-    pub mod linear;
-    pub use compact::*;
-    pub use linear::*;
-}
-
 #[cfg(test)]
 mod tests;
 
