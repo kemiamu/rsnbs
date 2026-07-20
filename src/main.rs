@@ -55,6 +55,9 @@ struct Compact {
     /// Add a floor platform below the build
     #[arg(short, long)]
     floor: bool,
+    /// Only place floor where blocks exist above (default: full coverage)
+    #[arg(short, long)]
+    sparse_floor: bool,
 }
 
 impl Compact {
@@ -73,7 +76,8 @@ impl Compact {
         let layout = MultiCompactLayout::new(tracks, wrap, self.gap);
         let description = format!("Sectional from {}", name);
         let litematic = match self.floor {
-            true => SchematicBuilder(WithFloor::new(layout, true)).build(description, "rsnbs"),
+            true => SchematicBuilder(WithFloor::new(layout, !self.sparse_floor))
+                .build(description, "rsnbs"),
             false => SchematicBuilder(layout).build(description, "rsnbs"),
         };
         litematic.write_file(&self.output).unwrap();
@@ -96,10 +100,10 @@ struct Linear {
     /// Block spacing between adjacent tracks
     #[arg(short, long, default_value_t = 0)]
     gap: u32,
-    /// Column wrapping length per track (0 = no wrap)
+    /// Max columns per row before wrapping (0 = no wrap)
     #[arg(short, long, default_value_t = 0)]
-    wrap_length: u32,
-    /// Add a floor platform below the build (only when wrap_length = 0)
+    wrap: u32,
+    /// Add a floor platform below the build (only when wrap = 0)
     #[arg(short, long)]
     floor: bool,
     /// Only place floor where blocks exist above (default: full coverage)
@@ -121,7 +125,7 @@ impl Linear {
         let description = format!("Sectional from {}", name);
         let author = "rsnbs";
 
-        let litematic = if let Some(wrap) = NonZero::new(self.wrap_length) {
+        let litematic = if let Some(wrap) = NonZero::new(self.wrap) {
             let layout = StackedLinearLayout::new(tracks, Some(wrap), self.gap, !self.sparse_floor);
             SchematicBuilder(layout).build(description, author)
         } else if self.floor {
