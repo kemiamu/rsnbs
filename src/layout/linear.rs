@@ -29,7 +29,7 @@ impl MultiLinearLayout {
             .map_or(0, |t| t + 1);
         let layouts = tracks
             .into_iter()
-            .map(|notes| LinearLayout::new(notes, song_length, factor, NonZero::new(16), gap));
+            .map(|notes| LinearLayout::new(notes, song_length, factor, None, 0));
         Self(Arranged::new(layouts, Axis::Easting, gap))
     }
 }
@@ -70,7 +70,7 @@ impl LinearLayout {
             wrap_length,
             gap,
         };
-        let easting = (((track.width() as u32 + gap) * track.wrap_rows()) - gap).max(0) as i32 + 1;
+        let easting = (track.width() + gap as i32) * track.wrap_rows() as i32 - gap as i32 + 1;
         let southing = track.cols_per_row() as i32 * Track::SOUTHING + 2;
         Self {
             track,
@@ -94,74 +94,54 @@ impl Layout for LinearLayout {
     }
 
     fn get_block(&self, pos: BlockPos) -> GenericBlockState {
-        if (pos.z == 0
-            && (pos.x + 1 + self.track.gap as i32)
-                .rem_euclid((self.track.width() + self.track.gap as i32) * 2)
-                <= self.track.width() + self.track.gap as i32)
-            || ((pos.z + 1) == self.southing
-                && (pos.x
-                    + (self.track.width() + self.track.gap as i32)
-                    + 1
-                    + self.track.gap as i32)
-                    .rem_euclid((self.track.width() + self.track.gap as i32) * 2)
-                    <= self.track.width() + self.track.gap as i32)
-        {
-            Self::turn_block(pos.y)
-        } else if pos.z > 0
-            && (pos.z + 1) < self.southing
-            && pos.x.rem_euclid(self.track.width() + self.track.gap as i32) == 0
-        {
-            let cell = pos.x.div_euclid(self.track.width() + self.track.gap as i32);
-            let zig = (cell + pos.z).rem_euclid(2);
-            if zig == 1 && self.track.gap != 0 {
-                return air();
-            }
-            let row = cell - zig;
-            let col = match pos.z.rem_euclid(2) == 0 {
-                true => (pos.z - 1).div_euclid(Track::SOUTHING),
-                false => (self.southing - pos.z - 2).div_euclid(Track::SOUTHING),
-            };
-            let local_pos = match zig == 0 {
-                true => BlockPos::new(0, pos.y, 1),
-                false => BlockPos::new(self.track.width(), pos.y, 1),
-            };
-            self.track.get_block(row, col, local_pos)
-        } else if pos.x.rem_euclid(self.track.width() + self.track.gap as i32) == 1 {
-            let row = pos.x.div_euclid(self.track.width() + self.track.gap as i32);
-            let col = match row.rem_euclid(2) == 0 {
-                true => (pos.z - 2).div_euclid(Track::SOUTHING),
-                false => (self.southing - pos.z - 3).div_euclid(Track::SOUTHING),
-            };
-            let local_pos = match row.rem_euclid(2) == 0 {
-                true => BlockPos::new(1, pos.y, (pos.z - 2).rem_euclid(2) + 1),
-                false => BlockPos::new(1, pos.y, (self.southing - pos.z - 3).rem_euclid(2) + 1),
-            };
-            self.track.get_block(row, col, local_pos)
-        } else if pos.z > 0
-            && (pos.z + 1) < self.southing
-            && pos.x.rem_euclid(self.track.width() + self.track.gap as i32) >= 2
-        {
-            let row = pos.x.div_euclid(self.track.width() + self.track.gap as i32);
-            let col = match row.rem_euclid(2) == 0 {
-                true => (pos.z - 1).div_euclid(Track::SOUTHING),
-                false => (self.southing - pos.z - 2).div_euclid(Track::SOUTHING),
-            };
-            let local_pos = match row.rem_euclid(2) == 0 {
-                true => BlockPos::new(
-                    pos.x - row * (self.track.width() + self.track.gap as i32),
-                    pos.y,
-                    (pos.z - 1).rem_euclid(2),
-                ),
-                false => BlockPos::new(
-                    pos.x - row * (self.track.width() + self.track.gap as i32),
-                    pos.y,
-                    (self.southing - pos.z - 2).rem_euclid(2),
-                ),
-            };
-            self.track.get_block(row, col, local_pos)
-        } else {
-            air()
+        let width = self.track.width();
+        let pitch = width + self.track.gap as i32;
+        let gap = self.track.gap as i32;
+        let BlockPos { x, y, z } = pos;
+
+        // Turn blocks at front (0) and back (self.southing-1) zigzag edges
+        let at_turn = |x: i32| (x + 1 + gap).rem_euclid(pitch * 2) <= pitch;
+        if z == 0 && at_turn(x) || z + 1 == self.southing && at_turn(x + pitch) {
+            return Self::turn_block(y);
         }
+
+        let mut cell_x = x.rem_euclid(pitch);
+        let mut cell = x.div_euclid(pitch);
+        let interior = z > 0 && z + 1 < self.southing;
+        let overlap = cell_x < 1;
+        let zig = (cell + z).rem_euclid(2);
+
+        // Inline relative offset
+        let forward = match overlap {
+            true => z.rem_euclid(2) == 0,
+            false => cell.rem_euclid(2) == 0,
+        };
+        let offset = if forward { z } else { self.southing - 1 - z };
+
+        // overlapping region
+        if overlap && interior && zig == 0 {
+            let col = (offset - 1).div_euclid(Track::SOUTHING);
+            let local_pos = BlockPos::new(0, y, 1);
+            return self.track.get_block(cell, col, local_pos);
+        } else if overlap {
+            cell_x += width;
+            cell -= 1;
+        }
+
+        // Not in overlapping region
+        if cell_x == 1 {
+            let col = (offset - 2).div_euclid(Track::SOUTHING);
+            let local_z = (offset - 2).rem_euclid(Track::SOUTHING) + 1;
+            let local_pos = BlockPos::new(1, y, local_z);
+            return self.track.get_block(cell, col, local_pos);
+        } else if interior {
+            let col = (offset - 1).div_euclid(Track::SOUTHING);
+            let local_z = (offset - 1).rem_euclid(Track::SOUTHING);
+            let local_pos = BlockPos::new(cell_x, y, local_z);
+            return self.track.get_block(cell, col, local_pos);
+        }
+
+        air()
     }
 }
 
@@ -194,18 +174,20 @@ impl Track {
         if self.is_piston() { 5 } else { 4 }
     }
 
-    fn length_in_units(&self, multiplier: Tick) -> Tick {
-        self.song_length.div_ceil(self.scale * 2 * multiplier)
+    fn length_in_units(&self, multiplier: NonZero<Tick>) -> Tick {
+        let head = if self.scale == 1 { 2 } else { 0 };
+        (self.song_length + head).div_ceil(self.scale * 2 * multiplier.get())
     }
 
     fn wrap_rows(&self) -> Tick {
         self.wrap_length
-            .map_or(1, |wrap| self.length_in_units(wrap.get() as Tick))
+            .map_or(1, |wrap| self.length_in_units(wrap))
     }
 
     fn cols_per_row(&self) -> Tick {
+        let all_cols = self.length_in_units(NonZero::<Tick>::MIN);
         self.wrap_length
-            .map_or(self.length_in_units(1), |wrap| wrap.get() as Tick)
+            .map_or(all_cols, |wrap| self.length_in_units(wrap))
     }
 
     fn get_block(&self, row: i32, col: i32, local_pos: BlockPos) -> GenericBlockState {
@@ -223,9 +205,9 @@ impl Track {
         let scale = self.scale;
         let branch_tick = if is_piston { 3 } else { scale };
 
-        let easting = match !is_piston && easting > 1 {
-            true => easting + 1,
-            false => easting,
+        let easting = match is_piston || easting < 2 {
+            true => easting,
+            false => easting + 1,
         };
 
         let note = move |tick: Tick, layer: Index| {
