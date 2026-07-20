@@ -1,5 +1,5 @@
 use clap::Parser;
-use rsnbs::layout::{MultiCompactLayout, MultiLinearLayout};
+use rsnbs::layout::{MultiCompactLayout, MultiLinearLayout, StackedLinearLayout};
 use rsnbs::note::{Note, Notes};
 use rsnbs::schematic::{SchematicBuilder, WithFloor};
 use rsnbs::song::Song;
@@ -96,9 +96,15 @@ struct Linear {
     /// Block spacing between adjacent tracks
     #[arg(long, default_value_t = 0)]
     gap: u32,
-    /// Add a floor platform below the build
+    /// Column wrapping length per track (0 = no wrap)
+    #[arg(long, default_value_t = 0)]
+    wrap_length: u32,
+    /// Add a floor platform below the build (only when wrap_length = 0)
     #[arg(long)]
     floor: bool,
+    /// Full floor coverage when stacked vertically (wrap_length > 0)
+    #[arg(long)]
+    full_floor: bool,
 }
 
 impl Linear {
@@ -112,12 +118,21 @@ impl Linear {
             .into_iter()
             .flat_map(|notes| notes.split_by_layer_count(NonZero::new(3)))
             .collect();
-        let layout = MultiLinearLayout::new(tracks, self.gap);
         let description = format!("Sectional from {}", name);
-        let litematic = match self.floor {
-            true => SchematicBuilder(WithFloor::new(layout, true)).build(description, "rsnbs"),
-            false => SchematicBuilder(layout).build(description, "rsnbs"),
-        };
+        let author = "rsnbs";
+        let litematic;
+
+        if let Some(wrap) = NonZero::new(self.wrap_length) {
+            let layout = StackedLinearLayout::new(tracks, Some(wrap), self.gap, self.full_floor);
+            litematic = SchematicBuilder(layout).build(description, author);
+        } else if self.floor {
+            let layout = WithFloor::new(MultiLinearLayout::new(tracks, self.gap), self.full_floor);
+            litematic = SchematicBuilder(layout).build(description, author);
+        } else {
+            let layout = MultiLinearLayout::new(tracks, self.gap);
+            litematic = SchematicBuilder(layout).build(description, author);
+        }
+
         litematic.write_file(&self.output).unwrap();
         eprintln!("Wrote {}", self.output);
     }

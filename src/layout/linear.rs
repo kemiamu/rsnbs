@@ -1,7 +1,7 @@
 //! Linear time-proportional layout for NBS song projection.
 
 use crate::note::Notes;
-use crate::schematic::{Arranged, Axis, Layout, air, chain_block, instrument_block};
+use crate::schematic::{Arranged, Axis, Layout, WithFloor, air, chain_block, instrument_block};
 use crate::schematic::{note_block, redstone_block, redstone_wire, repeater, sticky_piston};
 use crate::types::{Index, Position, Tick};
 use mcdata::{GenericBlockState, util::BlockPos};
@@ -35,6 +35,49 @@ impl MultiLinearLayout {
 }
 
 impl Layout for MultiLinearLayout {
+    fn size(&self) -> BlockPos {
+        self.0.size()
+    }
+
+    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+        self.0.get_block(pos)
+    }
+}
+
+//  StackedLinearLayout
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// Multi-track linear layout stacked vertically, each with a floor platform below.
+pub struct StackedLinearLayout(Arranged<WithFloor<LinearLayout>>);
+
+impl StackedLinearLayout {
+    /// Create a stacked linear layout from per-track notes.
+    pub fn new(
+        tracks: Vec<Notes>,
+        wrap_length: Option<NonZero<Tick>>,
+        gap: u32,
+        full: bool,
+    ) -> Self {
+        let positions = tracks.iter().flat_map(|n| n.keys());
+        let factor = Track::TEMPL
+            .into_iter()
+            .find(|&templ| positions.clone().all(|pos| pos.tick() % templ == 0))
+            .unwrap_or(1);
+        let song_length = tracks
+            .iter()
+            .flat_map(|n| n.keys().map(|pos| pos.tick()))
+            .max()
+            .map_or(0, |t| t + 1);
+        let layouts = tracks.into_iter().map(|notes| {
+            let layout = LinearLayout::new(notes, song_length, factor, wrap_length, gap);
+            WithFloor::new(layout, full)
+        });
+        Self(Arranged::new(layouts, Axis::Elevation, 1))
+    }
+}
+
+impl Layout for StackedLinearLayout {
     fn size(&self) -> BlockPos {
         self.0.size()
     }

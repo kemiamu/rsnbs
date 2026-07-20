@@ -214,7 +214,7 @@ pub fn chain_block() -> GenericBlockState {
 /// Floor block.
 pub fn floor_block() -> GenericBlockState {
     GenericBlockState {
-        name: "minecraft:white_concrete".into(),
+        name: "minecraft:gray_stained_glass".into(),
         properties: Default::default(),
     }
 }
