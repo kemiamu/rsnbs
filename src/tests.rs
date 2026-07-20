@@ -20,8 +20,8 @@ type Point = (Tick, Tone);
 fn test_scale_ticks() {
     let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
 
-    const NUM: Index = 3;
-    const DEN: Index = 1;
+    const NUM: Tick = 3;
+    const DEN: Tick = 1;
 
     // Scale each note's tick by numerator/denominator, multiply first
     let scaled_notes: Notes = song
@@ -59,13 +59,13 @@ fn test_sectional_matching() {
     let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
     let notes = song.notes.clone();
 
-    // let song_length: Index = 128;
-    let song_length: Index = notes.iter().map(|(pos, _)| pos.tick()).max().unwrap_or(0) + 1;
+    // let song_length: Tick = 128;
+    let song_length: Tick = notes.iter().map(|(pos, _)| pos.tick()).max().unwrap_or(0) + 1;
     let min_notes: usize = 0;
     let wrap_length: usize = 22;
 
     // 匹配+回退包装：匹配音符数不足时回退所有匹配
-    let try_match = |notes: Notes, pattern: &[Index]| -> (MatchedGroups, Notes) {
+    let try_match = |notes: Notes, pattern: &[Tick]| -> (MatchedGroups, Notes) {
         let saved = notes.clone();
         let (matched, unmatched) =
             notes.group_match(pattern, song_length, |a, b| a.tone() == b.tone());
@@ -76,14 +76,14 @@ fn test_sectional_matching() {
         }
     };
 
-    // let global_patterns: &[&[Index]] = &[
+    // let global_patterns: &[&[Tick]] = &[
     //     &[0, 32, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480],
     //     &[0, 32, 64, 96, 192, 256, 288, 320, 352, 384, 416, 448, 480],
     //     &[0, 192, 256, 288, 320, 352, 384, 416],
     // ];
-    // let sectional_patterns: &[&[Index]] = &[&[0, 16, 32, 48], &[0, 16], &[0]];
-    // let sections: &[Range<Index>] = &[0..256, 256..512];
-    let global_patterns: &[(&[Index], Tick)] = &[
+    // let sectional_patterns: &[&[Tick]] = &[&[0, 16, 32, 48], &[0, 16], &[0]];
+    // let sections: &[Range<Tick>] = &[0..256, 256..512];
+    let global_patterns: &[(&[Tick], Tick)] = &[
         (&[0, 16, 16 * 2, 16 * 3, 16 * 4, 16 * 5, 16 * 6, 16 * 7], 0),
         (
             &[0, 32, 32 * 2, 32 * 3, 4, 32 + 4, 32 * 2 + 4, 32 * 3 + 4],
@@ -95,8 +95,8 @@ fn test_sectional_matching() {
         (&[0, 4], 2),
         (&[0], 0), // any
     ];
-    let sectional_patterns: &[(&[Index], Tick)] = &[];
-    let sections: &[Range<Index>] = &[];
+    let sectional_patterns: &[(&[Tick], Tick)] = &[];
+    let sections: &[Range<Tick>] = &[];
 
     let mut all_matched: Vec<(MatchedGroups, Tick)> = vec![];
 
@@ -266,7 +266,7 @@ fn test_analyze_transposition_equivalence() {
     let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
 
     // params
-    let song_length: Index = song.notes.iter().map(|(p, _)| p.tick()).max().unwrap() + 1;
+    let song_length: Tick = song.notes.iter().map(|(p, _)| p.tick()).max().unwrap() + 1;
 
     // Plane-form notes multiset [note: (x: tick, y: tone), ...]
     let mut notes_multiset: Vec<Point> = song
@@ -277,7 +277,7 @@ fn test_analyze_transposition_equivalence() {
     notes_multiset.sort_unstable();
 
     // Left point of translation {offset: [note_point, ...], ...}
-    let offsets: HashMap<Index, Vec<Point>> = notes_multiset
+    let offsets: HashMap<Tick, Vec<Point>> = notes_multiset
         .iter()
         .enumerate()
         .flat_map(|(i, r)| notes_multiset[..i].iter().map(move |l| (l, r)))
@@ -290,7 +290,7 @@ fn test_analyze_transposition_equivalence() {
             acc
         });
 
-    let mut offset_counts: Vec<(usize, Index)> = offsets
+    let mut offset_counts: Vec<(usize, Tick)> = offsets
         .into_iter()
         .filter(|(_, v)| v.len() > 1)
         .map(|(k, v)| (v.len(), k))
@@ -300,7 +300,7 @@ fn test_analyze_transposition_equivalence() {
     // TEST: This theory is unstable
 
     let mut subset: Counter<Point> = Default::default();
-    let mut pattern: HashSet<Index> = From::from([0]);
+    let mut pattern: HashSet<Tick> = From::from([0]);
 
     for &(count, offset) in &offset_counts {
         // if count < subset.len() {
@@ -334,8 +334,8 @@ fn test_analyze_transposition_equivalence() {
 
     // Collect matched subset and remaining notes into slices
     let mut subset_counts: HashMap<Point, usize> = subset.iter().map(|(&p, &c)| (p, c)).collect();
-    let mut matched_notes: Vec<(Index, Note)> = Vec::new();
-    let mut remaining_notes: Vec<(Index, Note)> = Vec::new();
+    let mut matched_notes: Vec<(Tick, Note)> = Vec::new();
+    let mut remaining_notes: Vec<(Tick, Note)> = Vec::new();
 
     for &(tick, tone) in &notes_multiset {
         let note: Note = tone.into();
@@ -372,8 +372,8 @@ fn test_analyze_transposition_equivalence() {
 /// Group C overlap degree: 4 (2/1 + 2/2 + 1/1)
 pub fn satisfy_constraints(
     multiset: &mut Counter<Point>,
-    pattern: &HashSet<Index>,
-    song_length: Index,
+    pattern: &HashSet<Tick>,
+    song_length: Tick,
 ) -> Counter<Point> {
     debug_assert!(pattern.len() > 1);
     debug_assert!(pattern.get(&0).is_some());
@@ -394,7 +394,7 @@ pub fn satisfy_constraints(
         let groups: Vec<BTreeSet<Point>> = multiset
             .keys()
             .filter_map(|&(anchor, tone)| {
-                let map_pat = |pat: &Index| ((anchor + pat) % song_length, tone);
+                let map_pat = |pat: &Tick| ((anchor + pat) % song_length, tone);
                 let has_stock = |pp: &Point| multiset.contains_key(pp);
                 let group: BTreeSet<Point> = pattern.iter().map(map_pat).collect();
                 group.iter().all(has_stock).then_some(group)
@@ -440,7 +440,7 @@ pub fn test_deconvolve_d1() {
     //       开放性问题，评价模型尚不完善
 
     /// find best pattern arrangement via backtracking
-    fn deconvolve(points_mset: &Vec<Point>, loop_len: Index) -> Vec<Point> {
+    fn deconvolve(points_mset: &Vec<Point>, loop_len: Tick) -> Vec<Point> {
         let mut result: Vec<Point> = Default::default();
         let mut candidate: Vec<Point>;
         // stack
@@ -476,7 +476,7 @@ pub fn test_deconvolve_d1() {
     }
 
     /// sequential matching. sensitive to input, prone to local optima
-    fn place_pattern(points_mset: &[Point], pattern: &[Point], loop_len: Index) -> Vec<Point> {
+    fn place_pattern(points_mset: &[Point], pattern: &[Point], loop_len: Tick) -> Vec<Point> {
         let mut points: Counter<Point> = points_mset.iter().copied().collect();
         let pattern: Counter<Point> = pattern.iter().copied().collect();
         let mut result = Vec::with_capacity(points.len());
@@ -505,7 +505,7 @@ pub fn test_deconvolve_d1() {
     let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
 
     // params
-    let song_length: Index = song.notes.iter().map(|(p, _)| p.tick()).max().unwrap() + 1;
+    let song_length: Tick = song.notes.iter().map(|(p, _)| p.tick()).max().unwrap() + 1;
 
     // 构建点集 multiset
     let points_mset: Vec<Point> = song
@@ -519,8 +519,8 @@ pub fn test_deconvolve_d1() {
 
     // 将音符分为模式匹配部分和剩余部分
     let mut pattern_counter: Counter<Point> = pattern.iter().copied().collect();
-    let mut matched: Vec<(Index, Note)> = Vec::new();
-    let mut remaining: Vec<(Index, Note)> = Vec::new();
+    let mut matched: Vec<(Tick, Note)> = Vec::new();
+    let mut remaining: Vec<(Tick, Note)> = Vec::new();
 
     for (pos, note) in &song.notes {
         let p = (pos.tick(), note.tone());
@@ -539,16 +539,16 @@ pub fn test_deconvolve_d1() {
 
 #[test]
 pub fn test_deconvolve() {
-    fn deconvolve(points_mset: &[Point], loop_len: Index) -> Vec<Point> {
+    fn deconvolve(points_mset: &[Point], loop_len: Tick) -> Vec<Point> {
         let points: Counter<Point> = points_mset.iter().copied().collect();
-        let mut local_points: HashMap<Point, Counter<Index>> = points
+        let mut local_points: HashMap<Point, Counter<Tick>> = points
             .keys()
             .map(|&(tick, note)| {
                 let offset_by_tick = |(&(ti, _), &c)| ((ti + loop_len - tick) % loop_len, c);
                 ((tick, note), points.iter().map(offset_by_tick).collect())
             })
             .collect();
-        // let mut local_points: HashMap<Point, HashSet<Index>> = points.keys()
+        // let mut local_points: HashMap<Point, HashSet<Tick>> = points.keys()
         //     .map(|&(tick, note)| {
         //         let offset_by_tick = |&(ti, _)| (ti + loop_len - tick) % loop_len;
         //         ((tick, note), points.keys().map(offset_by_tick).collect())
@@ -556,8 +556,8 @@ pub fn test_deconvolve() {
 
         // {N} -> {{K}} * {T} = {{M}} - residual
         let mut note_palette: HashSet<Tone> = Default::default();
-        let mut time_pattern: HashSet<Index> = Default::default();
-        let mut conv_kernel: Counter<Index> = Default::default();
+        let mut time_pattern: HashSet<Tick> = Default::default();
+        let mut conv_kernel: Counter<Tick> = Default::default();
 
         // TODO: 1. 建立初始值
         //       2. 迭代贪婪的匹配，消耗 loval_points 对 conv_kernel 做不缩小匹配
@@ -570,14 +570,14 @@ pub fn test_deconvolve() {
         todo!()
     }
 
-    fn seed_best<'a, I>(local_points: I) -> Counter<Index>
+    fn seed_best<'a, I>(local_points: I) -> Counter<Tick>
     where
-        I: IntoIterator<Item = (&'a Point, &'a Counter<Index>)>,
+        I: IntoIterator<Item = (&'a Point, &'a Counter<Tick>)>,
     {
-        let local_points: Vec<(&Point, &Counter<Index>)> = local_points.into_iter().collect();
+        let local_points: Vec<(&Point, &Counter<Tick>)> = local_points.into_iter().collect();
         // local_points.sort_unstable_by_key(|(p, _)| *p);
         let mut best_size: usize = Default::default();
-        let mut best: Counter<Index> = Default::default();
+        let mut best: Counter<Tick> = Default::default();
 
         // TODO: 先比较最多的两个局部坐标系的交集作为迭代初始值。
         // TODO: 一个音在时间上的图案，不随时间变化而变化，而只是位移。
@@ -589,7 +589,7 @@ pub fn test_deconvolve() {
         {
             // if ntl == ntr {}
 
-            let candidate: Counter<Index> = cntl
+            let candidate: Counter<Tick> = cntl
                 .iter()
                 .filter_map(|(&t, &cnt)| {
                     cntr.get(&t)
@@ -609,7 +609,7 @@ pub fn test_deconvolve() {
     }
 
     /// sequential matching. sensitive to input, prone to local optima
-    fn place_pattern(points_mset: &[Point], pattern: &[Point], loop_len: Index) -> Vec<Point> {
+    fn place_pattern(points_mset: &[Point], pattern: &[Point], loop_len: Tick) -> Vec<Point> {
         let mut points: Counter<Point> = points_mset.iter().copied().collect();
         let pattern: Counter<Point> = pattern.iter().copied().collect();
         let mut result = Vec::with_capacity(points.len());
@@ -638,7 +638,7 @@ pub fn test_deconvolve() {
     let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
 
     // params
-    let song_length: Index = song.notes.iter().map(|(p, _)| p.tick()).max().unwrap() + 1;
+    let song_length: Tick = song.notes.iter().map(|(p, _)| p.tick()).max().unwrap() + 1;
 
     // 构建点集 multiset
     let points_mset: Vec<Point> = song
@@ -652,8 +652,8 @@ pub fn test_deconvolve() {
 
     // 将音符分为模式匹配部分和剩余部分
     let mut pattern_counter: Counter<Point> = pattern.iter().copied().collect();
-    let mut matched: Vec<(Index, Note)> = Vec::new();
-    let mut remaining: Vec<(Index, Note)> = Vec::new();
+    let mut matched: Vec<(Tick, Note)> = Vec::new();
+    let mut remaining: Vec<(Tick, Note)> = Vec::new();
 
     for (pos, note) in &song.notes {
         let p = (pos.tick(), note.tone());

@@ -16,7 +16,7 @@ mod tests;
 
 pub mod song {
     use crate::note::Notes;
-    use crate::types::{Index, Panning, Result, Version, Volume};
+    use crate::types::{Index, Panning, Result, Tick, Version, Volume};
 
     /// represents a complete nbs song with header, notes, layers, and instruments.
     #[derive(Debug, Default, Clone, PartialEq, PartialOrd)]
@@ -60,7 +60,7 @@ pub mod song {
         }
 
         /// returns the tick count (max tick + 1) of the song.
-        pub fn len(&self) -> Index {
+        pub fn len(&self) -> Tick {
             self.notes
                 .last_key_value()
                 .map(|(p, _)| p.tick() + 1)
@@ -89,7 +89,7 @@ pub mod song {
     pub struct Header {
         pub version: Version,
         pub default_instruments: u8,
-        pub song_length: Index,
+        pub song_length: Tick,
         pub song_layers: Index,
         pub song_name: String,
         pub song_author: String,
@@ -107,7 +107,7 @@ pub mod song {
         pub song_origin: String,
         pub is_loop: bool,
         pub max_loop_count: u32,
-        pub loop_start: Index,
+        pub loop_start: Tick,
     }
 
     impl Default for Header {
@@ -230,7 +230,7 @@ pub mod types {
             Self { tick, layer }
         }
 
-        pub fn tick(self) -> Index {
+        pub fn tick(self) -> Tick {
             self.tick
         }
 

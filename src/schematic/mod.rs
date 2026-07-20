@@ -1,6 +1,6 @@
 //! Generate Minecraft litematic projections from NBS songs.
 
-use crate::note::{Instrument, Note};
+use crate::note::{Instrument, Note, Tone};
 use itertools::iproduct;
 use mcdata::BlockState;
 use mcdata::{GenericBlockState, util::BlockPos};
@@ -200,8 +200,8 @@ impl<L: Layout> Layout for Arranged<L> {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-impl Note {
-    /// returns the minecraft note block block state for this note.
+impl Tone {
+    /// returns the minecraft note block block state for this tone.
     pub fn note_block_state(&self) -> Option<GenericBlockState> {
         let note = self.key().minecraft_note()?;
         let instr = self.instrument().instrument_property();
@@ -299,7 +299,7 @@ where
     N: Into<Option<&'a Note>>,
 {
     note.into()
-        .and_then(|n| n.note_block_state())
+        .and_then(|n| n.tone().note_block_state())
         .unwrap_or_else(fallback)
 }
 
@@ -308,7 +308,7 @@ where
     N: Into<Option<&'a Note>>,
 {
     note.into()
-        .and_then(|n| n.instrument().instrument_block())
+        .and_then(|n| n.tone().instrument().instrument_block())
         .unwrap_or_else(fallback)
 }
 

@@ -19,37 +19,33 @@ pub struct Note {
 }
 
 impl Note {
-    /// creates a new note with the given instrument and key.
-    pub fn new(instrument: Instrument, key: Key) -> Self {
-        Self {
-            instrument,
-            key,
-            ..Default::default()
+    /// creates a note from any value that can convert into one.
+    pub fn new(value: impl Into<Self>) -> Self {
+        value.into()
+    }
+
+    /// returns the tone as a pair of instrument and key.
+    pub fn tone(&self) -> Tone {
+        Tone::new(self.instrument, self.key)
+    }
+
+    /// returns the modulation parameters of the note.
+    pub fn modulation(&self) -> Modulation {
+        Modulation {
+            velocity: self.velocity,
+            panning: self.panning,
+            pitch: self.pitch,
         }
-    }
-
-    pub fn instrument(&self) -> Instrument {
-        self.instrument
-    }
-
-    pub fn key(&self) -> Key {
-        self.key
-    }
-
-    /// returns the tone as a tuple (instrument, key).
-    pub fn tone(&self) -> (Instrument, Key) {
-        (self.instrument, self.key)
-    }
-
-    /// returns the modulation parameters as a tuple (velocity, panning, pitch).
-    pub fn modulation(&self) -> (u8, i8, i16) {
-        (self.velocity.get(), self.panning.get(), self.pitch)
     }
 }
 
 impl From<Tone> for Note {
-    fn from((instrument, key): Tone) -> Self {
-        Self::new(instrument, key)
+    fn from(tone: Tone) -> Self {
+        Self {
+            instrument: tone.instrument,
+            key: tone.key,
+            ..Default::default()
+        }
     }
 }
 
@@ -60,7 +56,33 @@ impl From<&Tone> for Note {
 }
 
 /// a tone is a pair of an instrument and a key.
-pub type Tone = (Instrument, Key);
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Tone {
+    instrument: Instrument,
+    key: Key,
+}
+
+impl Tone {
+    pub fn new(instrument: Instrument, key: Key) -> Self {
+        Self { instrument, key }
+    }
+
+    pub fn instrument(&self) -> Instrument {
+        self.instrument
+    }
+
+    pub fn key(&self) -> Key {
+        self.key
+    }
+}
+
+/// velocity, panning, and pitch of a note.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Modulation {
+    pub velocity: Volume,
+    pub panning: Panning,
+    pub pitch: i16,
+}
 
 // instrument
 //
@@ -115,7 +137,7 @@ impl Default for Instrument {
 impl Instrument {
     /// Maps NBS file instrument index → (variant, Minecraft property, Minecraft block).
     /// The array position is the NBS serialization index.
-    pub(crate) const NBS_INDEX: &'static [Instrument] = &[
+    const NBS_INDEX: &'static [Instrument] = &[
         Instrument::Harp,
         Instrument::DoubleBass,
         Instrument::BassDrum,

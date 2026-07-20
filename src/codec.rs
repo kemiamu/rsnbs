@@ -3,7 +3,7 @@
 use crate::nbs_ext::{NbsReadExt, NbsWriteExt};
 use crate::note::{Instrument, Key, Note, Notes};
 use crate::song::{CustomInstrument, Header, Layer, Song};
-use crate::types::{Index, Panning, Position, Result, Version, Volume};
+use crate::types::{Index, Panning, Position, Result, Tick, Version, Volume};
 use std::collections::BTreeMap;
 use std::io;
 use std::num::NonZeroU32;
@@ -185,7 +185,7 @@ impl Codec for Notes {
         let mut notes = BTreeMap::new();
 
         // tick
-        let mut tick_cursor = Index::MAX;
+        let mut tick_cursor = Tick::MAX;
         while let Some(tick_jump) = reader.read_jump()? {
             tick_cursor = tick_cursor.wrapping_add(tick_jump.get());
 
@@ -204,7 +204,7 @@ impl Codec for Notes {
 
     fn write<W: io::Write>(&self, writer: &mut W, context: &Self::Context) -> Result<()> {
         let mut iter = self.iter().peekable();
-        let mut prev_tick = Index::MAX;
+        let mut prev_tick = Tick::MAX;
         let mut prev_layer = Index::MAX;
 
         while let Some((pos, note)) = iter.next() {

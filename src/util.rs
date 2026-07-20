@@ -598,7 +598,7 @@ impl Notes {
     }
 
     /// separates notes into matched and unmatched groups via pattern matching.
-    pub fn matches_by<F>(self, pattern: &[Index], song_length: Index, f: F) -> (Notes, Notes)
+    pub fn matches_by<F>(self, pattern: &[Tick], song_length: Tick, f: F) -> (Notes, Notes)
     where
         F: Fn(&Note, &Note) -> bool,
     {
@@ -652,12 +652,7 @@ impl Notes {
 
     /// like matches_by but preserves group boundaries, returns MatchedGroups.
     #[allow(deprecated)]
-    pub fn group_match<F>(
-        self,
-        pattern: &[Index],
-        song_length: Index,
-        f: F,
-    ) -> (MatchedGroups, Notes)
+    pub fn group_match<F>(self, pattern: &[Tick], song_length: Tick, f: F) -> (MatchedGroups, Notes)
     where
         F: Fn(&Note, &Note) -> bool,
     {

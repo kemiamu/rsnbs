@@ -87,7 +87,7 @@ pub(super) trait NbsWriteExt: io::Write {
 
     /// writes a length-prefixed string.
     fn write_string(&mut self, s: &str) -> io::Result<()> {
-        // 可恶的欧洲人！
+        // Damn Europeans...
         // Encode string to Windows-1252
         let (bytes, _, _) = WINDOWS_1252.encode(s);
         let len: u32 = bytes.len().try_into().unwrap_or(u32::MAX);
