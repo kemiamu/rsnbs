@@ -167,17 +167,17 @@ impl Layout for LinearLayout {
             let local_pos = BlockPos::new(0, y, 1);
             return self.track.get_block(cell, col, local_pos);
         } else if overlap {
-            cell_x += width;
+            cell_x += width + gap;
             cell -= 1;
         }
 
         // Not in overlapping region
-        if cell_x == 1 {
+        if cell_x == 1 && offset >= 2 {
             let col = (offset - 2).div_euclid(Track::SOUTHING);
             let local_z = (offset - 2).rem_euclid(Track::SOUTHING) + 1;
             let local_pos = BlockPos::new(1, y, local_z);
             return self.track.get_block(cell, col, local_pos);
-        } else if interior {
+        } else if interior && cell_x > 1 {
             let col = (offset - 1).div_euclid(Track::SOUTHING);
             let local_z = (offset - 1).rem_euclid(Track::SOUTHING);
             let local_pos = BlockPos::new(cell_x, y, local_z);
@@ -229,8 +229,7 @@ impl Track {
 
     fn cols_per_row(&self) -> Tick {
         let all_cols = self.length_in_units(NonZero::<Tick>::MIN);
-        self.wrap_length
-            .map_or(all_cols, |wrap| self.length_in_units(wrap))
+        self.wrap_length.map_or(all_cols, |wrap| wrap.get())
     }
 
     fn get_block(&self, row: i32, col: i32, local_pos: BlockPos) -> GenericBlockState {
@@ -240,10 +239,6 @@ impl Track {
             z: southing,
         } = local_pos;
 
-        let repeater_facing = match row.rem_euclid(2) == 0 {
-            true => "north",
-            false => "south",
-        };
         let is_piston = self.is_piston();
         let scale = self.scale;
         let branch_tick = if is_piston { 3 } else { scale };
@@ -252,7 +247,10 @@ impl Track {
             true => easting,
             false => easting + 1,
         };
-
+        let repeater_facing = match row.rem_euclid(2) == 0 {
+            true => "north",
+            false => "south",
+        };
         let note = move |tick: Tick, layer: Index| {
             let group = row * self.cols_per_row() as i32 + col;
             let head = if scale == 1 { 1 } else { 0 };
@@ -260,7 +258,6 @@ impl Track {
             let tick = (tick as i32 + base_tick).try_into().ok()?;
             self.notes.get(&Position::new(tick, layer))
         };
-
         let has_branch = note(branch_tick, 0)
             .or_else(|| note(branch_tick, 1))
             .is_some();
