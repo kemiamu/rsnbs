@@ -77,10 +77,8 @@ impl<L: Layout> Layout for WithFloor<L> {
 
         let floor = || match self.full {
             true => floor_block(),
-            false => match self.layout.get_block(pos).name == "minecraft:air" {
-                true => air(),
-                false => floor_block(),
-            },
+            false if self.layout.get_block(pos).name == "minecraft:air" => air(),
+            false => floor_block(),
         };
         let local_pos = || BlockPos::new(pos.x, pos.y - 1, pos.z);
 
@@ -124,44 +122,28 @@ pub struct Arranged<L: Layout> {
 }
 
 impl<L: Layout> Arranged<L> {
-    pub fn new(layouts: impl IntoIterator<Item = L>, axis: Axis, gap: u32) -> Self {
-        let unit = axis.unit();
-        let gap = gap as i32;
-        let gap_vec = BlockPos::new(unit.x * gap, unit.y * gap, unit.z * gap);
-        let mut cursor = BlockPos::new(-gap_vec.x, -gap_vec.y, -gap_vec.z);
-        let mut extent = BlockPos::new(0, 0, 0);
+    pub fn new<I: IntoIterator<Item = L>>(layouts: I, axis: Axis, gap: u32) -> Self {
+        let unit: BlockPos = axis.unit();
+        let gap_vec: BlockPos = unit * gap as i32;
+        let mut cursor: BlockPos = -gap_vec;
+        let mut extent: BlockPos = BlockPos::new(0, 0, 0);
 
         let placed = layouts.into_iter().map(|layout| {
-            let size = layout.size();
-            // Anchor along the primary axis (cross-axes stay 0)
-            let anchor_pos = BlockPos::new(
-                cursor.x + gap_vec.x,
-                cursor.y + gap_vec.y,
-                cursor.z + gap_vec.z,
-            );
-            // Advance cursor along the primary axis
-            cursor = BlockPos::new(
-                anchor_pos.x + size.x * unit.x,
-                anchor_pos.y + size.y * unit.y,
-                anchor_pos.z + size.z * unit.z,
-            );
-            // Accumulate max across all axes
-            extent = BlockPos::new(
-                extent.x.max(size.x),
-                extent.y.max(size.y),
-                extent.z.max(size.z),
-            );
-            (layout, anchor_pos)
+            let size: BlockPos = layout.size();
+            let anchor: BlockPos = cursor + gap_vec;
+            let dot: i32 = size.x * unit.x + size.y * unit.y + size.z * unit.z;
+            cursor = anchor + unit * dot;
+            extent = Self::_max(extent, size);
+            (layout, anchor)
         });
-        let bands = placed.collect();
 
-        // max picks primary from cursor, cross from extent
-        let size = BlockPos::new(
-            cursor.x.max(0).max(extent.x),
-            cursor.y.max(0).max(extent.y),
-            cursor.z.max(0).max(extent.z),
-        );
+        let bands = placed.collect();
+        let size = Self::_max(Self::_max(cursor, BlockPos::ORIGIN), extent);
         Self { bands, size }
+    }
+
+    fn _max(a: BlockPos, b: BlockPos) -> BlockPos {
+        BlockPos::new(a.x.max(b.x), a.y.max(b.y), a.z.max(b.z))
     }
 }
 
@@ -182,6 +164,7 @@ impl<L: Layout> Layout for Arranged<L> {
         else {
             return air();
         };
+
         let (layout, anchor) = &self.bands[idx];
         let local = BlockPos::new(pos.x - anchor.x, pos.y - anchor.y, pos.z - anchor.z);
         let size = layout.size();
@@ -193,6 +176,77 @@ impl<L: Layout> Layout for Arranged<L> {
             true => layout.get_block(local),
             false => air(),
         }
+    }
+}
+
+// Aligned
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// Like [`Arranged`], but aligns sub-layouts by their far-edge on cross-axes.
+pub struct EdgeArranged<L: Layout> {
+    inner: Reverse<Arranged<Reverse<L>>>,
+}
+
+impl<L: Layout> EdgeArranged<L> {
+    /// `align` is passed to both inner (per-sub-layout) and outer (whole) Reverse.
+    pub fn new<I>(layouts: I, axis: Axis, gap: u32, align: BlockPos) -> Self
+    where
+        I: IntoIterator<Item = L>,
+    {
+        debug_assert!(align.x == 0 || align.x == 1);
+        debug_assert!(align.y == 0 || align.y == 1);
+        debug_assert!(align.z == 0 || align.z == 1);
+        let reversed = layouts.into_iter().map(|l| Reverse::new(l, align));
+        let arranged = Arranged::new(reversed, axis, gap);
+        let inner = Reverse::new(arranged, align);
+        Self { inner }
+    }
+}
+
+impl<L: Layout> Layout for EdgeArranged<L> {
+    fn size(&self) -> BlockPos {
+        self.inner.size()
+    }
+
+    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+        self.inner.get_block(pos)
+    }
+}
+
+// Reverse
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// Mirror-reverse a layout along given axes. Block facing unchanged.
+pub struct Reverse<L: Layout> {
+    layout: L,
+    sign: BlockPos,
+}
+
+impl<L: Layout> Reverse<L> {
+    pub fn new(layout: L, sign: BlockPos) -> Self {
+        debug_assert!(sign.x == 0 || sign.x == 1);
+        debug_assert!(sign.y == 0 || sign.y == 1);
+        debug_assert!(sign.z == 0 || sign.z == 1);
+        Self { layout, sign }
+    }
+}
+
+impl<L: Layout> Layout for Reverse<L> {
+    fn size(&self) -> BlockPos {
+        self.layout.size()
+    }
+
+    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+        let size = self.layout.size();
+        let sign = self.sign;
+        let orig = BlockPos::new(
+            pos.x + sign.x * (size.x - 1 - 2 * pos.x),
+            pos.y + sign.y * (size.y - 1 - 2 * pos.y),
+            pos.z + sign.z * (size.z - 1 - 2 * pos.z),
+        );
+        self.layout.get_block(orig)
     }
 }
 
