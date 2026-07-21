@@ -13,6 +13,10 @@ mod linear;
 pub use compact::*;
 pub use linear::*;
 
+// SchematicBuilder
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
 /// Output a [`Layout`] as a litematic file.
 ///
 /// Example: `SchematicBuilder(layout).build("Song", "Me")`
@@ -38,6 +42,10 @@ impl<L: Layout> SchematicBuilder<L> {
     }
 }
 
+// Layout trait
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
 /// A queryable projection layout.
 pub trait Layout {
     /// Total size of the bounding box.
@@ -46,74 +54,41 @@ pub trait Layout {
     fn get_block(&self, pos: BlockPos) -> GenericBlockState;
 }
 
-// Floor
+// EdgeArranged
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// A layout wrapper that adds a floor layer beneath another layout.
-pub struct WithFloor<L: Layout> {
-    layout: L,
-    full: bool,
+/// Like [`Arranged`], but aligns sub-layouts by their far-edge on cross-axes.
+pub struct EdgeArranged<L: Layout> {
+    inner: Reverse<Arranged<Reverse<L>>>,
 }
 
-impl<L: Layout> WithFloor<L> {
-    /// Whether the floor fully covers the entire bounding box.
-    /// When `false`, only positions with a block above get a floor.
-    pub fn new(layout: L, full: bool) -> Self {
-        Self { layout, full }
+impl<L: Layout> EdgeArranged<L> {
+    /// `align` is passed to both inner (per-sub-layout) and outer (whole) Reverse.
+    pub fn new<I>(layouts: I, axis: Axis, gap: u32, align: Mask) -> Self
+    where
+        I: IntoIterator<Item = L>,
+    {
+        let reversed = layouts.into_iter().map(|l| Reverse::new(l, align));
+        let arranged = Arranged::new(reversed, axis, gap);
+        let inner = Reverse::new(arranged, align);
+        Self { inner }
     }
 }
 
-impl<L: Layout> Layout for WithFloor<L> {
+impl<L: Layout> Layout for EdgeArranged<L> {
     fn size(&self) -> BlockPos {
-        let size = self.layout.size();
-        BlockPos::new(size.x, size.y + 1, size.z)
+        self.inner.size()
     }
 
     fn get_block(&self, pos: BlockPos) -> GenericBlockState {
-        debug_assert!((0..self.size().x).contains(&pos.x), "x out of range");
-        debug_assert!((0..self.size().y).contains(&pos.y), "y out of range");
-        debug_assert!((0..self.size().z).contains(&pos.z), "z out of range");
-
-        let floor = || match self.full {
-            true => floor_block(),
-            false if self.layout.get_block(pos).name == "minecraft:air" => air(),
-            false => floor_block(),
-        };
-        let local_pos = || BlockPos::new(pos.x, pos.y - 1, pos.z);
-
-        match pos.y {
-            0 => floor(),
-            _ => self.layout.get_block(local_pos()),
-        }
+        self.inner.get_block(pos)
     }
 }
 
 // Arranged
 //
 // ++++++++++++============++++++++++++============++++++++++++============
-
-/// Which spatial direction sub-layouts are placed along.
-#[derive(Clone, Copy)]
-pub enum Axis {
-    /// East–west axis (X).
-    Easting,
-    /// Vertical axis (Y).
-    Elevation,
-    /// South–north axis (Z).
-    Southing,
-}
-
-impl Axis {
-    /// The unit vector for this axis.
-    pub fn unit(self) -> BlockPos {
-        match self {
-            Axis::Easting => BlockPos::new(1, 0, 0),
-            Axis::Elevation => BlockPos::new(0, 1, 0),
-            Axis::Southing => BlockPos::new(0, 0, 1),
-        }
-    }
-}
 
 /// A layout wrapper that arranges sub-layouts along an [`Axis`].
 pub struct Arranged<L: Layout> {
@@ -123,7 +98,7 @@ pub struct Arranged<L: Layout> {
 
 impl<L: Layout> Arranged<L> {
     pub fn new<I: IntoIterator<Item = L>>(layouts: I, axis: Axis, gap: u32) -> Self {
-        let unit: BlockPos = axis.unit();
+        let unit: Mask = axis.unit();
         let gap_vec: BlockPos = unit * gap as i32;
         let mut cursor: BlockPos = -gap_vec;
         let mut extent: BlockPos = BlockPos::new(0, 0, 0);
@@ -131,8 +106,7 @@ impl<L: Layout> Arranged<L> {
         let placed = layouts.into_iter().map(|layout| {
             let size: BlockPos = layout.size();
             let anchor: BlockPos = cursor + gap_vec;
-            let dot: i32 = size.x * unit.x + size.y * unit.y + size.z * unit.z;
-            cursor = anchor + unit * dot;
+            cursor = anchor + unit * size;
             extent = Self::_max(extent, size);
             (layout, anchor)
         });
@@ -179,41 +153,6 @@ impl<L: Layout> Layout for Arranged<L> {
     }
 }
 
-// Aligned
-//
-// ++++++++++++============++++++++++++============++++++++++++============
-
-/// Like [`Arranged`], but aligns sub-layouts by their far-edge on cross-axes.
-pub struct EdgeArranged<L: Layout> {
-    inner: Reverse<Arranged<Reverse<L>>>,
-}
-
-impl<L: Layout> EdgeArranged<L> {
-    /// `align` is passed to both inner (per-sub-layout) and outer (whole) Reverse.
-    pub fn new<I>(layouts: I, axis: Axis, gap: u32, align: BlockPos) -> Self
-    where
-        I: IntoIterator<Item = L>,
-    {
-        debug_assert!(align.x == 0 || align.x == 1);
-        debug_assert!(align.y == 0 || align.y == 1);
-        debug_assert!(align.z == 0 || align.z == 1);
-        let reversed = layouts.into_iter().map(|l| Reverse::new(l, align));
-        let arranged = Arranged::new(reversed, axis, gap);
-        let inner = Reverse::new(arranged, align);
-        Self { inner }
-    }
-}
-
-impl<L: Layout> Layout for EdgeArranged<L> {
-    fn size(&self) -> BlockPos {
-        self.inner.size()
-    }
-
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
-        self.inner.get_block(pos)
-    }
-}
-
 // Reverse
 //
 // ++++++++++++============++++++++++++============++++++++++++============
@@ -221,14 +160,11 @@ impl<L: Layout> Layout for EdgeArranged<L> {
 /// Mirror-reverse a layout along given axes. Block facing unchanged.
 pub struct Reverse<L: Layout> {
     layout: L,
-    sign: BlockPos,
+    sign: Mask,
 }
 
 impl<L: Layout> Reverse<L> {
-    pub fn new(layout: L, sign: BlockPos) -> Self {
-        debug_assert!(sign.x == 0 || sign.x == 1);
-        debug_assert!(sign.y == 0 || sign.y == 1);
-        debug_assert!(sign.z == 0 || sign.z == 1);
+    pub fn new(layout: L, sign: Mask) -> Self {
         Self { layout, sign }
     }
 }
@@ -240,13 +176,124 @@ impl<L: Layout> Layout for Reverse<L> {
 
     fn get_block(&self, pos: BlockPos) -> GenericBlockState {
         let size = self.layout.size();
-        let sign = self.sign;
-        let orig = BlockPos::new(
-            pos.x + sign.x * (size.x - 1 - 2 * pos.x),
-            pos.y + sign.y * (size.y - 1 - 2 * pos.y),
-            pos.z + sign.z * (size.z - 1 - 2 * pos.z),
-        );
+        let orig = pos + self.sign * (size - BlockPos::new(1, 1, 1) - pos * 2);
+        debug_assert!((0..size.x).contains(&orig.x));
+        debug_assert!((0..size.y).contains(&orig.y));
+        debug_assert!((0..size.z).contains(&orig.z));
         self.layout.get_block(orig)
+    }
+}
+
+// WithFloor
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// A layout wrapper that adds a floor layer beneath another layout.
+pub struct WithFloor<L: Layout> {
+    layout: L,
+    full: bool,
+}
+
+impl<L: Layout> WithFloor<L> {
+    /// Whether the floor fully covers the entire bounding box.
+    /// When `false`, only positions with a block above get a floor.
+    pub fn new(layout: L, full: bool) -> Self {
+        Self { layout, full }
+    }
+}
+
+impl<L: Layout> Layout for WithFloor<L> {
+    fn size(&self) -> BlockPos {
+        let size = self.layout.size();
+        BlockPos::new(size.x, size.y + 1, size.z)
+    }
+
+    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+        debug_assert!((0..self.size().x).contains(&pos.x), "x out of range");
+        debug_assert!((0..self.size().y).contains(&pos.y), "y out of range");
+        debug_assert!((0..self.size().z).contains(&pos.z), "z out of range");
+
+        let floor = || match self.full {
+            true => floor_block(),
+            false if self.layout.get_block(pos).name == "minecraft:air" => air(),
+            false => floor_block(),
+        };
+        let local_pos = || BlockPos::new(pos.x, pos.y - 1, pos.z);
+
+        match pos.y {
+            0 => floor(),
+            _ => self.layout.get_block(local_pos()),
+        }
+    }
+}
+
+// Axis
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// Which spatial direction sub-layouts are placed along.
+#[derive(Clone, Copy)]
+pub enum Axis {
+    /// East–west axis (X).
+    Easting,
+    /// Vertical axis (Y).
+    Elevation,
+    /// South–north axis (Z).
+    Southing,
+}
+
+impl Axis {
+    /// Unit mask vector for this axis.
+    pub fn unit(self) -> Mask {
+        match self {
+            Axis::Easting => Mask::new(BlockPos::new(1, 0, 0)).unwrap(),
+            Axis::Elevation => Mask::new(BlockPos::new(0, 1, 0)).unwrap(),
+            Axis::Southing => Mask::new(BlockPos::new(0, 0, 1)).unwrap(),
+        }
+    }
+}
+
+// Mask
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// Component-wise mask (0 or 1 on each axis) for BlockPos operations.
+///
+/// Unlike `BlockPos * BlockPos` (cross product), `Mask * BlockPos` is component-wise.
+#[derive(Clone, Copy)]
+pub struct Mask(BlockPos);
+
+impl Mask {
+    pub fn new(sign: BlockPos) -> Option<Self> {
+        match (sign.x == 0 || sign.x == 1)
+            && (sign.y == 0 || sign.y == 1)
+            && (sign.z == 0 || sign.z == 1)
+        {
+            true => Some(Self(sign)),
+            false => None,
+        }
+    }
+}
+
+impl From<Mask> for BlockPos {
+    fn from(s: Mask) -> Self {
+        s.0
+    }
+}
+
+impl std::ops::Mul<BlockPos> for Mask {
+    type Output = BlockPos;
+
+    fn mul(self, rhs: BlockPos) -> BlockPos {
+        BlockPos::new(self.0.x * rhs.x, self.0.y * rhs.y, self.0.z * rhs.z)
+    }
+}
+
+impl std::ops::Mul<i32> for Mask {
+    type Output = BlockPos;
+
+    fn mul(self, rhs: i32) -> BlockPos {
+        self.0 * rhs
     }
 }
 
