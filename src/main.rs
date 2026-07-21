@@ -4,6 +4,7 @@ use rsnbs::schematic::{MultiCompactLayout, MultiLinearLayout, StackedLinearLayou
 use rsnbs::schematic::{SchematicBuilder, WithFloor};
 use rsnbs::song::Song;
 use rsnbs::types::Tick;
+#[cfg(feature = "unstable")]
 use rsnbs::util::{TpPlane, VectorTable};
 use std::collections::BTreeMap;
 use std::num::NonZero;
@@ -20,6 +21,7 @@ use std::num::NonZero;
 enum Cli {
     Compact(Compact),
     Linear(Linear),
+    #[cfg(feature = "unstable")]
     Decompose(Decompose),
 }
 
@@ -27,6 +29,7 @@ fn main() {
     match Cli::parse() {
         Cli::Compact(cmd) => cmd.run(),
         Cli::Linear(cmd) => cmd.run(),
+        #[cfg(feature = "unstable")]
         Cli::Decompose(cmd) => cmd.run(),
     }
 }
@@ -145,6 +148,7 @@ impl Linear {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
+#[cfg(feature = "unstable")]
 #[derive(clap::Args)]
 /// Decompose an NBS song into pattern and residual notes using FP-Growth.
 struct Decompose {
@@ -158,6 +162,7 @@ struct Decompose {
     min_support: f64,
 }
 
+#[cfg(feature = "unstable")]
 impl Decompose {
     fn run(self) {
         let song = Song::open_nbs(&self.input).unwrap();

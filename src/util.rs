@@ -41,12 +41,14 @@ impl From<TpPlane> for Notes {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
+#[cfg(feature = "unstable")]
 /// Vector table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VectorTable {
     table: BTreeMap<Tick, TpPlane>,
 }
 
+#[cfg(feature = "unstable")]
 impl VectorTable {
     /// Construct from a [`TpPlane`] by enumerating all point pairs.
     ///
@@ -223,6 +225,7 @@ impl VectorTable {
     }
 }
 
+#[cfg(feature = "unstable")]
 impl Deref for VectorTable {
     fn deref(&self) -> &Self::Target {
         &self.table
@@ -230,6 +233,7 @@ impl Deref for VectorTable {
     type Target = BTreeMap<Tick, TpPlane>;
 }
 
+#[cfg(feature = "unstable")]
 impl DerefMut for VectorTable {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.table
@@ -261,7 +265,6 @@ impl TransEqClass {
     }
 
     /// Conservatively reduce TEC to arithmetic kernel K, discarding conflicting points.
-    #[deprecated(note = "TEC analysis is under analysis; prune will be redesigned")]
     pub fn prune(self) -> TpPlane {
         let mut points = self.points;
         let indexes: Vec<Point> = points.keys().copied().sorted().collect();
@@ -338,6 +341,7 @@ impl<const N: usize> From<([NonZero<Tick>; N], TpPlane)> for TransEqClass {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
+#[cfg(feature = "unstable")]
 /// Node in the FP-tree.
 #[derive(Clone)]
 #[deprecated(note = "FP-Growth analysis is under analysis; will be replaced")]
@@ -354,6 +358,7 @@ struct FpNode {
     next: Option<usize>,
 }
 
+#[cfg(feature = "unstable")]
 /// FP-tree for frequent pattern mining using the FP-Growth algorithm.
 #[deprecated(note = "FP-Growth analysis is under analysis; will be replaced")]
 struct FpTree {
@@ -363,6 +368,7 @@ struct FpTree {
     min_support: usize,
 }
 
+#[cfg(feature = "unstable")]
 impl FpTree {
     /// Build an FP-tree from transactions.
     fn new(transactions: &[BTreeSet<Tick>], min_support: usize) -> Option<Self> {
@@ -597,6 +603,25 @@ impl Notes {
         groups.into_values().map(Notes::from).collect()
     }
 
+    /// Concatenate multiple note groups with blank layer separators.
+    pub fn concat<'a>(notes: impl IntoIterator<Item = &'a Notes>) -> Self {
+        let shift = |(pos, note): (&Position, &Note), base: Index| {
+            (Position::new(pos.tick(), pos.layer() + base), note.clone())
+        };
+        let mut offset = 0;
+        let stacked = notes.into_iter().flat_map(|n| {
+            let base = offset.clone();
+            offset += n.keys().map(|p| p.layer()).max().map_or(0, |m| m + 2);
+            n.iter().map(move |pair| shift(pair, base))
+        });
+        stacked.collect()
+    }
+
+    // Experimental — gated behind `unstable` feature
+    //
+    // ++++++++++++============++++++++++++============++++++++++++============
+
+    #[cfg(feature = "unstable")]
     /// separates notes into matched and unmatched groups via pattern matching.
     pub fn matches_by<F>(self, pattern: &[Tick], song_length: Tick, f: F) -> (Notes, Notes)
     where
@@ -650,6 +675,7 @@ impl Notes {
         (matched.into(), unmatched.into())
     }
 
+    #[cfg(feature = "unstable")]
     /// like matches_by but preserves group boundaries, returns MatchedGroups.
     #[allow(deprecated)]
     pub fn group_match<F>(self, pattern: &[Tick], song_length: Tick, f: F) -> (MatchedGroups, Notes)
@@ -719,20 +745,6 @@ impl Notes {
         )
     }
 
-    /// Concatenate multiple note groups with blank layer separators.
-    pub fn concat<'a>(notes: impl IntoIterator<Item = &'a Notes>) -> Self {
-        let shift = |(pos, note): (&Position, &Note), base: Index| {
-            (Position::new(pos.tick(), pos.layer() + base), note.clone())
-        };
-        let mut offset = 0;
-        let stacked = notes.into_iter().flat_map(|n| {
-            let base = offset.clone();
-            offset += n.keys().map(|p| p.layer()).max().map_or(0, |m| m + 2);
-            n.iter().map(move |pair| shift(pair, base))
-        });
-        stacked.collect()
-    }
-
     /// reassign layers across multiple note groups so they don't overlap.
     #[deprecated(note = "use Notes::concat instead")]
     pub fn reassign_layers<I, J>(slices: I, gap: Index) -> Self
@@ -761,6 +773,7 @@ impl Notes {
     }
 }
 
+#[cfg(feature = "unstable")]
 /// pattern match result with group boundaries preserved.
 /// each group corresponds to one complete pattern match.
 #[deprecated(note = "this type is planned for deprecation")]
@@ -770,6 +783,7 @@ pub struct MatchedGroups {
     groups: Vec<Notes>,
 }
 
+#[cfg(feature = "unstable")]
 #[allow(deprecated)]
 impl MatchedGroups {
     pub fn empty() -> Self {

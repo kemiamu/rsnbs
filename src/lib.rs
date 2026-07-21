@@ -2,13 +2,12 @@
 
 mod codec;
 mod nbs_ext;
+#[cfg(test)]
+mod tests;
 
 pub mod note;
 pub mod schematic;
 pub mod util;
-
-#[cfg(test)]
-mod tests;
 
 // song
 //

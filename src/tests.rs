@@ -3,6 +3,7 @@ use crate::schematic::MultiCompactLayout;
 use crate::schematic::{SchematicBuilder, WithFloor};
 use crate::song::Song;
 use crate::types::{GameTick, Index, Position, Tick, Version};
+#[cfg(feature = "unstable")]
 use crate::util::MatchedGroups;
 use counter::Counter;
 use ordered_float::OrderedFloat;
@@ -54,6 +55,7 @@ fn test_v6_to_v5_conversion() {
 // cargo test test_sectional_matching && cargo test analyze_tones
 
 #[test]
+#[cfg(feature = "unstable")]
 #[allow(deprecated)]
 fn test_sectional_matching() {
     let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
@@ -171,6 +173,7 @@ fn test_sectional_matching() {
 }
 
 #[test]
+#[cfg(feature = "unstable")]
 fn analyze_tones() {
     let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
 
@@ -262,6 +265,7 @@ fn test_deconvolve_m1() {
 // ++++++++++++============++++++++++++============++++++++++++============
 
 #[test]
+#[cfg(feature = "unstable")]
 fn test_analyze_transposition_equivalence() {
     let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
 
@@ -434,7 +438,7 @@ pub fn satisfy_constraints(
 // ++++++++++++============++++++++++++============++++++++++++============
 
 #[test]
-// #[deprecated]
+#[cfg(feature = "unstable")]
 pub fn test_deconvolve_d1() {
     // TODO: 优化空间巨大，但先验证理论模型
     //       开放性问题，评价模型尚不完善
@@ -538,6 +542,7 @@ pub fn test_deconvolve_d1() {
 }
 
 #[test]
+#[cfg(feature = "unstable")]
 pub fn test_deconvolve() {
     fn deconvolve(points_mset: &[Point], loop_len: Tick) -> Vec<Point> {
         let points: Counter<Point> = points_mset.iter().copied().collect();
