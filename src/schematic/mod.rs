@@ -92,8 +92,7 @@ impl<L: Layout> Layout for EdgeArranged<L> {
 
 /// A layout wrapper that arranges sub-layouts along an [`Axis`].
 pub struct Arranged<L: Layout> {
-    bands: Vec<(L, BlockPos)>,
-    size: BlockPos,
+    inner: Anchored<L>,
 }
 
 impl<L: Layout> Arranged<L> {
@@ -101,27 +100,57 @@ impl<L: Layout> Arranged<L> {
         let unit: Mask = axis.unit();
         let gap_vec: BlockPos = unit * gap as i32;
         let mut cursor: BlockPos = -gap_vec;
-        let mut extent: BlockPos = BlockPos::new(0, 0, 0);
 
-        let placed = layouts.into_iter().map(|layout| {
+        let entries = layouts.into_iter().map(|layout| {
             let size: BlockPos = layout.size();
             let anchor: BlockPos = cursor + gap_vec;
             cursor = anchor + unit * size;
-            extent = Self::_max(extent, size);
             (layout, anchor)
         });
 
-        let bands = placed.collect();
-        let size = Self::_max(Self::_max(cursor, BlockPos::ORIGIN), extent);
-        Self { bands, size }
-    }
-
-    fn _max(a: BlockPos, b: BlockPos) -> BlockPos {
-        BlockPos::new(a.x.max(b.x), a.y.max(b.y), a.z.max(b.z))
+        let inner = Anchored::new(entries);
+        Self { inner }
     }
 }
 
 impl<L: Layout> Layout for Arranged<L> {
+    fn size(&self) -> BlockPos {
+        self.inner.size()
+    }
+
+    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+        self.inner.get_block(pos)
+    }
+}
+
+// Anchored
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// A layout wrapper that places sub-layouts at explicit anchor positions.
+pub struct Anchored<L: Layout> {
+    entries: Vec<(L, BlockPos)>,
+    size: BlockPos,
+}
+
+impl<L: Layout> Anchored<L> {
+    pub fn new<I: IntoIterator<Item = (L, BlockPos)>>(entries: I) -> Self {
+        let mut extent = BlockPos::new(0, 0, 0);
+
+        let placed = entries.into_iter().map(|(layout, anchor)| {
+            let size = layout.size();
+            let far = anchor + size;
+            extent = _component_max(extent, far);
+            (layout, anchor)
+        });
+
+        let entries = placed.collect();
+        let size = extent;
+        Self { entries, size }
+    }
+}
+
+impl<L: Layout> Layout for Anchored<L> {
     fn size(&self) -> BlockPos {
         self.size
     }
@@ -131,25 +160,16 @@ impl<L: Layout> Layout for Arranged<L> {
         debug_assert!((0..self.size.y).contains(&pos.y), "y out of range");
         debug_assert!((0..self.size.z).contains(&pos.z), "z out of range");
 
-        let Some(idx) = self
-            .bands
-            .partition_point(|(_, a)| a.y <= pos.y && a.z <= pos.z && a.x <= pos.x)
-            .checked_sub(1)
-        else {
-            return air();
-        };
+        let found = self.entries.iter().find_map(|(layout, anchor)| {
+            let local = pos - *anchor;
+            let size = layout.size();
+            let hit = (0..size.x).contains(&local.x)
+                && (0..size.y).contains(&local.y)
+                && (0..size.z).contains(&local.z);
+            hit.then(|| layout.get_block(local))
+        });
 
-        let (layout, anchor) = &self.bands[idx];
-        let local = BlockPos::new(pos.x - anchor.x, pos.y - anchor.y, pos.z - anchor.z);
-        let size = layout.size();
-
-        match (0..size.x).contains(&local.x)
-            && (0..size.y).contains(&local.y)
-            && (0..size.z).contains(&local.z)
-        {
-            true => layout.get_block(local),
-            false => air(),
-        }
+        found.unwrap_or_else(air)
     }
 }
 
@@ -393,6 +413,11 @@ impl Instrument {
 // Helpers
 //
 // ++++++++++++============++++++++++++============++++++++++++============
+
+/// Component-wise maximum of two [`BlockPos`].
+fn _component_max(a: BlockPos, b: BlockPos) -> BlockPos {
+    BlockPos::new(a.x.max(b.x), a.y.max(b.y), a.z.max(b.z))
+}
 
 /// Note block, or fallback on None.
 fn note_block<'a, N>(note: N, fallback: fn() -> GenericBlockState) -> GenericBlockState
