@@ -528,3 +528,19 @@ fn redstone_block() -> GenericBlockState {
         properties: Default::default(),
     }
 }
+
+/// Redstone torch with lit state and optional facing.
+fn redstone_torch<T: Into<Cow<'static, str>>>(facing: Option<T>, lit: bool) -> GenericBlockState {
+    let lit = match lit {
+        true => "true",
+        false => "false",
+    };
+    let mut properties = HashMap::from([("lit".into(), lit.into())]);
+    if let Some(f) = facing {
+        properties.insert("facing".into(), f.into());
+    }
+    GenericBlockState {
+        name: "minecraft:redstone_torch".into(),
+        properties,
+    }
+}

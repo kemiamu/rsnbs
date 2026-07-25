@@ -1,12 +1,12 @@
 //! Tapped delay line layout for NBS song projection.
 
 use super::air;
-use super::{Arranged, Axis, CompactLayout, EdgeArranged, Layout, Mask, WithFloor};
-use crate::note::{Note, Notes, Tone};
-use crate::types::{RedStoneTick, Tick};
+use super::{Arranged, Axis, CompactLayout, EdgeArranged, Layout, WithFloor};
+use crate::note::{Notes, Tone};
+use crate::schematic::{chain_block, floor_block, redstone_torch, redstone_wire, repeater};
+use crate::types::RedStoneTick;
 use crate::util::TransEqClass;
 use mcdata::{GenericBlockState, util::BlockPos};
-use std::collections::BTreeMap;
 use std::num::NonZero;
 
 // TappedLayout
@@ -102,8 +102,6 @@ pub struct TapLine {
 }
 
 impl TapLine {
-    const INNER_ANCHOR: BlockPos = BlockPos::new(1, 0, 0);
-
     pub fn new<I: IntoIterator<Item = NonZero<RedStoneTick>>>(
         ticks: I,
         repeater_coarse: Option<NonZero<RedStoneTick>>,
@@ -115,9 +113,21 @@ impl TapLine {
         });
         let delays = EdgeArranged::new(taps, Axis::Southing, 0, Axis::Easting.unit());
         let inner = delays.size();
-        let size = BlockPos::new(inner.x, Tap::ELEVATION, inner.z + 1);
+        let size = BlockPos::new(inner.x.max(2), Tap::ELEVATION, inner.z + 1);
 
         Self { size, delays }
+    }
+
+    fn port(&self, pos: BlockPos) -> GenericBlockState {
+        let local_easting = self.size.x - pos.x - 1;
+        let local_elevation = pos.y;
+
+        match (local_easting, local_elevation) {
+            (0, 0) | (1, 1) | (1, 3) => floor_block(),
+            (1, 0) | (1, 2) => redstone_torch(None::<&'static str>, true),
+            (0, 1) => redstone_wire(),
+            _ => air(),
+        }
     }
 }
 
@@ -127,10 +137,11 @@ impl Layout for TapLine {
     }
 
     fn get_block(&self, pos: BlockPos) -> GenericBlockState {
-        if pos.x == 0 {
-            return air(); // TODO: spine control blocks
+        const INNER_ANCHOR: BlockPos = BlockPos::new(1, 0, 0);
+        match pos.x == 0 {
+            true => self.port(pos),
+            false => self.delays.get_block(pos - INNER_ANCHOR),
         }
-        self.delays.get_block(pos - Self::INNER_ANCHOR)
     }
 }
 
@@ -140,29 +151,56 @@ impl Layout for TapLine {
 
 /// A single delay element in the tapped delay line.
 struct Tap {
-    ticks: NonZero<RedStoneTick>,
+    tick: NonZero<RedStoneTick>,
+    size: BlockPos,
 }
 
 impl Tap {
     const ELEVATION: i32 = 4;
+    const SOUTHING: i32 = 4;
 
-    fn new(ticks: NonZero<RedStoneTick>, repeater_coarse: Option<NonZero<RedStoneTick>>) -> Self {
+    fn new(tick: NonZero<RedStoneTick>, repeater_coarse: Option<NonZero<RedStoneTick>>) -> Self {
         assert!(
             repeater_coarse.is_none_or(|c| c.get() >= 4),
             "coarse < 4 is not supported, adjust the step"
         );
-        Self { ticks }
+
+        let width = (tick.get() as i32 - 6) / 8 + 4;
+        let size = BlockPos::new(width, Self::ELEVATION, Self::SOUTHING);
+        Self { tick, size }
     }
 }
 
 impl Layout for Tap {
     fn size(&self) -> BlockPos {
-        // ceil(ticks / 2) blocks along Z, each repeater at 2-tick setting
-        let z_len = self.ticks.get().div_ceil(2) as i32;
-        BlockPos::new(2, 1, z_len)
+        self.size
     }
 
-    fn get_block(&self, _pos: BlockPos) -> GenericBlockState {
-        air() // TODO: place repeater chain
+    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+        let rev_easting = self.size.x - pos.x - 1;
+
+        match (rev_easting, pos.x, pos.z, pos.y) {
+            (_, _, _, 0) | (_, 0, 0, 1) | (1, _, 1, 1) => chain_block(),
+            (_, 0, 1, 1) | (1, _, 0, 1) => redstone_torch(Some("south"), true),
+            (3.., 2.., 0, 1) => repeater("4", "east"),
+            (2.., 2.., 1, 1) => repeater("4", "west"),
+            (2, 1, 1, 1) => repeater(self.tick.get().saturating_sub(6).min(4).to_string(), "west"),
+            (3.., 1, 1, 1) => repeater(((self.tick.get() + 6) % 8).min(4).to_string(), "west"),
+            (2, 1, 0, 1) if self.tick.get() < 11 => redstone_wire(),
+            (2, 1, 0, 1) => repeater(
+                self.tick.get().saturating_sub(10).min(4).to_string(),
+                "west",
+            ),
+            (2, 2.., 0, 1) if (self.tick.get() + 6) % 8 < 4 => redstone_wire(),
+            (2, 2.., 0, 1) => repeater(((self.tick.get() + 3) % 8).min(4).to_string(), "east"),
+            (3.., 1, 0, 1) => repeater("3", "east"),
+
+            (0, _, 1, 1) => redstone_wire(),
+            (0, _, 0, 1) => repeater(
+                self.tick.get().saturating_sub(3).min(4).to_string(),
+                "south",
+            ),
+            _ => air(),
+        }
     }
 }
