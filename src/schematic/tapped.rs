@@ -193,13 +193,13 @@ impl Layout for Tap {
             (3.., 2.., 0, 2) => repeater("4", "east"),
             (2.., 2.., 1, 2) => repeater("4", "west"),
             (2, 1, 1, 2) => repeater(self.tick.get().saturating_sub(6).min(4).to_string(), "west"),
-            (3.., 1, 1, 2) => repeater(((self.tick.get() + 6) % 8).min(4).to_string(), "west"),
+            (3.., 1, 1, 2) => repeater(((self.tick.get() + 3) % 8).min(4).to_string(), "west"),
             (2, 1, 0, 2) if self.tick.get() < 11 => redstone_wire(),
             (2, 1, 0, 2) => repeater(
                 self.tick.get().saturating_sub(10).min(4).to_string(),
                 "west",
             ),
-            (2, 2.., 0, 2) if (self.tick.get() + 6) % 8 < 4 => redstone_wire(),
+            (2, 2.., 0, 2) if (self.tick.get() + 3) % 8 < 4 => redstone_wire(),
             (2, 2.., 0, 2) => repeater(((self.tick.get() + 3) % 8).min(4).to_string(), "east"),
             (3.., 1, 0, 2) => repeater("3", "east"),
 

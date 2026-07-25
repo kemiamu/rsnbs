@@ -1,8 +1,10 @@
 use crate::note::{Note, Notes, Tone};
 use crate::schematic::MultiCompactLayout;
-use crate::schematic::{SchematicBuilder, TappedLayout, WithFloor};
+use crate::schematic::{SchematicBuilder, TappedLayout};
 use crate::song::Song;
 use crate::types::{GameTick, Index, IntoTick, Position, Tick, Version};
+#[cfg(feature = "unstable")]
+use crate::util::TransEqClass;
 #[cfg(feature = "unstable")]
 use crate::util::{MatchedGroups, TpPlane, VectorTable};
 use counter::Counter;
@@ -755,24 +757,138 @@ fn test_linear_layout() {
         .unwrap();
 }
 
+/// Greedily find up to `max_off` offsets and the union of notes they cover.
+fn best_offsets(
+    notes: &Notes<Position, Note>,
+    candidates: &[NonZero<Tick>],
+    song_len: Tick,
+    max_off: usize,
+) -> (BTreeSet<NonZero<Tick>>, HashSet<(Tick, Tone)>) {
+    let pos_set: HashSet<(Tick, Tone)> = notes
+        .iter()
+        .map(|(p, n)| (p.into_tick(), n.tone()))
+        .collect();
+
+    let mut planes: Vec<(NonZero<Tick>, HashSet<(Tick, Tone)>)> = candidates
+        .iter()
+        .filter_map(|&off| {
+            let o = off.get();
+            let covered: HashSet<_> = pos_set
+                .iter()
+                .filter(|&&(t, tone)| {
+                    (t + o < song_len && pos_set.contains(&(t + o, tone)))
+                        || (t >= o && pos_set.contains(&(t - o, tone)))
+                })
+                .copied()
+                .collect();
+            if covered.is_empty() {
+                None
+            } else {
+                Some((off, covered))
+            }
+        })
+        .collect();
+
+    planes.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+
+    let mut selected = BTreeSet::new();
+    let mut covered_all: HashSet<(Tick, Tone)> = HashSet::new();
+
+    for _ in 0..max_off {
+        let best = planes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, (off, cov))| {
+                if selected.contains(off) {
+                    return None;
+                }
+                let new = cov.difference(&covered_all).count();
+                (new > 0).then_some((i, new))
+            })
+            .max_by_key(|&(_, new)| new);
+
+        match best {
+            Some((idx, _)) => {
+                let (off, cov) = &planes[idx];
+                covered_all.extend(cov.iter().copied());
+                selected.insert(*off);
+            }
+            None => break,
+        }
+    }
+
+    (selected, covered_all)
+}
+
 #[test]
 #[cfg(feature = "unstable")]
 #[allow(deprecated)]
 fn test_tapped_layout() {
     let song = Song::open_nbs("fixtures/source.nbs").unwrap();
     let song_len = song.len();
+    let mut remaining = song.notes.clone();
+    let mut tecs = Vec::new();
 
-    let plane = TpPlane::from_iter(song.notes.clone());
-    let vt = VectorTable::from_plane(&plane, NonZero::new(song_len), 8);
-    let tec = vt.find_largest_tec(2);
-    let tecs: Vec<_> = tec.into_iter().collect();
+    // candidate offsets: vector table (step=8) + bar-aligned
+    let bar = (song.header.tempo * 4.0) as Tick;
+    let all_plane = TpPlane::from_iter(remaining.clone());
+    let vt = VectorTable::from_plane(&all_plane, NonZero::new(song_len), 8);
+    let mut candidates: BTreeSet<NonZero<Tick>> =
+        vt.keys().copied().filter_map(NonZero::new).collect();
+    for m in 1..=8 {
+        if let Some(o) = NonZero::new(bar * m) {
+            if o.get() < song_len {
+                candidates.insert(o);
+            }
+        }
+    }
+    let candidates: Vec<NonZero<Tick>> = candidates.into_iter().collect();
+    eprintln!(
+        "tempo={}, bar={}, {} candidate offsets",
+        song.header.tempo,
+        bar,
+        candidates.len()
+    );
 
-    eprintln!("found {} TEC(s) from source.nbs", tecs.len());
-    if let Some(ref t) = tecs.first() {
-        let offsets: Vec<_> = t.offsets().iter().map(|o| o.get()).collect();
-        eprintln!("  offsets: {:?}, anchors: {}", offsets, t.points().len());
+    // 3 rounds of greedy matching + residual
+    for round in 0..3 {
+        if remaining.is_empty() {
+            break;
+        }
+        let (offs, covered) = best_offsets(&remaining, &candidates, song_len, 1);
+        if offs.is_empty() {
+            break;
+        }
+
+        // only covered notes → tight kernel → limited expansion
+        let covered_plane: TpPlane = covered.into_iter().map(|(t, tone)| (t, tone)).collect();
+        let tec = TransEqClass::new(offs, covered_plane);
+        #[allow(deprecated)]
+        let (pat, res) = tec.decompose(&remaining, song_len);
+        if pat.is_empty() {
+            break;
+        }
+
+        eprintln!(
+            "  round {}: {:?} → {} pattern notes",
+            round + 1,
+            tec.offsets().iter().map(|o| o.get()).collect::<Vec<_>>(),
+            pat.len(),
+        );
+        tecs.push(tec);
+        remaining = res;
     }
 
+    // residual as a no-offset TEC
+    if !remaining.is_empty() {
+        eprintln!("  residual: {} notes", remaining.len());
+        tecs.push(TransEqClass::new(
+            BTreeSet::new(),
+            TpPlane::from_iter(remaining),
+        ));
+    }
+
+    eprintln!("found {} TEC groups total", tecs.len());
     let layout = TappedLayout::new(tecs, NonZero::new(24), false);
     let litematic = SchematicBuilder(layout).build("Tapped from source.nbs", "rustnbs");
     litematic
@@ -788,12 +904,6 @@ fn test_tapped_layout() {
                 for x in 0..r.size.x.abs() {
                     let pos = mcdata::util::BlockPos::new(x, y, z);
                     let block = r.get_block(pos);
-                    if block.name.contains("torch") {
-                        eprintln!(
-                            "  {} at ({},{},{}): {:?}",
-                            block.name, x, y, z, block.properties
-                        );
-                    }
                     if block.name != "minecraft:air" {
                         non_air += 1;
                     }

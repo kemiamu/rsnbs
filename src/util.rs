@@ -275,6 +275,10 @@ pub struct TransEqClass {
 }
 
 impl TransEqClass {
+    pub(crate) fn new(offsets: BTreeSet<NonZero<Tick>>, points: TpPlane) -> Self {
+        Self { offsets, points }
+    }
+
     /// The offsets that define this translation pattern.
     pub fn offsets(&self) -> &BTreeSet<NonZero<Tick>> {
         &self.offsets
