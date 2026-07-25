@@ -559,7 +559,7 @@ impl FpTree {
         // Build conditional transactions from prefix paths.
         let mut cond_txns: Vec<BTreeSet<Tick>> = Vec::new();
         for (path, count) in prefix_paths {
-            let set: BTreeSet<Tick> = path.into_iter().collect();
+            let set = BTreeSet::from_iter(path);
             cond_txns.extend(std::iter::repeat(set).take(count));
         }
 
@@ -654,10 +654,12 @@ impl Notes<Position, Note> {
 
     #[cfg(feature = "unstable")]
     /// separates notes into matched and unmatched groups via pattern matching.
-    pub fn matches_by<F>(self, pattern: &[Tick], song_length: Tick, f: F) -> (Notes, Notes)
-    where
-        F: Fn(&Note, &Note) -> bool,
-    {
+    pub fn matches_by<F: Fn(&Note, &Note) -> bool>(
+        self,
+        pattern: &[Tick],
+        song_length: Tick,
+        f: F,
+    ) -> (Notes, Notes) {
         struct NoteWithMatch {
             pos: Position,
             note: Note,
@@ -709,10 +711,12 @@ impl Notes<Position, Note> {
     #[cfg(feature = "unstable")]
     /// like matches_by but preserves group boundaries, returns MatchedGroups.
     #[allow(deprecated)]
-    pub fn group_match<F>(self, pattern: &[Tick], song_length: Tick, f: F) -> (MatchedGroups, Notes)
-    where
-        F: Fn(&Note, &Note) -> bool,
-    {
+    pub fn group_match<F: Fn(&Note, &Note) -> bool>(
+        self,
+        pattern: &[Tick],
+        song_length: Tick,
+        f: F,
+    ) -> (MatchedGroups, Notes) {
         struct Candidate {
             pos: Position,
             note: Note,

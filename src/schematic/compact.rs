@@ -96,7 +96,7 @@ impl CompactLayout {
     /// the split automatically.
     pub fn new<Trk, Chord>(
         notes: Trk,
-        repeater_coarse: Option<NonZero<Tick>>,
+        repeater_coarse: Option<NonZero<RedStoneTick>>,
         wrap_length: Option<NonZero<usize>>,
     ) -> Self
     where
@@ -182,7 +182,7 @@ impl Track {
     /// Build a `Track` from timed notes, packing them into tiles.
     fn new<Trk, Chord>(
         timed_notes: Trk,
-        repeater_coarse: Option<NonZero<Tick>>,
+        repeater_coarse: Option<NonZero<RedStoneTick>>,
         columns: Option<NonZero<usize>>,
     ) -> Self
     where

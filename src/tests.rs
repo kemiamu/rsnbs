@@ -211,10 +211,7 @@ fn analyze_tones() {
     for (pos, note) in song.notes {
         by_tone.entry(note.tone()).or_default().push((pos, note));
     }
-    let slices: Vec<Notes> = by_tone
-        .into_values()
-        .map(|v| v.into_iter().collect())
-        .collect();
+    let slices: Vec<Notes> = by_tone.into_values().map(|v| Notes::from_iter(v)).collect();
 
     song.notes = Notes::reassign_layers(
         slices
@@ -605,11 +602,10 @@ pub fn test_deconvolve() {
         todo!()
     }
 
-    fn seed_best<'a, I>(local_points: I) -> Counter<Tick>
-    where
-        I: IntoIterator<Item = (&'a Point, &'a Counter<Tick>)>,
-    {
-        let local_points: Vec<(&Point, &Counter<Tick>)> = local_points.into_iter().collect();
+    fn seed_best<'a, I: IntoIterator<Item = (&'a Point, &'a Counter<Tick>)>>(
+        local_points: I,
+    ) -> Counter<Tick> {
+        let local_points = Vec::from_iter(local_points);
         // local_points.sort_unstable_by_key(|(p, _)| *p);
         let mut best_size: usize = Default::default();
         let mut best: Counter<Tick> = Default::default();

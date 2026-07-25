@@ -3,7 +3,7 @@
 use super::air;
 use super::{Arranged, Axis, CompactLayout, EdgeArranged, Layout, Mask, WithFloor};
 use crate::note::{Note, Notes, Tone};
-use crate::types::RedStoneTick;
+use crate::types::{RedStoneTick, Tick};
 use crate::util::TransEqClass;
 use mcdata::{GenericBlockState, util::BlockPos};
 use std::collections::BTreeMap;
@@ -33,11 +33,13 @@ impl TappedLayout {
         let mut tap_lines = Vec::new();
         let mut layouts = Vec::new();
 
-        for tec in tecs {
+        // kernel -> compact layout
+        for (lyr, tec) in tecs.into_iter().enumerate() {
             let (offsets, kernel) = tec.into_pruned();
-
-            // kernel -> compact layout
-            let notes: Notes<RedStoneTick, Vec<Tone>> = kernel.into();
+            let notes = Notes::<RedStoneTick, Vec<Tone>>::from(kernel)
+                .into_iter()
+                .map(|(tick, tones)| (tick + 2 * lyr as u32, tones))
+                .collect::<Notes<RedStoneTick, Vec<Tone>>>();
             let repeater_coarse = std::iter::once(0)
                 .chain(offsets.iter().map(|o| o.get()))
                 .zip(offsets.iter().map(|o| o.get()))
@@ -46,9 +48,13 @@ impl TappedLayout {
                 .and_then(|gap| NonZero::new(gap / 2));
             let layout = CompactLayout::new(notes, repeater_coarse, wrap_length);
 
-            tap_lines.push(TapLine::new(offsets));
+            tap_lines.push(TapLine::new(offsets, repeater_coarse));
             layouts.push(WithFloor::new(layout, full));
         }
+
+        // signal propagates upward, so lower layers need more delay
+        tap_lines.reverse();
+        layouts.reverse();
 
         // arrange both sides
         let control = EdgeArranged::new(tap_lines, Axis::Elevation, 0, Axis::Easting.unit());
@@ -90,33 +96,73 @@ impl Layout for TappedLayout {
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// A single TEC's tapped delay line.
-///
-/// Each offset in the TEC corresponds to a hardcoded tap position along the delay line.
-/// The delay line runs eastward; taps branch to note blocks at the appropriate offset.
 pub struct TapLine {
-    easting: i32,
-    southing: i32,
+    delays: EdgeArranged<Tap>,
+    size: BlockPos,
 }
 
 impl TapLine {
-    const ELEVATION: i32 = 2;
+    const INNER_ANCHOR: BlockPos = BlockPos::new(1, 0, 0);
 
-    pub fn new<I: IntoIterator<Item = NonZero<RedStoneTick>>>(delays: I) -> Self {
-        // TODO: compute easting from accumulated delay and
-        //       southing from max concurrent notes per tap.
-        let _ = delays;
-        let easting = 0;
-        let southing = 0;
-        Self { easting, southing }
+    pub fn new<I: IntoIterator<Item = NonZero<RedStoneTick>>>(
+        ticks: I,
+        repeater_coarse: Option<NonZero<RedStoneTick>>,
+    ) -> Self {
+        let taps = ticks.into_iter().scan(0, |prev, tick| {
+            let diff = tick.get() - *prev;
+            *prev = tick.get();
+            Some(Tap::new(NonZero::new(diff).unwrap(), repeater_coarse))
+        });
+        let delays = EdgeArranged::new(taps, Axis::Southing, 0, Axis::Easting.unit());
+        let inner = delays.size();
+        let size = BlockPos::new(inner.x, Tap::ELEVATION, inner.z + 1);
+
+        Self { size, delays }
     }
 }
 
 impl Layout for TapLine {
     fn size(&self) -> BlockPos {
-        BlockPos::new(self.easting, Self::ELEVATION, self.southing)
+        self.size
+    }
+
+    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+        if pos.x == 0 {
+            return air(); // TODO: spine control blocks
+        }
+        self.delays.get_block(pos - Self::INNER_ANCHOR)
+    }
+}
+
+// Tap
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// A single delay element in the tapped delay line.
+struct Tap {
+    ticks: NonZero<RedStoneTick>,
+}
+
+impl Tap {
+    const ELEVATION: i32 = 4;
+
+    fn new(ticks: NonZero<RedStoneTick>, repeater_coarse: Option<NonZero<RedStoneTick>>) -> Self {
+        assert!(
+            repeater_coarse.is_none_or(|c| c.get() >= 4),
+            "coarse < 4 is not supported, adjust the step"
+        );
+        Self { ticks }
+    }
+}
+
+impl Layout for Tap {
+    fn size(&self) -> BlockPos {
+        // ceil(ticks / 2) blocks along Z, each repeater at 2-tick setting
+        let z_len = self.ticks.get().div_ceil(2) as i32;
+        BlockPos::new(2, 1, z_len)
     }
 
     fn get_block(&self, _pos: BlockPos) -> GenericBlockState {
-        air()
+        air() // TODO: place repeater chain
     }
 }

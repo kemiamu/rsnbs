@@ -20,7 +20,7 @@ impl<Anchor, Event> From<BTreeMap<Anchor, Event>> for Notes<Anchor, Event> {
 
 impl<Anchor: Ord, Event> FromIterator<(Anchor, Event)> for Notes<Anchor, Event> {
     fn from_iter<I: IntoIterator<Item = (Anchor, Event)>>(iter: I) -> Self {
-        Notes(iter.into_iter().collect())
+        Notes(BTreeMap::from_iter(iter))
     }
 }
 

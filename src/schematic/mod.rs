@@ -33,8 +33,8 @@ impl<L: Layout> SchematicBuilder<L> {
     ) -> Litematic {
         let SchematicBuilder(layout) = self;
         let size = layout.size();
-        let mut region: Region<GenericBlockState> =
-            Region::new("Note Block Track Schematic", BlockPos::new(0, 0, 0), size);
+        const NAME: &str = "Note Block Track Schematic";
+        let mut region: Region<GenericBlockState> = Region::new(NAME, BlockPos::ORIGIN, size);
 
         for (y, z, x) in iproduct!(0..size.y, 0..size.z, 0..size.x) {
             let pos = BlockPos::new(x, y, z);
@@ -67,10 +67,7 @@ pub struct EdgeArranged<L: Layout> {
 
 impl<L: Layout> EdgeArranged<L> {
     /// `align` is passed to both inner (per-sub-layout) and outer (whole) Reverse.
-    pub fn new<I>(layouts: I, axis: Axis, gap: u32, align: Mask) -> Self
-    where
-        I: IntoIterator<Item = L>,
-    {
+    pub fn new<I: IntoIterator<Item = L>>(layouts: I, axis: Axis, gap: u32, align: Mask) -> Self {
         let reversed = layouts.into_iter().map(|l| Reverse::new(l, align));
         let arranged = Arranged::new(reversed, axis, gap);
         let inner = Reverse::new(arranged, align);
@@ -94,7 +91,8 @@ impl<L: Layout> Layout for EdgeArranged<L> {
 
 /// A layout wrapper that arranges sub-layouts along an [`Axis`].
 pub struct Arranged<L: Layout> {
-    inner: Anchored<L>,
+    bands: Vec<(L, BlockPos)>,
+    size: BlockPos,
 }
 
 impl<L: Layout> Arranged<L> {
@@ -102,26 +100,49 @@ impl<L: Layout> Arranged<L> {
         let unit: Mask = axis.unit();
         let gap_vec: BlockPos = unit * gap as i32;
         let mut cursor: BlockPos = -gap_vec;
+        let mut extent: BlockPos = BlockPos::ORIGIN;
 
-        let entries = layouts.into_iter().map(|layout| {
+        let placed = layouts.into_iter().map(|layout| {
             let size: BlockPos = layout.size();
             let anchor: BlockPos = cursor + gap_vec;
             cursor = anchor + unit * size;
+            extent = Self::_max(extent, size);
             (layout, anchor)
         });
 
-        let inner = Anchored::new(entries);
-        Self { inner }
+        let bands = placed.collect();
+        let size = Self::_max(Self::_max(cursor, BlockPos::ORIGIN), extent);
+        Self { bands, size }
+    }
+
+    fn _max(a: BlockPos, b: BlockPos) -> BlockPos {
+        BlockPos::new(a.x.max(b.x), a.y.max(b.y), a.z.max(b.z))
     }
 }
 
 impl<L: Layout> Layout for Arranged<L> {
     fn size(&self) -> BlockPos {
-        self.inner.size()
+        self.size
     }
 
     fn get_block(&self, pos: BlockPos) -> GenericBlockState {
-        self.inner.get_block(pos)
+        debug_assert!((0..self.size.x).contains(&pos.x), "x out of range");
+        debug_assert!((0..self.size.y).contains(&pos.y), "y out of range");
+        debug_assert!((0..self.size.z).contains(&pos.z), "z out of range");
+
+        let found = self
+            .bands
+            .partition_point(|(_, a)| a.y <= pos.y && a.z <= pos.z && a.x <= pos.x)
+            .checked_sub(1);
+        let Some(index) = found else { return air() };
+
+        let (layout, anchor) = &self.bands[index];
+        let local = BlockPos::new(pos.x - anchor.x, pos.y - anchor.y, pos.z - anchor.z);
+        let size = layout.size();
+        let hit = (0..size.x).contains(&local.x)
+            && (0..size.y).contains(&local.y)
+            && (0..size.z).contains(&local.z);
+        if hit { layout.get_block(local) } else { air() }
     }
 }
 
@@ -130,14 +151,16 @@ impl<L: Layout> Layout for Arranged<L> {
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// A layout wrapper that places sub-layouts at explicit anchor positions.
+#[deprecated(note = "is too slow for hot paths; use `Arranged` instead")]
 pub struct Anchored<L: Layout> {
     entries: Vec<(L, BlockPos)>,
     size: BlockPos,
 }
 
+#[allow(deprecated)]
 impl<L: Layout> Anchored<L> {
     pub fn new<I: IntoIterator<Item = (L, BlockPos)>>(entries: I) -> Self {
-        let mut extent = BlockPos::new(0, 0, 0);
+        let mut extent = BlockPos::ORIGIN;
 
         let placed = entries.into_iter().map(|(layout, anchor)| {
             let size = layout.size();
@@ -152,6 +175,7 @@ impl<L: Layout> Anchored<L> {
     }
 }
 
+#[allow(deprecated)]
 impl<L: Layout> Layout for Anchored<L> {
     fn size(&self) -> BlockPos {
         self.size
@@ -422,26 +446,23 @@ fn _component_max(a: BlockPos, b: BlockPos) -> BlockPos {
 }
 
 /// Note block, or fallback on None.
-fn note_block<T>(note: Option<T>, fallback: fn() -> GenericBlockState) -> GenericBlockState
-where
-    T: AsRef<Tone>,
-{
+fn note_block<T: AsRef<Tone>>(
+    note: Option<T>,
+    fallback: fn() -> GenericBlockState,
+) -> GenericBlockState {
     note.and_then(|t| t.as_ref().note_block_state())
         .unwrap_or_else(fallback)
 }
 
-fn inst_block<T>(note: Option<T>, fallback: fn() -> GenericBlockState) -> GenericBlockState
-where
-    T: AsRef<Tone>,
-{
+fn inst_block<T: AsRef<Tone>>(
+    note: Option<T>,
+    fallback: fn() -> GenericBlockState,
+) -> GenericBlockState {
     note.and_then(|t| t.as_ref().instrument().instrument_block())
         .unwrap_or_else(fallback)
 }
 
-fn air<B>() -> B
-where
-    B: BlockState,
-{
+fn air<B: BlockState>() -> B {
     BlockState::air()
 }
 
