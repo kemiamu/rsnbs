@@ -15,25 +15,39 @@ use std::ops::{BitAnd, Deref, DerefMut};
 pub type Point = (Tick, Tone);
 
 /// TP (tick–tone) plane multiset.
-pub type TpPlane = Counter<Point>;
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TpPlane(Counter<Point>);
 
-impl<K: IntoTick, V: Into<Tone>> From<Notes<K, V>> for TpPlane {
-    fn from(notes: Notes<K, V>) -> Self {
-        notes
+impl TpPlane {
+    /// Expand into an iterator of individual `(Tick, Tone)` points.
+    pub fn into_points(self) -> impl Iterator<Item = Point> {
+        let TpPlane(inner) = self;
+        inner
             .into_iter()
-            .map(|(pos, note)| (pos.into_tick(), note.into()))
-            .collect()
+            .flat_map(|(point, count)| repeat(point).take(count))
     }
 }
 
-impl From<TpPlane> for Notes<Position, Note> {
-    fn from(plane: TpPlane) -> Self {
-        plane
+impl<K: IntoTick, V: Into<Tone>> FromIterator<(K, V)> for TpPlane {
+    fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
+        let inner = iter
             .into_iter()
-            .flat_map(|((tick, tone), count)| repeat((tick, tone)).take(count))
-            .into_group_map()
-            .into_iter()
-            .collect()
+            .map(|(k, v)| (k.into_tick(), v.into()))
+            .collect();
+        Self(inner)
+    }
+}
+
+impl Deref for TpPlane {
+    type Target = Counter<Point>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for TpPlane {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 
@@ -145,7 +159,7 @@ impl VectorTable {
                 let Some(plane) = self.get(&offset.get()).cloned() else {
                     continue;
                 };
-                points = points & plane;
+                points = TpPlane(points.0 & plane.0);
             }
 
             if points.is_empty() {
@@ -194,7 +208,7 @@ impl VectorTable {
             let mut points = (*first_plane).clone();
 
             for &(&off, ref plane) in &planes[start + 1..] {
-                let candidate = points.clone() & (**plane).clone();
+                let candidate = TpPlane(points.clone().0 & (**plane).clone().0);
                 if !candidate.is_empty() {
                     if let Some(nz) = NonZero::new(off) {
                         offsets.insert(nz);
@@ -300,7 +314,7 @@ impl TransEqClass {
         // Expand kernel + offsets to get all covered (tick, tone) positions.
         // Skip points with count == 0 (eliminated by prune).
         let mut pattern_set: BTreeSet<(Tick, Tone)> = BTreeSet::new();
-        for (&(anchor, tone), count) in &kernel {
+        for (&(anchor, tone), count) in &kernel.0 {
             if *count == 0 {
                 continue;
             }
@@ -331,7 +345,7 @@ impl TransEqClass {
 impl BitAnd for TransEqClass {
     fn bitand(self, rhs: Self) -> Self {
         let offsets = &self.offsets | &rhs.offsets;
-        let points = self.points & rhs.points;
+        let points = TpPlane(self.points.0 & rhs.points.0);
         Self { offsets, points }
     }
     type Output = Self;
@@ -611,7 +625,7 @@ impl Notes<Position, Note> {
     }
 
     /// Concatenate multiple note groups with blank layer separators.
-    pub fn concat<'a>(notes: impl IntoIterator<Item = &'a Notes>) -> Self {
+    pub fn concat<'a, I: IntoIterator<Item = &'a Notes>>(notes: I) -> Self {
         let shift = |(pos, note): (&Position, &Note), base: Index| {
             (
                 Position::new(pos.into_tick(), pos.layer() + base),

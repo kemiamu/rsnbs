@@ -19,23 +19,6 @@ use std::num::NonZero;
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// Full tapped-delay-line schematic combining control and playing units.
-///
-/// Layout (top view, north up):
-///
-/// ```text
-///         north
-///         ↑
-///   west  ┌───────────┬───────────┐  east
-///         │  Control  │  Playing  │
-///         │ TapLine i │ Compact i │
-///         │    ⋮     │    ⋮     │
-///         │ TapLine 0 │ Compact 0 │
-///         └───────────┴───────────┘
-///         south
-/// ```
-///
-/// The control unit sits on the west, aligned eastward; the playing unit sits on the east,
-/// each row connected via shared north (Z = 0) alignment.
 pub struct TappedLayout {
     control: EdgeArranged<TapLine>,
     playing: Arranged<WithFloor<CompactLayout>>,
@@ -47,26 +30,28 @@ impl TappedLayout {
     ///
     /// Each TEC's offsets drive the tapped delay line (control unit);
     /// its arithmetic kernel (`tec.prune()`) drives the playing unit.
-    pub fn new(tecs: impl IntoIterator<Item = TransEqClass>) -> Self {
+    pub fn new<I: IntoIterator<Item = TransEqClass>>(tecs: I) -> Self {
         // Decompose each TEC into delays (tap line) and kernel (playing unit).
         let mut tap_lines = Vec::new();
         let mut layouts = Vec::new();
 
-        for tec in tecs {
-            let (offsets, kernel) = tec.into_pruned();
-            let notes = {
-                let mut map: BTreeMap<RedStoneTick, Vec<Note>> = BTreeMap::new();
-                for ((tick, tone), count) in kernel {
-                    map.entry(tick)
-                        .or_default()
-                        .extend(std::iter::repeat(Note::new(tone)).take(count));
-                }
-                map
-            };
+        todo!();
 
-            tap_lines.push(TapLine::new(offsets));
-            layouts.push(CompactLayout::new(notes, None, None));
-        }
+        // for tec in tecs {
+        //     let (offsets, kernel) = tec.into_pruned();
+        //     let notes = {
+        //         let mut map: BTreeMap<RedStoneTick, Vec<Note>> = BTreeMap::new();
+        //         for ((tick, tone), count) in kernel {
+        //             map.entry(tick)
+        //                 .or_default()
+        //                 .extend(std::iter::repeat(Note::new(tone)).take(count));
+        //         }
+        //         map
+        //     };
+
+        //     tap_lines.push(TapLine::new(offsets));
+        //     layouts.push(CompactLayout::new(notes, None, None));
+        // }
 
         // Control unit: stack tap lines vertically, aligned by east edges.
         let control = EdgeArranged::new(
@@ -133,7 +118,7 @@ pub struct TapLine {
 impl TapLine {
     const ELEVATION: i32 = 2;
 
-    pub fn new(delays: impl IntoIterator<Item = NonZero<RedStoneTick>>) -> Self {
+    pub fn new<I: IntoIterator<Item = NonZero<RedStoneTick>>>(delays: I) -> Self {
         // TODO: compute easting from accumulated delay and
         //       southing from max concurrent notes per tap.
         let _ = delays;

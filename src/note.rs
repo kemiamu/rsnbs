@@ -10,60 +10,63 @@ use std::ops::{Deref, DerefMut};
 
 /// ordered note set, guarantees position order for nbs serialization.
 #[derive(Debug, Default, Clone, PartialEq, PartialOrd)]
-pub struct Notes<K = Position, V = Note>(BTreeMap<K, V>);
+pub struct Notes<Anchor = Position, Event = Note>(BTreeMap<Anchor, Event>);
 
-impl<K, V> Deref for Notes<K, V> {
-    type Target = BTreeMap<K, V>;
+impl<Anchor, Event> From<BTreeMap<Anchor, Event>> for Notes<Anchor, Event> {
+    fn from(map: BTreeMap<Anchor, Event>) -> Self {
+        Notes(map)
+    }
+}
+
+impl<Anchor: Ord, Event> FromIterator<(Anchor, Event)> for Notes<Anchor, Event> {
+    fn from_iter<I: IntoIterator<Item = (Anchor, Event)>>(iter: I) -> Self {
+        Notes(iter.into_iter().collect())
+    }
+}
+
+// TODO 泛型转换
+
+// impl<C, T> FromIterator<(Tick, C)> for Notes<Position, Note>
+// where
+//     C: IntoIterator<Item = T>,
+//     T: Into<Tone>,
+// {
+//     fn from_iter<I: IntoIterator<Item = (Tick, C)>>(iter: I) -> Self {
+//         let ticked = iter.into_iter().sorted_by_key(|(tick, _)| *tick);
+//         let notes = ticked.flat_map(|(tick, tones)| {
+//             let indexed = tones.into_iter().enumerate();
+//             indexed.map(move |(idx, t)| (Position::new(tick, idx as Index), Note::from(t.into())))
+//         });
+//         notes.collect()
+//     }
+// }
+
+impl<Anchor, Event> Deref for Notes<Anchor, Event> {
+    type Target = BTreeMap<Anchor, Event>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl<K, V> DerefMut for Notes<K, V> {
+impl<Anchor, Event> DerefMut for Notes<Anchor, Event> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
-impl<K, V> IntoIterator for Notes<K, V> {
-    type Item = (K, V);
-    type IntoIter = std::collections::btree_map::IntoIter<K, V>;
+impl<Anchor, Event> IntoIterator for Notes<Anchor, Event> {
+    type Item = (Anchor, Event);
+    type IntoIter = std::collections::btree_map::IntoIter<Anchor, Event>;
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
 }
 
-impl<'a, K, V> IntoIterator for &'a Notes<K, V> {
-    type Item = (&'a K, &'a V);
-    type IntoIter = std::collections::btree_map::Iter<'a, K, V>;
+impl<'a, Anchor, Event> IntoIterator for &'a Notes<Anchor, Event> {
+    type Item = (&'a Anchor, &'a Event);
+    type IntoIter = std::collections::btree_map::Iter<'a, Anchor, Event>;
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter()
-    }
-}
-
-impl<K, V> From<BTreeMap<K, V>> for Notes<K, V> {
-    fn from(map: BTreeMap<K, V>) -> Self {
-        Notes(map)
-    }
-}
-
-impl<K: Ord, V> FromIterator<(K, V)> for Notes<K, V> {
-    fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> Self {
-        Notes(iter.into_iter().collect())
-    }
-}
-
-impl<C> FromIterator<(Tick, C)> for Notes<Position, Note>
-where
-    C: IntoIterator<Item = Tone>,
-{
-    fn from_iter<T: IntoIterator<Item = (Tick, C)>>(iter: T) -> Self {
-        let ticked = iter.into_iter().sorted_by_key(|(tick, _)| *tick);
-        let notes = ticked.flat_map(|(tick, tones)| {
-            let indexed = tones.into_iter().enumerate();
-            indexed.map(move |(idx, tone)| (Position::new(tick, idx as Index), Note::from(tone)))
-        });
-        notes.collect()
     }
 }
 
@@ -82,7 +85,7 @@ pub struct Note {
 
 impl Note {
     /// creates a note from any value that can convert into one.
-    pub fn new(value: impl Into<Self>) -> Self {
+    pub fn new<T: Into<Self>>(value: T) -> Self {
         value.into()
     }
 

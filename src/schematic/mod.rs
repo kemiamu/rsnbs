@@ -490,7 +490,7 @@ fn repeater(
 }
 
 /// Sticky piston block, not extended.
-fn sticky_piston(facing: impl Into<Cow<'static, str>>) -> GenericBlockState {
+fn sticky_piston<T: Into<Cow<'static, str>>>(facing: T) -> GenericBlockState {
     GenericBlockState {
         name: "minecraft:sticky_piston".into(),
         properties: HashMap::from([

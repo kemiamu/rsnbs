@@ -5,7 +5,6 @@ use super::{redstone_block, redstone_wire, repeater, sticky_piston};
 use crate::note::Tone;
 use crate::types::{Index, IntoTick, Position, Tick};
 use mcdata::{GenericBlockState, util::BlockPos};
-
 use std::collections::BTreeMap;
 use std::num::NonZero;
 
@@ -18,13 +17,13 @@ pub struct MultiLinearLayout(Arranged<LinearLayout>);
 
 impl MultiLinearLayout {
     /// Create a linear layout from per-track notes.
-    pub fn new<I, N, T>(tracks: I, gap: u32) -> Self
+    pub fn new<Trks, Trk, T>(tracks: Trks, gap: u32) -> Self
     where
-        I: IntoIterator<Item = N>,
-        N: IntoIterator<Item = (Position, T)>,
+        Trks: IntoIterator<Item = Trk>,
+        Trk: IntoIterator<Item = (Position, T)>,
         T: Into<Tone>,
-        for<'a> &'a I: IntoIterator<Item = &'a N>,
-        for<'a> &'a N: IntoIterator<Item = (&'a Position, &'a T)>,
+        for<'a> &'a Trks: IntoIterator<Item = &'a Trk>,
+        for<'a> &'a Trk: IntoIterator<Item = (&'a Position, &'a T)>,
     {
         let meta = Meta::new(&tracks);
         let layouts = tracks
@@ -53,13 +52,18 @@ pub struct StackedLinearLayout(Arranged<WithFloor<LinearLayout>>);
 
 impl StackedLinearLayout {
     /// Create a stacked linear layout from per-track notes.
-    pub fn new<I, N, T>(tracks: I, wrap_length: Option<NonZero<Tick>>, gap: u32, full: bool) -> Self
+    pub fn new<Trks, Trk, T>(
+        tracks: Trks,
+        wrap_length: Option<NonZero<Tick>>,
+        gap: u32,
+        full: bool,
+    ) -> Self
     where
-        I: IntoIterator<Item = N>,
-        N: IntoIterator<Item = (Position, T)>,
+        Trks: IntoIterator<Item = Trk>,
+        Trk: IntoIterator<Item = (Position, T)>,
         T: Into<Tone>,
-        for<'a> &'a I: IntoIterator<Item = &'a N>,
-        for<'a> &'a N: IntoIterator<Item = (&'a Position, &'a T)>,
+        for<'a> &'a Trks: IntoIterator<Item = &'a Trk>,
+        for<'a> &'a Trk: IntoIterator<Item = (&'a Position, &'a T)>,
     {
         let meta = Meta::new(&tracks);
         let layouts = tracks.into_iter().map(|notes| {
@@ -95,10 +99,10 @@ pub struct LinearLayoutMeta {
 
 impl LinearLayoutMeta {
     /// Compute metadata from a stream of tick positions.
-    pub fn new<'a, I, N: 'a, T: 'a>(tracks: &'a I) -> Self
+    pub fn new<'a, Trks, Trk: 'a, T: 'a>(tracks: &'a Trks) -> Self
     where
-        &'a I: IntoIterator<Item = &'a N>,
-        &'a N: IntoIterator<Item = (&'a Position, &'a T)>,
+        &'a Trks: IntoIterator<Item = &'a Trk>,
+        &'a Trk: IntoIterator<Item = (&'a Position, &'a T)>,
     {
         let found_scale = Track::TEMPL.into_iter().find(|&templ| {
             tracks
@@ -128,9 +132,9 @@ pub struct LinearLayout {
 }
 
 impl LinearLayout {
-    pub fn new<N, T>(notes: N, meta: Meta, wrap_length: Option<NonZero<Tick>>, gap: u32) -> Self
+    pub fn new<Trk, T>(notes: Trk, meta: Meta, wrap_length: Option<NonZero<Tick>>, gap: u32) -> Self
     where
-        N: IntoIterator<Item = (Position, T)>,
+        Trk: IntoIterator<Item = (Position, T)>,
         T: Into<Tone>,
     {
         let track = Track::new(notes, meta, wrap_length, gap);
@@ -225,9 +229,9 @@ impl Track {
     pub const ELEVATION: i32 = 2;
     pub const TEMPL: [Tick; 3] = [4, 2, 3];
 
-    pub fn new<N, T>(notes: N, meta: Meta, wrap_length: Option<NonZero<Tick>>, gap: u32) -> Self
+    pub fn new<Trk, T>(notes: Trk, meta: Meta, wrap_length: Option<NonZero<Tick>>, gap: u32) -> Self
     where
-        N: IntoIterator<Item = (Position, T)>,
+        Trk: IntoIterator<Item = (Position, T)>,
         T: Into<Tone>,
     {
         let notes = notes.into_iter().map(|(pos, t)| (pos, t.into())).collect();

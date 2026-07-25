@@ -176,7 +176,7 @@ impl Decompose {
         let mut infos: Vec<String> = vec![];
 
         for &step in steps {
-            let plane = TpPlane::from(remaining.clone());
+            let plane = TpPlane::from_iter(remaining.clone());
             let vt = VectorTable::from_plane(&plane, NonZero::new(song_len), step);
 
             if let Some(tec) = vt.find_largest_tec(3) {

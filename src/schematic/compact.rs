@@ -2,10 +2,9 @@
 
 use super::{Arranged, Axis, Layout, chain_block, inst_block};
 use super::{air, note_block, redstone_wire, repeater};
-use crate::note::Note;
+use crate::note::{Notes, Tone};
 use crate::types::{GameTick, RedStoneTick, Tick};
 use mcdata::{GenericBlockState, util::BlockPos};
-use std::collections::BTreeMap;
 use std::iter;
 use std::num::NonZero;
 use std::ops::{Deref, DerefMut};
@@ -23,13 +22,16 @@ pub struct MultiCompactLayout(Arranged<CompactLayout>);
 
 impl MultiCompactLayout {
     /// Create a multi-track compact layout from multiple note groups.
-    pub fn new<N>(
-        tracks: impl IntoIterator<Item = (N, Option<NonZero<RedStoneTick>>)>,
+    pub fn new<Trks, Trk, Chord>(
+        tracks: Trks,
         wrap_length: Option<NonZero<usize>>,
         gap: u32,
     ) -> Self
     where
-        N: IntoIterator<Item = (GameTick, Vec<Note>)>,
+        Trks: IntoIterator<Item = (Trk, Option<NonZero<RedStoneTick>>)>,
+        Trk: IntoIterator<Item = (GameTick, Chord)>,
+        Chord: IntoIterator,
+        Chord::Item: Into<Tone>,
     {
         let layouts = tracks
             .into_iter()
@@ -40,16 +42,21 @@ impl MultiCompactLayout {
     }
 
     /// Split game tick notes into even/odd redstone tick buckets.
-    fn split_even_odd(
-        tracks: impl IntoIterator<Item = (GameTick, Vec<Note>)>,
+    fn split_even_odd<Trks, Chord>(
+        tracks: Trks,
         coarse: Option<NonZero<Tick>>,
-    ) -> impl Iterator<Item = (BTreeMap<RedStoneTick, Vec<Note>>, Option<NonZero<Tick>>)> {
-        let mut buckets: [BTreeMap<RedStoneTick, Vec<Note>>; 2] = Default::default();
+    ) -> impl Iterator<Item = (Notes<RedStoneTick, Vec<Tone>>, Option<NonZero<Tick>>)>
+    where
+        Trks: IntoIterator<Item = (GameTick, Chord)>,
+        Chord: IntoIterator,
+        Chord::Item: Into<Tone>,
+    {
+        let mut buckets: [Notes<RedStoneTick, Vec<Tone>>; 2] = Default::default();
         for (game_tick, notes) in tracks {
             buckets[(game_tick.rem_euclid(2)) as usize]
                 .entry(game_tick / 2)
                 .or_default()
-                .extend(notes);
+                .extend(notes.into_iter().map(|n| n.into()));
         }
         buckets.into_iter().map(move |m| (m, coarse))
     }
@@ -87,11 +94,16 @@ impl CompactLayout {
     /// The input must already be split into a single redstone tick line.
     /// See [`MultiCompactLayout`] for the high-level constructor that handles
     /// the split automatically.
-    pub fn new(
-        notes: BTreeMap<RedStoneTick, Vec<Note>>,
+    pub fn new<Trk, Chord>(
+        notes: Trk,
         coarse: Option<NonZero<Tick>>,
         wrap_length: Option<NonZero<usize>>,
-    ) -> Self {
+    ) -> Self
+    where
+        Trk: IntoIterator<Item = (RedStoneTick, Chord)>,
+        Chord: IntoIterator,
+        Chord::Item: Into<Tone>,
+    {
         let track = Track::new(notes, coarse, wrap_length);
         let easting = (track.rows() as i32) * 2 + 1;
         let southing = track.cols_or_len() as i32;
@@ -168,11 +180,16 @@ struct Track {
 
 impl Track {
     /// Build a `Track` from timed notes, packing them into tiles.
-    fn new(
-        timed_notes: BTreeMap<RedStoneTick, Vec<Note>>,
+    fn new<Trk, Chord>(
+        timed_notes: Trk,
         repeater_coarse: Option<NonZero<Tick>>,
         columns: Option<NonZero<usize>>,
-    ) -> Self {
+    ) -> Self
+    where
+        Trk: IntoIterator<Item = (RedStoneTick, Chord)>,
+        Chord: IntoIterator,
+        Chord::Item: Into<Tone>,
+    {
         let repeater_coarse = repeater_coarse.map_or(Tick::MAX, |l| l.get());
         let mut track = Self {
             tiles: Default::default(),
@@ -180,7 +197,8 @@ impl Track {
         };
         let mut current_tick: RedStoneTick = RedStoneTick::MAX;
 
-        for (redstone_tick, mut notes) in timed_notes {
+        for (redstone_tick, notes) in timed_notes {
+            let mut notes: Vec<Tone> = notes.into_iter().map(|n| n.into()).collect();
             let mut delay = redstone_tick.wrapping_sub(current_tick);
             current_tick = redstone_tick;
 
@@ -281,7 +299,7 @@ impl Track {
         self.cols.map_or(self.len(), |c| c.get())
     }
 
-    fn get_tile(&self, row: impl TryInto<usize>, offset: usize) -> Option<&Tile> {
+    fn get_tile<R: TryInto<usize>>(&self, row: R, offset: usize) -> Option<&Tile> {
         self.tiles
             .get(row.try_into().ok()? * self.cols_or_len() + offset)
     }
@@ -332,12 +350,12 @@ impl DerefMut for Track {
 enum Tile {
     Delay(RedStoneTick),
     Link,
-    Terminal(Option<Note>, Option<Note>, Option<Note>),
-    Node(Option<Note>, Option<Note>),
+    Terminal(Option<Tone>, Option<Tone>, Option<Tone>),
+    Node(Option<Tone>, Option<Tone>),
     TurningDelay(RedStoneTick),
     TurningLink,
-    TurningTerminal(Option<Note>, Option<Note>),
-    TurningNode(Option<Note>),
+    TurningTerminal(Option<Tone>, Option<Tone>),
+    TurningNode(Option<Tone>),
 }
 
 impl Tile {
@@ -350,7 +368,7 @@ impl Tile {
         }
     }
 
-    fn canopy(mut notes: impl Iterator<Item = Note>, is_turning: bool, is_terminal: bool) -> Tile {
+    fn canopy<I: Iterator<Item = Tone>>(mut notes: I, is_turning: bool, is_terminal: bool) -> Tile {
         match (is_turning, is_terminal) {
             (true, true) => Tile::TurningTerminal(notes.next(), notes.next()),
             (true, false) => Tile::TurningNode(notes.next()),
