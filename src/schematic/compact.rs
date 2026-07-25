@@ -1,6 +1,6 @@
 //! Compact note block layouts for NBS song projection.
 
-use super::{Arranged, Axis, Layout, chain_block, instrument_block};
+use super::{Arranged, Axis, Layout, chain_block, inst_block};
 use super::{air, note_block, redstone_wire, repeater};
 use crate::note::Note;
 use crate::types::{GameTick, RedStoneTick, Tick};
@@ -167,43 +167,6 @@ struct Track {
 }
 
 impl Track {
-    fn rows(&self) -> usize {
-        self.cols.map_or(1, |c| self.len().div_ceil(c.get()))
-    }
-
-    fn cols_or_len(&self) -> usize {
-        self.cols.map_or(self.len(), |c| c.get())
-    }
-
-    fn get_tile(&self, row: impl TryInto<usize>, offset: usize) -> Option<&Tile> {
-        self.tiles
-            .get(row.try_into().ok()? * self.cols_or_len() + offset)
-    }
-
-    fn block_at(&self, row: i32, col: usize, layout_idx: u8) -> GenericBlockState {
-        let repeater_facing = match ((row & 1) == 0, col < 2) {
-            (_, true) => "west",
-            (true, false) => "north",
-            (false, false) => "south",
-        };
-        self.get_tile(row, col)
-            .map_or_else(air, |t| t.get_block(layout_idx, repeater_facing))
-    }
-
-    fn at_row_start(&self) -> bool {
-        match self.cols {
-            Some(c) => self.len() % c.get() == 0,
-            None => self.len() < 2,
-        }
-    }
-
-    fn at_row_end(&self) -> bool {
-        match self.cols {
-            Some(c) => (self.len() + 2) % c.get() == 0,
-            None => false,
-        }
-    }
-
     /// Build a `Track` from timed notes, packing them into tiles.
     fn new(
         timed_notes: BTreeMap<RedStoneTick, Vec<Note>>,
@@ -309,6 +272,43 @@ impl Track {
         };
         Some((stem, canopy, stem_delay + canopy_delay))
     }
+
+    fn rows(&self) -> usize {
+        self.cols.map_or(1, |c| self.len().div_ceil(c.get()))
+    }
+
+    fn cols_or_len(&self) -> usize {
+        self.cols.map_or(self.len(), |c| c.get())
+    }
+
+    fn get_tile(&self, row: impl TryInto<usize>, offset: usize) -> Option<&Tile> {
+        self.tiles
+            .get(row.try_into().ok()? * self.cols_or_len() + offset)
+    }
+
+    fn block_at(&self, row: i32, col: usize, layout_idx: u8) -> GenericBlockState {
+        let repeater_facing = match ((row & 1) == 0, col < 2) {
+            (_, true) => "west",
+            (true, false) => "north",
+            (false, false) => "south",
+        };
+        self.get_tile(row, col)
+            .map_or_else(air, |t| t.get_block(layout_idx, repeater_facing))
+    }
+
+    fn at_row_start(&self) -> bool {
+        match self.cols {
+            Some(c) => self.len() % c.get() == 0,
+            None => self.len() < 2,
+        }
+    }
+
+    fn at_row_end(&self) -> bool {
+        match self.cols {
+            Some(c) => (self.len() + 2) % c.get() == 0,
+            None => false,
+        }
+    }
 }
 
 impl Deref for Track {
@@ -367,32 +367,32 @@ impl Tile {
             (Self::Delay(delay), 1) => repeater(delay.to_string(), repeater_facing),
             (Self::Link, 0) => chain_block(),
             (Self::Link, 1) => redstone_wire(),
-            (Self::Terminal(center, _, _), 0) => instrument_block(center, chain_block),
-            (Self::Terminal(center, _, _), 1) => note_block(center, chain_block),
-            (Self::Terminal(_, left, _), 3) => instrument_block(left, air),
-            (Self::Terminal(_, left, _), 4) => note_block(left, air),
-            (Self::Terminal(_, _, right), 6) => instrument_block(right, air),
-            (Self::Terminal(_, _, right), 7) => note_block(right, air),
+            (Self::Terminal(center, _, _), 0) => inst_block(center.as_ref(), chain_block),
+            (Self::Terminal(center, _, _), 1) => note_block(center.as_ref(), chain_block),
+            (Self::Terminal(_, left, _), 3) => inst_block(left.as_ref(), air),
+            (Self::Terminal(_, left, _), 4) => note_block(left.as_ref(), air),
+            (Self::Terminal(_, _, right), 6) => inst_block(right.as_ref(), air),
+            (Self::Terminal(_, _, right), 7) => note_block(right.as_ref(), air),
             (Self::Node(_, _), 0 | 1) => chain_block(),
             (Self::Node(_, _), 2) => redstone_wire(),
-            (Self::Node(left, _), 3) => instrument_block(left, air),
-            (Self::Node(left, _), 4) => note_block(left, air),
-            (Self::Node(_, right), 6) => instrument_block(right, air),
-            (Self::Node(_, right), 7) => note_block(right, air),
+            (Self::Node(left, _), 3) => inst_block(left.as_ref(), air),
+            (Self::Node(left, _), 4) => note_block(left.as_ref(), air),
+            (Self::Node(_, right), 6) => inst_block(right.as_ref(), air),
+            (Self::Node(_, right), 7) => note_block(right.as_ref(), air),
             // turning variants
             (Self::TurningDelay(_), 0 | 3) => chain_block(),
             (Self::TurningDelay(_), 1) => redstone_wire(),
             (Self::TurningDelay(delay), 4) => repeater(delay.to_string(), repeater_facing),
             (Self::TurningLink, 0 | 3) => chain_block(),
             (Self::TurningLink, 1 | 4) => redstone_wire(),
-            (Self::TurningTerminal(center, _), 0) => instrument_block(center, chain_block),
-            (Self::TurningTerminal(center, _), 1) => note_block(center, chain_block),
-            (Self::TurningTerminal(_, side), 3) => instrument_block(side, air),
-            (Self::TurningTerminal(_, side), 4) => note_block(side, air),
+            (Self::TurningTerminal(center, _), 0) => inst_block(center.as_ref(), chain_block),
+            (Self::TurningTerminal(center, _), 1) => note_block(center.as_ref(), chain_block),
+            (Self::TurningTerminal(_, side), 3) => inst_block(side.as_ref(), air),
+            (Self::TurningTerminal(_, side), 4) => note_block(side.as_ref(), air),
             (Self::TurningNode(_), 0 | 1) => chain_block(),
             (Self::TurningNode(_), 2) => redstone_wire(),
-            (Self::TurningNode(side), 3) => instrument_block(side, air),
-            (Self::TurningNode(side), 4) => note_block(side, air),
+            (Self::TurningNode(side), 3) => inst_block(side.as_ref(), air),
+            (Self::TurningNode(side), 4) => note_block(side.as_ref(), air),
             _ => air(),
         }
     }

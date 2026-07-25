@@ -2,7 +2,7 @@ use crate::note::{Note, Notes, Tone};
 use crate::schematic::MultiCompactLayout;
 use crate::schematic::{SchematicBuilder, WithFloor};
 use crate::song::Song;
-use crate::types::{GameTick, Index, Position, Tick, Version};
+use crate::types::{GameTick, Index, IntoTick, Position, Tick, Version};
 #[cfg(feature = "unstable")]
 use crate::util::MatchedGroups;
 use counter::Counter;
@@ -29,7 +29,7 @@ fn test_scale_ticks() {
         .notes
         .into_iter()
         .map(|(pos, note)| {
-            let new_tick = pos.tick() * NUM / DEN;
+            let new_tick = pos.into_tick() * NUM / DEN;
             let new_pos = Position::new(new_tick, pos.layer());
             (new_pos, note)
         })
@@ -61,10 +61,10 @@ fn test_sectional_matching() {
     let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
     let notes = song.notes.clone();
 
-    // let song_length: Tick = 128;
-    let song_length: Tick = notes.iter().map(|(pos, _)| pos.tick()).max().unwrap_or(0) + 1;
+    let song_length: Tick = Tick::MAX;
+    // let song_length: Tick = notes.iter().map(|(pos, _)| pos.tick()).max().unwrap_or(0) + 1;
     let min_notes: usize = 0;
-    let wrap_length: usize = 22;
+    let wrap_length: usize = 24;
 
     // 匹配+回退包装：匹配音符数不足时回退所有匹配
     let try_match = |notes: Notes, pattern: &[Tick]| -> (MatchedGroups, Notes) {
@@ -86,15 +86,45 @@ fn test_sectional_matching() {
     // let sectional_patterns: &[&[Tick]] = &[&[0, 16, 32, 48], &[0, 16], &[0]];
     // let sections: &[Range<Tick>] = &[0..256, 256..512];
     let global_patterns: &[(&[Tick], Tick)] = &[
-        (&[0, 16, 16 * 2, 16 * 3, 16 * 4, 16 * 5, 16 * 6, 16 * 7], 0),
-        (
-            &[0, 32, 32 * 2, 32 * 3, 4, 32 + 4, 32 * 2 + 4, 32 * 3 + 4],
-            2,
-        ),
-        (&[0, 32, 32 * 2, 32 * 3], 0),
-        (&[0, 64, 4, 64 + 4], 2),
-        (&[0, 64], 0),
-        (&[0, 4], 2),
+        // (
+        //     &[
+        //         0,
+        //         32,
+        //         32 * 2,
+        //         32 * 3,
+        //         32 * 4,
+        //         32 * 5,
+        //         32 * 6,
+        //         32 * 7,
+        //         32 * 8,
+        //         32 * 9,
+        //         32 * 10,
+        //         32 * 11,
+        //         32 * 12,
+        //         32 * 13,
+        //         32 * 14,
+        //         32 * 15,
+        //     ],
+        //     0,
+        // ),
+        // (&[0, 64, 64 * 2, 64 * 3, 64 * 4, 64 * 5, 64 * 6, 64 * 7], 0),
+        // (
+        //     &[
+        //         0,
+        //         128,
+        //         128 * 2,
+        //         128 * 3,
+        //         128 * 4,
+        //         128 * 5,
+        //         128 * 6,
+        //         128 * 7,
+        //         128 * 8,
+        //     ],
+        //     0,
+        // ),
+        (&[0, 64, 64 * 2, 64 * 3], 0),
+        (&[0, 128], 0),
+        // (&[0, 256], 0),
         (&[0], 0), // any
     ];
     let sectional_patterns: &[(&[Tick], Tick)] = &[];
@@ -115,7 +145,7 @@ fn test_sectional_matching() {
         let section_notes: Notes = remaining
             .clone()
             .into_iter()
-            .filter(|(p, _)| section_range.contains(&p.tick()))
+            .filter(|(p, _)| section_range.contains(&p.into_tick()))
             .collect();
 
         if section_notes.is_empty() {
@@ -135,7 +165,7 @@ fn test_sectional_matching() {
         all_matched.iter().map(|(mg, _coarse)| {
             mg.groups()
                 .iter()
-                .flat_map(|g| g.iter().map(|(p, n)| (p.tick(), n.clone())))
+                .flat_map(|g| g.iter().map(|(p, n)| (p.into_tick(), n.clone())))
         }),
         1,
     );
@@ -157,9 +187,9 @@ fn test_sectional_matching() {
             let mut notes: BTreeMap<Tick, Vec<Note>> = BTreeMap::new();
             for (pos, note) in cluster {
                 let tick = if scale > 1 {
-                    pos.tick() * scale
+                    pos.into_tick() * scale
                 } else {
-                    pos.tick()
+                    pos.into_tick()
                 };
                 notes.entry(tick).or_default().push(note);
             }
@@ -189,7 +219,7 @@ fn analyze_tones() {
     song.notes = Notes::reassign_layers(
         slices
             .into_iter()
-            .map(|m| m.into_iter().map(|(p, n)| (p.tick(), n))),
+            .map(|m| m.into_iter().map(|(p, n)| (p.into_tick(), n))),
         0,
     );
     song.header.is_loop = true;
@@ -210,7 +240,7 @@ fn test_deconvolve_m1() {
     let points: Vec<Point> = song
         .notes
         .iter()
-        .map(|(pos, note)| (pos.tick(), note.tone()))
+        .map(|(pos, note)| (pos.into_tick(), note.tone()))
         .collect();
 
     let pairs = points
@@ -270,13 +300,13 @@ fn test_analyze_transposition_equivalence() {
     let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
 
     // params
-    let song_length: Tick = song.notes.iter().map(|(p, _)| p.tick()).max().unwrap() + 1;
+    let song_length: Tick = song.notes.iter().map(|(p, _)| p.into_tick()).max().unwrap() + 1;
 
     // Plane-form notes multiset [note: (x: tick, y: tone), ...]
     let mut notes_multiset: Vec<Point> = song
         .notes
         .into_iter()
-        .map(|(p, n)| (p.tick(), n.tone()))
+        .map(|(p, n)| (p.into_tick(), n.tone()))
         .collect();
     notes_multiset.sort_unstable();
 
@@ -509,13 +539,13 @@ pub fn test_deconvolve_d1() {
     let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
 
     // params
-    let song_length: Tick = song.notes.iter().map(|(p, _)| p.tick()).max().unwrap() + 1;
+    let song_length: Tick = song.notes.iter().map(|(p, _)| p.into_tick()).max().unwrap() + 1;
 
     // 构建点集 multiset
     let points_mset: Vec<Point> = song
         .notes
         .iter()
-        .map(|(pos, note)| (pos.tick(), (note.tone())))
+        .map(|(pos, note)| (pos.into_tick(), (note.tone())))
         .collect();
 
     // 找到最大重复模式
@@ -527,12 +557,12 @@ pub fn test_deconvolve_d1() {
     let mut remaining: Vec<(Tick, Note)> = Vec::new();
 
     for (pos, note) in &song.notes {
-        let p = (pos.tick(), note.tone());
+        let p = (pos.into_tick(), note.tone());
         if pattern_counter.get(&p).copied().unwrap_or(0) > 0 {
             *pattern_counter.get_mut(&p).unwrap() -= 1;
-            matched.push((pos.tick(), note.clone()));
+            matched.push((pos.into_tick(), note.clone()));
         } else {
-            remaining.push((pos.tick(), note.clone()));
+            remaining.push((pos.into_tick(), note.clone()));
         }
     }
 
@@ -643,13 +673,13 @@ pub fn test_deconvolve() {
     let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
 
     // params
-    let song_length: Tick = song.notes.iter().map(|(p, _)| p.tick()).max().unwrap() + 1;
+    let song_length: Tick = song.notes.iter().map(|(p, _)| p.into_tick()).max().unwrap() + 1;
 
     // 构建点集 multiset
     let points_mset: Vec<Point> = song
         .notes
         .iter()
-        .map(|(pos, note)| (pos.tick(), note.tone()))
+        .map(|(pos, note)| (pos.into_tick(), note.tone()))
         .collect();
 
     // 找到最大重复模式
@@ -661,12 +691,12 @@ pub fn test_deconvolve() {
     let mut remaining: Vec<(Tick, Note)> = Vec::new();
 
     for (pos, note) in &song.notes {
-        let p = (pos.tick(), note.tone());
+        let p = (pos.into_tick(), note.tone());
         if pattern_counter.get(&p).copied().unwrap_or(0) > 0 {
             *pattern_counter.get_mut(&p).unwrap() -= 1;
-            matched.push((pos.tick(), note.clone()));
+            matched.push((pos.into_tick(), note.clone()));
         } else {
-            remaining.push((pos.tick(), note.clone()));
+            remaining.push((pos.into_tick(), note.clone()));
         }
     }
 
@@ -714,15 +744,15 @@ fn test_linear_layout() {
         .notes
         .into_iter()
         .map(|(pos, note)| {
-            let tick = if scale > 1 {
-                pos.tick() * scale
-            } else {
-                pos.tick()
+            let tick = match scale > 1 {
+                true => pos.into_tick() * scale,
+                false => pos.into_tick(),
             };
             (Position::new(tick, pos.layer()), note)
         })
         .collect();
-    let layout = MultiLinearLayout::new(notes.split_by_layer_gaps(), 0);
+    let n: Vec<Notes> = notes.split_by_layer_gaps();
+    let layout = MultiLinearLayout::new::<Vec<Notes>, _, _>(n, 0);
     let litematic = SchematicBuilder(layout).build("Linear from source.nbs", "rustnbs");
     litematic
         .write_file("fixtures/generated_linear.litematic")

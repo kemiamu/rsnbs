@@ -1,10 +1,12 @@
 //! Linear time-proportional layout for NBS song projection.
 
-use super::{Arranged, Axis, Layout, WithFloor, air, chain_block, instrument_block};
-use super::{note_block, redstone_block, redstone_wire, repeater, sticky_piston};
-use crate::note::Notes;
-use crate::types::{Index, Position, Tick};
+use super::{Arranged, Axis, Layout, WithFloor, air, chain_block, inst_block, note_block};
+use super::{redstone_block, redstone_wire, repeater, sticky_piston};
+use crate::note::Tone;
+use crate::types::{Index, IntoTick, Position, Tick};
 use mcdata::{GenericBlockState, util::BlockPos};
+
+use std::collections::BTreeMap;
 use std::num::NonZero;
 
 //  MultiLinearLayout
@@ -16,20 +18,18 @@ pub struct MultiLinearLayout(Arranged<LinearLayout>);
 
 impl MultiLinearLayout {
     /// Create a linear layout from per-track notes.
-    pub fn new(tracks: Vec<Notes>, gap: u32) -> Self {
-        let positions = tracks.iter().flat_map(|n| n.keys());
-        let factor = Track::TEMPL
-            .into_iter()
-            .find(|&templ| positions.clone().all(|pos| pos.tick() % templ == 0))
-            .unwrap_or(1);
-        let song_length = tracks
-            .iter()
-            .flat_map(|n| n.keys().map(|pos| pos.tick()))
-            .max()
-            .map_or(0, |t| t + 1);
+    pub fn new<I, N, T>(tracks: I, gap: u32) -> Self
+    where
+        I: IntoIterator<Item = N>,
+        N: IntoIterator<Item = (Position, T)>,
+        T: Into<Tone>,
+        for<'a> &'a I: IntoIterator<Item = &'a N>,
+        for<'a> &'a N: IntoIterator<Item = (&'a Position, &'a T)>,
+    {
+        let meta = Meta::new(&tracks);
         let layouts = tracks
             .into_iter()
-            .map(|notes| LinearLayout::new(notes, song_length, factor, None, 0));
+            .map(|notes| LinearLayout::new(notes, meta, None, 0));
         Self(Arranged::new(layouts, Axis::Easting, gap))
     }
 }
@@ -53,24 +53,17 @@ pub struct StackedLinearLayout(Arranged<WithFloor<LinearLayout>>);
 
 impl StackedLinearLayout {
     /// Create a stacked linear layout from per-track notes.
-    pub fn new(
-        tracks: Vec<Notes>,
-        wrap_length: Option<NonZero<Tick>>,
-        gap: u32,
-        full: bool,
-    ) -> Self {
-        let positions = tracks.iter().flat_map(|n| n.keys());
-        let factor = Track::TEMPL
-            .into_iter()
-            .find(|&templ| positions.clone().all(|pos| pos.tick() % templ == 0))
-            .unwrap_or(1);
-        let song_length = tracks
-            .iter()
-            .flat_map(|n| n.keys().map(|pos| pos.tick()))
-            .max()
-            .map_or(0, |t| t + 1);
+    pub fn new<I, N, T>(tracks: I, wrap_length: Option<NonZero<Tick>>, gap: u32, full: bool) -> Self
+    where
+        I: IntoIterator<Item = N>,
+        N: IntoIterator<Item = (Position, T)>,
+        T: Into<Tone>,
+        for<'a> &'a I: IntoIterator<Item = &'a N>,
+        for<'a> &'a N: IntoIterator<Item = (&'a Position, &'a T)>,
+    {
+        let meta = Meta::new(&tracks);
         let layouts = tracks.into_iter().map(|notes| {
-            let layout = LinearLayout::new(notes, song_length, factor, wrap_length, gap);
+            let layout = LinearLayout::new(notes, meta, wrap_length, gap);
             WithFloor::new(layout, full)
         });
         Self(Arranged::new(layouts, Axis::Elevation, 1))
@@ -87,6 +80,42 @@ impl Layout for StackedLinearLayout {
     }
 }
 
+// LinearLayoutMeta
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+type Meta = LinearLayoutMeta;
+
+/// Metadata for constructing a [`LinearLayout`], derived from a tick stream.
+#[derive(Clone, Copy)]
+pub struct LinearLayoutMeta {
+    song_length: Tick,
+    scale: Tick,
+}
+
+impl LinearLayoutMeta {
+    /// Compute metadata from a stream of tick positions.
+    pub fn new<'a, I, N: 'a, T: 'a>(tracks: &'a I) -> Self
+    where
+        &'a I: IntoIterator<Item = &'a N>,
+        &'a N: IntoIterator<Item = (&'a Position, &'a T)>,
+    {
+        let found_scale = Track::TEMPL.into_iter().find(|&templ| {
+            tracks
+                .into_iter()
+                .flat_map(|n| n.into_iter().map(|(pos, _)| pos.into_tick()))
+                .all(|t| t % templ == 0)
+        });
+        let scale = found_scale.unwrap_or(1);
+        let song_length = tracks
+            .into_iter()
+            .flat_map(|n| n.into_iter().map(|(pos, _)| pos.into_tick()))
+            .max()
+            .map_or(0, |t| t + 1);
+        Self { song_length, scale }
+    }
+}
+
 // LinearLayout
 //
 // ++++++++++++============++++++++++++============++++++++++++============
@@ -99,20 +128,12 @@ pub struct LinearLayout {
 }
 
 impl LinearLayout {
-    pub fn new(
-        notes: Notes,
-        song_length: Tick,
-        scale: Tick,
-        wrap_length: Option<NonZero<Tick>>,
-        gap: u32,
-    ) -> Self {
-        let track = Track {
-            notes,
-            song_length,
-            scale,
-            wrap_length,
-            gap,
-        };
+    pub fn new<N, T>(notes: N, meta: Meta, wrap_length: Option<NonZero<Tick>>, gap: u32) -> Self
+    where
+        N: IntoIterator<Item = (Position, T)>,
+        T: Into<Tone>,
+    {
+        let track = Track::new(notes, meta, wrap_length, gap);
         let easting = (track.width() + gap as i32) * track.wrap_rows() as i32 - gap as i32 + 1;
         let southing = track.cols_per_row() as i32 * Track::SOUTHING + 2;
         Self {
@@ -193,9 +214,8 @@ impl Layout for LinearLayout {
 // ++++++++++++============++++++++++++============++++++++++++============
 
 struct Track {
-    notes: Notes,
-    song_length: Tick,
-    scale: Tick,
+    notes: BTreeMap<Position, Tone>,
+    meta: Meta,
     wrap_length: Option<NonZero<Tick>>,
     gap: u32,
 }
@@ -205,31 +225,19 @@ impl Track {
     pub const ELEVATION: i32 = 2;
     pub const TEMPL: [Tick; 3] = [4, 2, 3];
 
-    fn is_piston(&self) -> bool {
-        match self.scale {
-            4 | 2 => false,
-            3 | 1 => true,
-            _ => unreachable!(),
+    pub fn new<N, T>(notes: N, meta: Meta, wrap_length: Option<NonZero<Tick>>, gap: u32) -> Self
+    where
+        N: IntoIterator<Item = (Position, T)>,
+        T: Into<Tone>,
+    {
+        let notes = notes.into_iter().map(|(pos, t)| (pos, t.into())).collect();
+
+        Self {
+            notes,
+            meta,
+            wrap_length,
+            gap,
         }
-    }
-
-    fn width(&self) -> i32 {
-        if self.is_piston() { 5 } else { 4 }
-    }
-
-    fn length_in_units(&self, multiplier: NonZero<Tick>) -> Tick {
-        let head = if self.scale == 1 { 2 } else { 0 };
-        (self.song_length + head).div_ceil(self.scale * 2 * multiplier.get())
-    }
-
-    fn wrap_rows(&self) -> Tick {
-        self.wrap_length
-            .map_or(1, |wrap| self.length_in_units(wrap))
-    }
-
-    fn cols_per_row(&self) -> Tick {
-        let all_cols = self.length_in_units(NonZero::<Tick>::MIN);
-        self.wrap_length.map_or(all_cols, |wrap| wrap.get())
     }
 
     fn get_block(&self, row: i32, col: i32, local_pos: BlockPos) -> GenericBlockState {
@@ -240,7 +248,7 @@ impl Track {
         } = local_pos;
 
         let is_piston = self.is_piston();
-        let scale = self.scale;
+        let scale = self.meta.scale;
         let branch_tick = if is_piston { 3 } else { scale };
 
         let easting = match is_piston || easting < 2 {
@@ -251,7 +259,7 @@ impl Track {
             true => "north",
             false => "south",
         };
-        let note = move |tick: Tick, layer: Index| {
+        let note = move |tick: Tick, layer: Index| -> Option<&Tone> {
             let group = row * self.cols_per_row() as i32 + col;
             let head = if scale == 1 { 1 } else { 0 };
             let base_tick = (group - head) * scale as i32 * 2;
@@ -265,28 +273,55 @@ impl Track {
         match (has_branch, is_piston, easting, southing, elevation) {
             (true, true, 3, 1, 1) => sticky_piston("west"),
             (true, true, 2, 1, 1) => redstone_block(),
-            (true, true, 1, 2, 0) => instrument_block(note(branch_tick, 0), air),
+            (true, true, 1, 2, 0) => inst_block(note(branch_tick, 0), air),
             (true, true, 1, 2, 1) => note_block(note(branch_tick, 0), air),
-            (true, true, 0, 1, 0) => instrument_block(note(branch_tick, 1), air),
+            (true, true, 0, 1, 0) => inst_block(note(branch_tick, 1), air),
             (true, true, 0, 1, 1) => note_block(note(branch_tick, 1), air),
 
             (true, false, 3, 1, 0) => chain_block(),
             (true, false, 3, 1, 1) => repeater((scale / 2).to_string(), "east"),
-            (true, false, 1, 1, 0) => instrument_block(note(branch_tick, 0), chain_block),
+            (true, false, 1, 1, 0) => inst_block(note(branch_tick, 0), chain_block),
             (true, false, 1, 1, 1) => note_block(note(branch_tick, 0), chain_block),
-            (true, false, 0, 1, 0) => instrument_block(note(branch_tick, 1), air),
+            (true, false, 0, 1, 0) => inst_block(note(branch_tick, 1), air),
             (true, false, 0, 1, 1) => note_block(note(branch_tick, 1), air),
 
             (_, _, 4, 0, 0) => chain_block(),
             (_, _, 4, 0, 1) => repeater(scale.to_string(), repeater_facing),
-            (_, _, 4, 1, 0) => instrument_block(note(0, 0), chain_block),
+            (_, _, 4, 1, 0) => inst_block(note(0, 0), chain_block),
             (_, _, 4, 1, 1) => note_block(note(0, 0), chain_block),
-            (_, _, 5, 1, 0) => instrument_block(note(0, 1), air),
+            (_, _, 5, 1, 0) => inst_block(note(0, 1), air),
             (_, _, 5, 1, 1) => note_block(note(0, 1), air),
-            (false, _, 3, 1, 0) => instrument_block(note(0, 2), air),
+            (false, _, 3, 1, 0) => inst_block(note(0, 2), air),
             (false, _, 3, 1, 1) => note_block(note(0, 2), air),
 
             _ => air(),
         }
+    }
+
+    fn is_piston(&self) -> bool {
+        match self.meta.scale {
+            4 | 2 => false,
+            3 | 1 => true,
+            _ => unreachable!(),
+        }
+    }
+
+    fn width(&self) -> i32 {
+        if self.is_piston() { 5 } else { 4 }
+    }
+
+    fn length_in_units(&self, multiplier: NonZero<Tick>) -> Tick {
+        let head = if self.meta.scale == 1 { 2 } else { 0 };
+        (self.meta.song_length + head).div_ceil(self.meta.scale * 2 * multiplier.get())
+    }
+
+    fn wrap_rows(&self) -> Tick {
+        self.wrap_length
+            .map_or(1, |wrap| self.length_in_units(wrap))
+    }
+
+    fn cols_per_row(&self) -> Tick {
+        let all_cols = self.length_in_units(NonZero::<Tick>::MIN);
+        self.wrap_length.map_or(all_cols, |wrap| wrap.get())
     }
 }

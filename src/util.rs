@@ -1,5 +1,5 @@
 use crate::note::{Note, Notes, Tone};
-use crate::types::{Index, Position, Tick};
+use crate::types::{Index, IntoTick, Position, Tick};
 use counter::Counter;
 use itertools::{Itertools, iproduct};
 use std::collections::{BTreeMap, BTreeSet};
@@ -17,16 +17,16 @@ pub type Point = (Tick, Tone);
 /// TP (tick–tone) plane multiset.
 pub type TpPlane = Counter<Point>;
 
-impl From<Notes> for TpPlane {
-    fn from(notes: Notes) -> Self {
+impl<K: IntoTick, V: Into<Tone>> From<Notes<K, V>> for TpPlane {
+    fn from(notes: Notes<K, V>) -> Self {
         notes
             .into_iter()
-            .map(|(pos, note)| (pos.tick(), note.tone()))
+            .map(|(pos, note)| (pos.into_tick(), note.into()))
             .collect()
     }
 }
 
-impl From<TpPlane> for Notes {
+impl From<TpPlane> for Notes<Position, Note> {
     fn from(plane: TpPlane) -> Self {
         plane
             .into_iter()
@@ -265,17 +265,24 @@ impl TransEqClass {
     }
 
     /// Conservatively reduce TEC to arithmetic kernel K, discarding conflicting points.
+    #[deprecated(note = "use `into_pruned` instead; `prune` discards the offsets")]
     pub fn prune(self) -> TpPlane {
+        self.into_pruned().1
+    }
+
+    /// Consume the TEC and return `(offsets, pruned_kernel)`.
+    pub fn into_pruned(self) -> (BTreeSet<NonZero<Tick>>, TpPlane) {
+        let offsets = self.offsets;
         let mut points = self.points;
         let indexes: Vec<Point> = points.keys().copied().sorted().collect();
 
-        for (point @ (tick, tone), scatter) in iproduct!(indexes, self.offsets.iter()) {
+        for (point @ (tick, tone), scatter) in iproduct!(indexes, offsets.iter()) {
             let shifted = &(tick + scatter.get(), tone);
             let anchor_mult = points[&point];
             let entry = points.entry(*shifted);
             entry.and_modify(|mult| *mult -= anchor_mult.min(*mult));
         }
-        points
+        (offsets, points)
     }
 
     /// Decompose [`Notes`] into two parts using the arithmetic kernel of this TEC:
@@ -310,7 +317,7 @@ impl TransEqClass {
         let mut residual: BTreeMap<Position, Note> = BTreeMap::new();
 
         for (pos, note) in notes.iter() {
-            if pattern_set.contains(&(pos.tick(), note.tone())) {
+            if pattern_set.contains(&(pos.into_tick(), note.tone())) {
                 pattern.insert(*pos, note.clone());
             } else {
                 residual.insert(*pos, note.clone());
@@ -543,7 +550,7 @@ impl FpTree {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-impl Notes {
+impl Notes<Position, Note> {
     /// Rescales ticks from arbitrary tempo (tick/s) to standard game tick (20 t/s).
     pub fn rescale_to_game_tick(self, tempo: f32) -> Notes {
         self.rescale_to_tick_rate(tempo, 20)
@@ -557,7 +564,7 @@ impl Notes {
     /// Rescales ticks from arbitrary tempo (tick/s) to the given target tick rate (t/s).
     pub fn rescale_to_tick_rate(self, tempo: f32, target_rate: u32) -> Notes {
         let scale = (target_rate as f32 / tempo).round() as u32;
-        let map_pos = |pos: Position| Position::new(pos.tick() * scale, pos.layer());
+        let map_pos = |pos: Position| Position::new(pos.into_tick() * scale, pos.layer());
         match scale > 1 {
             true => self.into_iter().map(|(p, n)| (map_pos(p), n)).collect(),
             false => self,
@@ -581,7 +588,7 @@ impl Notes {
         let mut groups: Vec<Notes> = vec![Default::default(); starts.len()];
         for (pos, note) in self {
             let idx = starts.partition_point(|&s| s <= pos.layer()) - 1;
-            let pos = Position::new(pos.tick(), pos.layer() - starts[idx]);
+            let pos = Position::new(pos.into_tick(), pos.layer() - starts[idx]);
             groups[idx].insert(pos, note);
         }
         groups
@@ -598,7 +605,7 @@ impl Notes {
             let group = pos.layer() / size as Index;
             let new_layer = pos.layer() % size as Index;
             let entry = groups.entry(group).or_default();
-            entry.insert(Position::new(pos.tick(), new_layer), note);
+            entry.insert(Position::new(pos.into_tick(), new_layer), note);
         }
         groups.into_values().map(Notes::from).collect()
     }
@@ -606,7 +613,10 @@ impl Notes {
     /// Concatenate multiple note groups with blank layer separators.
     pub fn concat<'a>(notes: impl IntoIterator<Item = &'a Notes>) -> Self {
         let shift = |(pos, note): (&Position, &Note), base: Index| {
-            (Position::new(pos.tick(), pos.layer() + base), note.clone())
+            (
+                Position::new(pos.into_tick(), pos.layer() + base),
+                note.clone(),
+            )
         };
         let mut offset = 0;
         let stacked = notes.into_iter().flat_map(|n| {
@@ -646,11 +656,11 @@ impl Notes {
                 continue;
             }
 
-            let base = candidates[i].pos.tick();
+            let base = candidates[i].pos.into_tick();
             let result = pattern.into_iter().try_fold(vec![], |mut indices, p| {
                 let target = (base + p) % song_length;
                 let found = candidates.iter().enumerate().find(|(_, p)| {
-                    !p.is_matched && p.pos.tick() == target && f(&p.note, &candidates[i].note)
+                    !p.is_matched && p.pos.into_tick() == target && f(&p.note, &candidates[i].note)
                 });
                 found.map(|(idx, _)| {
                     indices.push(idx);
@@ -705,11 +715,11 @@ impl Notes {
                 continue;
             }
 
-            let base = candidates[i].pos.tick();
+            let base = candidates[i].pos.into_tick();
             let result = pattern.into_iter().try_fold(vec![], |mut indices, p| {
                 let target = (base + p) % song_length;
                 let found = candidates.iter().enumerate().find(|(_, c)| {
-                    !c.is_matched && c.pos.tick() == target && f(&c.note, &candidates[i].note)
+                    !c.is_matched && c.pos.into_tick() == target && f(&c.note, &candidates[i].note)
                 });
                 found.map(|(idx, _)| {
                     indices.push(idx);

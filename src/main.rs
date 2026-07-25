@@ -3,7 +3,7 @@ use rsnbs::note::{Note, Notes};
 use rsnbs::schematic::{MultiCompactLayout, MultiLinearLayout, StackedLinearLayout};
 use rsnbs::schematic::{SchematicBuilder, WithFloor};
 use rsnbs::song::Song;
-use rsnbs::types::Tick;
+use rsnbs::types::{IntoTick, Tick};
 #[cfg(feature = "unstable")]
 use rsnbs::util::{TpPlane, VectorTable};
 use std::collections::BTreeMap;
@@ -71,7 +71,7 @@ impl Compact {
 
         let mut by_tick: BTreeMap<Tick, Vec<Note>> = Default::default();
         for (pos, note) in notes {
-            by_tick.entry(pos.tick()).or_default().push(note);
+            by_tick.entry(pos.into_tick()).or_default().push(note);
         }
 
         let tracks = std::iter::once((by_tick, NonZero::new(self.coarse)));
@@ -118,7 +118,7 @@ impl Linear {
     fn run(self) {
         let song = Song::open_nbs(&self.input).unwrap();
         let name = self.input.clone();
-        let tracks = song
+        let tracks: Vec<Notes> = song
             .notes
             .rescale_to_game_tick(song.header.tempo)
             .split_by_layer_gaps()
@@ -206,14 +206,14 @@ impl Decompose {
             .iter()
             .map(|(pat, _)| {
                 pat.iter()
-                    .map(|(pos, note)| (pos.tick(), note.clone()))
+                    .map(|(pos, note)| (pos.into_tick(), note.clone()))
                     .collect()
             })
             .collect();
         all_layers.push(
             remaining
                 .iter()
-                .map(|(pos, note)| (pos.tick(), note.clone()))
+                .map(|(pos, note)| (pos.into_tick(), note.clone()))
                 .collect(),
         );
 

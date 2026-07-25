@@ -10,8 +10,10 @@ use std::collections::HashMap;
 
 mod compact;
 mod linear;
+mod tapped;
 pub use compact::*;
 pub use linear::*;
+pub use tapped::*;
 
 // SchematicBuilder
 //
@@ -420,21 +422,19 @@ fn _component_max(a: BlockPos, b: BlockPos) -> BlockPos {
 }
 
 /// Note block, or fallback on None.
-fn note_block<'a, N>(note: N, fallback: fn() -> GenericBlockState) -> GenericBlockState
+fn note_block<T>(note: Option<T>, fallback: fn() -> GenericBlockState) -> GenericBlockState
 where
-    N: Into<Option<&'a Note>>,
+    T: AsRef<Tone>,
 {
-    note.into()
-        .and_then(|n| n.tone().note_block_state())
+    note.and_then(|t| t.as_ref().note_block_state())
         .unwrap_or_else(fallback)
 }
 
-fn instrument_block<'a, N>(note: N, fallback: fn() -> GenericBlockState) -> GenericBlockState
+fn inst_block<T>(note: Option<T>, fallback: fn() -> GenericBlockState) -> GenericBlockState
 where
-    N: Into<Option<&'a Note>>,
+    T: AsRef<Tone>,
 {
-    note.into()
-        .and_then(|n| n.tone().instrument().instrument_block())
+    note.and_then(|t| t.as_ref().instrument().instrument_block())
         .unwrap_or_else(fallback)
 }
 

@@ -1,9 +1,9 @@
 //! NBS (Note Block Studio) file format parser and writer.
 
 use crate::nbs_ext::{NbsReadExt, NbsWriteExt};
-use crate::note::{Instrument, Key, Note, Notes};
+use crate::note::{Instrument, Key, Note, Notes, Tone};
 use crate::song::{CustomInstrument, Header, Layer, Song};
-use crate::types::{Index, Panning, Position, Result, Tick, Version, Volume};
+use crate::types::{Index, IntoTick, Panning, Position, Result, Tick, Version, Volume};
 use std::collections::BTreeMap;
 use std::io;
 use std::num::NonZeroU32;
@@ -178,7 +178,7 @@ impl Codec for Header {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-impl Codec for Notes {
+impl Codec for Notes<Position, Note> {
     type Context = Version;
 
     fn parse<R: io::Read>(reader: &mut R, version: &Self::Context) -> Result<Self> {
@@ -209,8 +209,8 @@ impl Codec for Notes {
 
         while let Some((pos, note)) = iter.next() {
             // tick 上升沿
-            if pos.tick() != prev_tick {
-                let tick_jump = pos.tick().wrapping_sub(prev_tick);
+            if pos.into_tick() != prev_tick {
+                let tick_jump = pos.into_tick().wrapping_sub(prev_tick);
                 writer.write_jump(NonZeroU32::new(tick_jump))?;
             }
             // layer 上升沿
@@ -218,11 +218,11 @@ impl Codec for Notes {
             writer.write_jump(NonZeroU32::new(layer_jump))?;
 
             note.write(writer, context)?;
-            prev_tick = pos.tick();
+            prev_tick = pos.into_tick();
             prev_layer = pos.layer();
             // layer 下降沿
-            let next_tick = iter.peek().map(|(pos, _)| pos.tick());
-            if next_tick.is_none() || next_tick.unwrap() != pos.tick() {
+            let next_tick = iter.peek().map(|(pos, _)| pos.into_tick());
+            if next_tick.is_none() || next_tick.unwrap() != pos.into_tick() {
                 writer.write_jump(None)?;
                 prev_layer = Index::MAX;
             }
@@ -243,8 +243,9 @@ impl Codec for Note {
 
     fn parse<R: io::Read>(reader: &mut R, version: &Self::Context) -> Result<Self> {
         let mut note = Self::default();
-        note.instrument = Codec::parse(reader, &())?;
-        note.key = Codec::parse(reader, &())?;
+        let instrument: Instrument = Codec::parse(reader, &())?;
+        let key: Key = Codec::parse(reader, &())?;
+        note.tone = Tone::new(instrument, key);
 
         if version.get() >= 4 {
             note.velocity = Codec::parse(reader, &())?;
@@ -256,8 +257,8 @@ impl Codec for Note {
     }
 
     fn write<W: io::Write>(&self, writer: &mut W, version: &Self::Context) -> Result<()> {
-        self.instrument.write(writer, &())?;
-        writer.write_u8(self.key.into())?;
+        self.tone.instrument().write(writer, &())?;
+        writer.write_u8(self.tone.key().into())?;
 
         if version.get() >= 4 {
             self.velocity.write(writer, &())?;

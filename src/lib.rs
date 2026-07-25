@@ -14,8 +14,8 @@ pub mod util;
 // ++++++++++++============++++++++++++============++++++++++++============
 
 pub mod song {
-    use crate::note::Notes;
-    use crate::types::{Index, Panning, Result, Tick, Version, Volume};
+    use crate::note::{Note, Notes};
+    use crate::types::{Index, IntoTick, Panning, Position, Result, Tick, Version, Volume};
 
     /// represents a complete nbs song with header, notes, layers, and instruments.
     #[derive(Debug, Default, Clone, PartialEq, PartialOrd)]
@@ -23,7 +23,7 @@ pub mod song {
         pub header: Header,
         // Position data is stored redundantly due to incremental encoding
         // I don't know why the header's song_length is only u16 :(
-        pub notes: Notes,
+        pub notes: Notes<Position, Note>,
         pub layers: Vec<Layer>,
         pub custom_instruments: Vec<CustomInstrument>,
     }
@@ -62,7 +62,7 @@ pub mod song {
         pub fn len(&self) -> Tick {
             self.notes
                 .last_key_value()
-                .map(|(p, _)| p.tick() + 1)
+                .map(|(p, _)| p.into_tick() + 1)
                 .unwrap_or(0)
         }
 
@@ -72,7 +72,7 @@ pub mod song {
             self.header.song_length = self
                 .notes
                 .last_key_value()
-                .map(|(p, _)| p.tick())
+                .map(|(p, _)| p.into_tick())
                 .unwrap_or(1);
             // 更新 layer 数量
             self.header.song_layers = self.layers.len() as _;
@@ -229,12 +229,31 @@ pub mod types {
             Self { tick, layer }
         }
 
-        pub fn tick(self) -> Tick {
-            self.tick
-        }
-
         pub fn layer(self) -> Index {
             self.layer
+        }
+    }
+
+    /// conversion into a tick value.
+    pub trait IntoTick {
+        fn into_tick(self) -> Tick;
+    }
+
+    impl<T: Into<Tick>> IntoTick for T {
+        fn into_tick(self) -> Tick {
+            self.into()
+        }
+    }
+
+    impl IntoTick for Position {
+        fn into_tick(self) -> Tick {
+            self.tick
+        }
+    }
+
+    impl IntoTick for &Position {
+        fn into_tick(self) -> Tick {
+            self.tick
         }
     }
 
