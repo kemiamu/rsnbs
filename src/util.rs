@@ -2,6 +2,7 @@ use crate::note::{Note, Notes, Tone};
 use crate::types::{Index, IntoTick, Position, Tick};
 use counter::Counter;
 use itertools::{Itertools, iproduct};
+use std::collections::HashMap;
 use std::collections::{BTreeMap, BTreeSet};
 use std::iter::repeat;
 use std::num::NonZero;
@@ -35,6 +36,12 @@ impl<K: IntoTick, V: Into<Tone>> FromIterator<(K, V)> for TpPlane {
             .map(|(k, v)| (k.into_tick(), v.into()))
             .collect();
         Self(inner)
+    }
+}
+
+impl From<TpPlane> for Notes<Tick, Vec<Tone>> {
+    fn from(plane: TpPlane) -> Self {
+        Self::from_iter(plane.into_points().into_group_map())
     }
 }
 

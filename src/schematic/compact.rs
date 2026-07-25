@@ -96,7 +96,7 @@ impl CompactLayout {
     /// the split automatically.
     pub fn new<Trk, Chord>(
         notes: Trk,
-        coarse: Option<NonZero<Tick>>,
+        repeater_coarse: Option<NonZero<Tick>>,
         wrap_length: Option<NonZero<usize>>,
     ) -> Self
     where
@@ -104,7 +104,7 @@ impl CompactLayout {
         Chord: IntoIterator,
         Chord::Item: Into<Tone>,
     {
-        let track = Track::new(notes, coarse, wrap_length);
+        let track = Track::new(notes, repeater_coarse, wrap_length);
         let easting = (track.rows() as i32) * 2 + 1;
         let southing = track.cols_or_len() as i32;
         Self {

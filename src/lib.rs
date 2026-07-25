@@ -309,9 +309,9 @@ pub mod types {
     pub type Tick = u32;
 
     #[allow(dead_code)]
-    pub(crate) type RedStoneTick = u32;
+    pub(crate) type RedStoneTick = Tick;
     #[allow(dead_code)]
-    pub(crate) type GameTick = u32;
+    pub(crate) type GameTick = Tick;
 
     // error
     //

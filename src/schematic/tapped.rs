@@ -1,13 +1,8 @@
 //! Tapped delay line layout for NBS song projection.
-//!
-//! The overall structure consists of a **control unit** (west) and a **playing unit** (east),
-//! aligned north and connected block-to-block. Each row (one per TEC) pairs a [`TapLine`]
-//! (the tapped delay line providing hardcoded tap delays) with a [`WithFloor<CompactLayout>`]
-//! (the note block playing area).
 
 use super::air;
 use super::{Arranged, Axis, CompactLayout, EdgeArranged, Layout, Mask, WithFloor};
-use crate::note::Note;
+use crate::note::{Note, Notes, Tone};
 use crate::types::RedStoneTick;
 use crate::util::TransEqClass;
 use mcdata::{GenericBlockState, util::BlockPos};
@@ -29,48 +24,37 @@ impl TappedLayout {
     /// Build the composite layout from TEC data.
     ///
     /// Each TEC's offsets drive the tapped delay line (control unit);
-    /// its arithmetic kernel (`tec.prune()`) drives the playing unit.
-    pub fn new<I: IntoIterator<Item = TransEqClass>>(tecs: I) -> Self {
-        // Decompose each TEC into delays (tap line) and kernel (playing unit).
+    /// its arithmetic kernel (`tec.into_pruned()`) drives the playing unit.
+    pub fn new<I: IntoIterator<Item = TransEqClass>>(
+        tecs: I,
+        wrap_length: Option<NonZero<usize>>,
+        full: bool,
+    ) -> Self {
         let mut tap_lines = Vec::new();
         let mut layouts = Vec::new();
 
-        todo!();
+        for tec in tecs {
+            let (offsets, kernel) = tec.into_pruned();
 
-        // for tec in tecs {
-        //     let (offsets, kernel) = tec.into_pruned();
-        //     let notes = {
-        //         let mut map: BTreeMap<RedStoneTick, Vec<Note>> = BTreeMap::new();
-        //         for ((tick, tone), count) in kernel {
-        //             map.entry(tick)
-        //                 .or_default()
-        //                 .extend(std::iter::repeat(Note::new(tone)).take(count));
-        //         }
-        //         map
-        //     };
+            // kernel -> compact layout
+            let notes: Notes<RedStoneTick, Vec<Tone>> = kernel.into();
+            let repeater_coarse = std::iter::once(0)
+                .chain(offsets.iter().map(|o| o.get()))
+                .zip(offsets.iter().map(|o| o.get()))
+                .map(|(prev, next)| next - prev)
+                .min()
+                .and_then(|gap| NonZero::new(gap / 2));
+            let layout = CompactLayout::new(notes, repeater_coarse, wrap_length);
 
-        //     tap_lines.push(TapLine::new(offsets));
-        //     layouts.push(CompactLayout::new(notes, None, None));
-        // }
+            tap_lines.push(TapLine::new(offsets));
+            layouts.push(WithFloor::new(layout, full));
+        }
 
-        // Control unit: stack tap lines vertically, aligned by east edges.
-        let control = EdgeArranged::new(
-            tap_lines,
-            Axis::Elevation,
-            0,
-            Mask::new(BlockPos::new(1, 0, 0)).unwrap(),
-        );
+        // arrange both sides
+        let control = EdgeArranged::new(tap_lines, Axis::Elevation, 0, Axis::Easting.unit());
+        let playing = Arranged::new(layouts, Axis::Elevation, 0);
 
-        // Playing unit: stack compact layouts vertically.
-        let playing = Arranged::new(
-            layouts
-                .into_iter()
-                .map(|layout| WithFloor::new(layout, false)),
-            Axis::Elevation,
-            0,
-        );
-
-        // Bounding box: control on west, playing on east.
+        // composite bounding box
         let ctrl_size = control.size();
         let play_size = playing.size();
         let size = BlockPos::new(
@@ -94,10 +78,9 @@ impl Layout for TappedLayout {
 
     fn get_block(&self, pos: BlockPos) -> GenericBlockState {
         let ctrl_w = self.control.size().x;
-        if pos.x < ctrl_w {
-            self.control.get_block(pos)
-        } else {
-            self.playing.get_block(pos - BlockPos::new(ctrl_w, 0, 0))
+        match pos.x < ctrl_w {
+            true => self.control.get_block(pos),
+            false => self.playing.get_block(pos - BlockPos::new(ctrl_w, 0, 0)),
         }
     }
 }
