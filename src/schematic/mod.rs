@@ -535,12 +535,18 @@ fn redstone_torch<T: Into<Cow<'static, str>>>(facing: Option<T>, lit: bool) -> G
         true => "true",
         false => "false",
     };
+    let wall = facing.is_some();
     let mut properties = HashMap::from([("lit".into(), lit.into())]);
     if let Some(f) = facing {
         properties.insert("facing".into(), f.into());
     }
     GenericBlockState {
-        name: "minecraft:redstone_torch".into(),
+        name: if wall {
+            "minecraft:redstone_wall_torch"
+        } else {
+            "minecraft:redstone_torch"
+        }
+        .into(),
         properties,
     }
 }

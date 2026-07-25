@@ -1,10 +1,10 @@
 use crate::note::{Note, Notes, Tone};
 use crate::schematic::MultiCompactLayout;
-use crate::schematic::{SchematicBuilder, WithFloor};
+use crate::schematic::{SchematicBuilder, TappedLayout, WithFloor};
 use crate::song::Song;
 use crate::types::{GameTick, Index, IntoTick, Position, Tick, Version};
 #[cfg(feature = "unstable")]
-use crate::util::MatchedGroups;
+use crate::util::{MatchedGroups, TpPlane, VectorTable};
 use counter::Counter;
 use ordered_float::OrderedFloat;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -753,4 +753,53 @@ fn test_linear_layout() {
     litematic
         .write_file("fixtures/generated_linear.litematic")
         .unwrap();
+}
+
+#[test]
+#[cfg(feature = "unstable")]
+#[allow(deprecated)]
+fn test_tapped_layout() {
+    let song = Song::open_nbs("fixtures/source.nbs").unwrap();
+    let song_len = song.len();
+
+    let plane = TpPlane::from_iter(song.notes.clone());
+    let vt = VectorTable::from_plane(&plane, NonZero::new(song_len), 8);
+    let tec = vt.find_largest_tec(2);
+    let tecs: Vec<_> = tec.into_iter().collect();
+
+    eprintln!("found {} TEC(s) from source.nbs", tecs.len());
+    if let Some(ref t) = tecs.first() {
+        let offsets: Vec<_> = t.offsets().iter().map(|o| o.get()).collect();
+        eprintln!("  offsets: {:?}, anchors: {}", offsets, t.points().len());
+    }
+
+    let layout = TappedLayout::new(tecs, NonZero::new(24), false);
+    let litematic = SchematicBuilder(layout).build("Tapped from source.nbs", "rustnbs");
+    litematic
+        .write_file("fixtures/generated_tapped.litematic")
+        .unwrap();
+
+    eprintln!("litematic regions: {}", litematic.regions.len());
+    for (i, r) in litematic.regions.iter().enumerate() {
+        eprintln!("  region[{}]: size {:?}", i, r.size);
+        let mut non_air = 0;
+        for y in 0..r.size.y.abs() {
+            for z in 0..r.size.z.abs() {
+                for x in 0..r.size.x.abs() {
+                    let pos = mcdata::util::BlockPos::new(x, y, z);
+                    let block = r.get_block(pos);
+                    if block.name.contains("torch") {
+                        eprintln!(
+                            "  {} at ({},{},{}): {:?}",
+                            block.name, x, y, z, block.properties
+                        );
+                    }
+                    if block.name != "minecraft:air" {
+                        non_air += 1;
+                    }
+                }
+            }
+        }
+        eprintln!("  region[{}]: {} non-air blocks", i, non_air);
+    }
 }
