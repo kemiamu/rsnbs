@@ -14,7 +14,7 @@ fn test_readme_example() {
     for (pos, note) in &song.notes {
         let tick: Tick = pos.into_tick();
         let key: Key = note.tone().key();
-        println!("tick: {}, key: {}", tick, key);
+        println!("tick: {tick}, key: {key}");
     }
 
     // example 2: generating a new song programmatically
