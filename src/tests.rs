@@ -889,7 +889,7 @@ fn test_tapped_layout() {
     }
 
     eprintln!("found {} TEC groups total", tecs.len());
-    let layout = TappedLayout::new(tecs, NonZero::new(24), false);
+    let layout = TappedLayout::new(tecs, NonZero::new(18), false);
     let litematic = SchematicBuilder(layout).build("Tapped from source.nbs", "rustnbs");
     litematic
         .write_file("fixtures/generated_tapped.litematic")

@@ -1,6 +1,6 @@
 //! Generate Minecraft litematic projections from NBS songs.
 
-use crate::note::{Instrument, Note, Tone};
+use crate::note::{Instrument, Tone};
 use itertools::iproduct;
 use mcdata::BlockState;
 use mcdata::{GenericBlockState, util::BlockPos};
@@ -531,22 +531,14 @@ fn redstone_block() -> GenericBlockState {
 
 /// Redstone torch with lit state and optional facing.
 fn redstone_torch<T: Into<Cow<'static, str>>>(facing: Option<T>, lit: bool) -> GenericBlockState {
-    let lit = match lit {
-        true => "true",
-        false => "false",
+    let lit = if lit { "true" } else { "false" };
+    let name = match facing.is_some() {
+        true => "minecraft:redstone_wall_torch".into(),
+        false => "minecraft:redstone_torch".into(),
     };
-    let wall = facing.is_some();
-    let mut properties = HashMap::from([("lit".into(), lit.into())]);
-    if let Some(f) = facing {
-        properties.insert("facing".into(), f.into());
-    }
-    GenericBlockState {
-        name: if wall {
-            "minecraft:redstone_wall_torch"
-        } else {
-            "minecraft:redstone_torch"
-        }
-        .into(),
-        properties,
-    }
+    let properties = match facing {
+        Some(f) => From::from([("lit".into(), lit.into()), ("facing".into(), f.into())]),
+        None => From::from([("lit".into(), lit.into())]),
+    };
+    GenericBlockState { name, properties }
 }
