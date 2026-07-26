@@ -14,6 +14,10 @@ use std::iter::repeat;
 use std::num::NonZero;
 use std::ops::Range;
 
+//
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
 type Multiset<T> = BTreeMap<T, NonZero<usize>>;
 
 // A note point in the (tick, tone) plane of the score
@@ -703,6 +707,10 @@ pub fn test_deconvolve() {
     song.save_nbs("fixtures/deconvolve.nbs").unwrap();
 }
 
+// Schematic generation
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
 #[test]
 fn dump_litematic() {
     use rustmatica::Litematic;
@@ -756,6 +764,10 @@ fn test_linear_layout() {
         .write_file("fixtures/generated_linear.litematic")
         .unwrap();
 }
+
+// Helpers
+//
+// ++++++++++++============++++++++++++============++++++++++++============
 
 /// Greedily find up to `max_off` offsets and the union of notes they cover.
 fn best_offsets(

@@ -330,8 +330,6 @@ pub mod types {
         InvalidVolume(String),
         #[error(transparent)]
         Io(#[from] std::io::Error),
-        #[error("Integer conversion error: {0}")]
-        TryFromIntError(#[from] std::num::TryFromIntError),
     }
 
     pub type Result<T> = std::result::Result<T, Error>;

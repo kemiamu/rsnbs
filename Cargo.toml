@@ -3,7 +3,7 @@ name = "rsnbs"
 version = "0.1.2"
 authors = ["kemiamu <kemya@tuta.io>", "Joppe Stuyck <joppe@stuyck.be>"]
 edition = "2024"
-description = "IO functionality for the OpenNBS .nbs format"
+description = "A fundamental library for working with the OpenNBS .nbs format"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/omninbs/rsnbs"
 readme = "README.md"
@@ -21,6 +21,8 @@ counter = "0.7.1"
 encoding_rs = "0.8.35"
 itertools = "0.15.0"
 mcdata = "0.4.0"
-ordered-float = "5.3.0"
 rustmatica = "0.5.2"
 thiserror = "2.0.18"
+
+[dev-dependencies]
+ordered-float = "5.3.0"

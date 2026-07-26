@@ -1,37 +1,41 @@
 # rsnbs
 
-> A simple rust library to read and write [.nbs files](https://opennbs.org/nbs) from [Open Note Block Studio](https://opennbs.org/).
+![Crates.io Version](https://img.shields.io/crates/v/rsnbs?style=flat-square)
+![Crates.io Dependents](https://img.shields.io/crates/dependents/rsnbs?style=flat-square)
+![GitHub last commit](https://img.shields.io/github/last-commit/omninbs/rsnbs?style=flat-square)
+![GitHub Repo stars](https://img.shields.io/github/stars/omninbs/rsnbs?style=flat-square)
 
-This library is a port of [pynbs](https://github.com/OpenNBS/pynbs), reimplementing its functionality in Rust. However, due to language differences, some adaptations have been made that may lead to behavioral inconsistencies. Additionally, some extra interfaces have been provided based on downstream requirements.
+> A simple Rust library for working with [.nbs files](https://opennbs.org/nbs) from [Open Note Block Studio](https://opennbs.org/).
 
-Currently compatible up to version 5. Since this project is quite niche, compatibility with older versions of `.nbs` files hasn't been thoroughly tested. If you encounter any issues or have feature requests, please submit an issue.
+This library references [pynbs](https://github.com/OpenNBS/pynbs) and implements its basic functionality, aiming to serve as a fundamental NBS file processing library with a few extra utilities on top. Currently supports version 6 of the NBS standard.
+
+However, due to language differences, some adaptations have been made, so behavior may not always be consistent. Since this project is quite niche, it hasn't been thoroughly tested. If you encounter any issues or have feature requests, please submit an issue.
+
+This library is in early development with a frequently changing API. Please pin your dependency to a specific version.
 
 ## example
 
-iterating over Note Block Studio songs:
-
 ```rust
-use rsnbs::*;
-let song_path = "test_song.nbs";
+use rsnbs::note::{Instrument, Key, Note, Tone};
+use rsnbs::song::Song;
+use rsnbs::types::{IntoTick, Position, Tick};
 
-let song = Song::open_nbs(song_path).unwrap();
-for (position, note) in song.notes {
-    println!("tick: {}, key: {}", position.tick, note.key)
+// example 1: iterating over a song's notes
+let song: Song = Song::open_nbs("fixtures/source.nbs").unwrap();
+for (pos, note) in &song.notes {
+    let tick: Tick = pos.into_tick();
+    let key: Key = note.tone().key();
+    println!("tick: {}, key: {}", tick, key);
 }
-```
 
-or generating new songs programmatically
-
-```rust
-use rsnbs::*;
-let song_path = "test_song.nbs";
-
-let mut song = Song::new();
+// example 2: generating a new song programmatically
+let mut song: Song = Song::new();
 song.header.is_loop = true;
 for i in 0..25 {
-    let pos = Position::new(i, 0);
-    let note = Note::new(Instrument::Harp, Key::from_minecraft_note(i).unwrap());
-    song.notes.insert(pos, note);
+    let pos: Position = Position::new(i, 0);
+    let key: Key = Key::from_minecraft_note(i).unwrap();
+    let tone: Tone = Tone::new(Instrument::Harp, key);
+    song.notes.insert(pos, Note::new(tone));
 }
-song.save_nbs(song_path).unwrap();
+song.save_nbs("fixtures/generated_example.nbs").unwrap();
 ```
