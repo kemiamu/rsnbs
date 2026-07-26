@@ -1,29 +1,927 @@
-mod tests {
-    use super::super::parser::read_nbs;
-    use super::super::Song;
-    use diff::chars;
-    const TEST_FILES: [&str;2] = ["test_files/Megalovania.nbs", "test_files/DB.nbs"];
+use crate::note::{Note, Notes, Tone};
+use crate::schematic::MultiCompactLayout;
+use crate::schematic::{SchematicBuilder, TappedLayout};
+use crate::song::Song;
+use crate::types::{GameTick, Index, IntoTick, Position, Tick, Version};
+#[cfg(feature = "unstable")]
+use crate::util::TransEqClass;
+#[cfg(feature = "unstable")]
+use crate::util::{MatchedGroups, TpPlane, VectorTable};
+use counter::Counter;
+use ordered_float::OrderedFloat;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::iter::repeat;
+use std::num::NonZero;
+use std::ops::Range;
 
-    #[test]
-    fn io() { for test_file in TEST_FILES {
-        let mut file_before_writing = read_nbs(test_file).expect("Some reading error occured before writing");
+//
+//
+// ++++++++++++============++++++++++++============++++++++++++============
 
-        let test_file_dest = (test_file.to_string() + "Test");
+type Multiset<T> = BTreeMap<T, NonZero<usize>>;
 
-        file_before_writing.save(test_file_dest.as_str(), file_before_writing.header.version.unwrap() as u8).expect("Some writing error ocurred");
-        
-        let file_after_writing = read_nbs(test_file_dest.as_str()).expect("Some reading error occured after writing");
+// A note point in the (tick, tone) plane of the score
+type Point = (Tick, Tone);
 
-        if file_before_writing != file_after_writing {
-            let dbg_before = format!("{:?}", file_before_writing);
-            let dbg_after = format!("{:?}", file_after_writing);
-            for diff in chars(dbg_before.as_str(), dbg_after.as_str()) {
-                match diff {
-                    diff::Result::Left(l) => println!("\n\n- {}\n\n", l),
-                    diff::Result::Right(r) => println!("\n\n+ {}\n\n", r),
-                    diff::Result::Both(b, _) => print!("{}", b),
-                }
-            } panic!("{} failed!", test_file);
+#[test]
+fn test_scale_ticks() {
+    let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
+
+    const NUM: Tick = 3;
+    const DEN: Tick = 1;
+
+    // Scale each note's tick by numerator/denominator, multiply first
+    let scaled_notes: Notes = song
+        .notes
+        .into_iter()
+        .map(|(pos, note)| {
+            let new_tick = pos.into_tick() * NUM / DEN;
+            let new_pos = Position::new(new_tick, pos.layer());
+            (new_pos, note)
+        })
+        .collect();
+
+    song.notes = scaled_notes;
+
+    // Also update song length metadata if present
+    song.header.song_length = song.header.song_length * NUM / DEN;
+
+    song.save_nbs("fixtures/scaled.nbs").unwrap();
+}
+
+#[test]
+fn test_v6_to_v5_conversion() {
+    let mut song_v6 = Song::open_nbs("fixtures/source.nbs").unwrap();
+    assert_eq!(song_v6.header.version, Version::new(6).unwrap());
+
+    song_v6.header.version = Version::new(5).unwrap();
+    song_v6.save_nbs("fixtures/out_v5.nbs").unwrap();
+}
+
+// cargo test test_sectional_matching && cargo test analyze_tones
+
+#[test]
+#[cfg(feature = "unstable")]
+#[allow(deprecated)]
+fn test_sectional_matching() {
+    let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
+    let notes = song.notes.clone();
+
+    let song_length: Tick = Tick::MAX;
+    // let song_length: Tick = notes.iter().map(|(pos, _)| pos.tick()).max().unwrap_or(0) + 1;
+    let min_notes: usize = 0;
+    let wrap_length: usize = 24;
+
+    // 匹配+回退包装：匹配音符数不足时回退所有匹配
+    let try_match = |notes: Notes, pattern: &[Tick]| -> (MatchedGroups, Notes) {
+        let saved = notes.clone();
+        let (matched, unmatched) =
+            notes.group_match(pattern, song_length, |a, b| a.tone() == b.tone());
+        if matched.matched_len() >= min_notes || pattern.len() == 1 {
+            (matched, unmatched)
+        } else {
+            (MatchedGroups::empty(), saved)
         }
-    }}
+    };
+
+    // let global_patterns: &[&[Tick]] = &[
+    //     &[0, 32, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480],
+    //     &[0, 32, 64, 96, 192, 256, 288, 320, 352, 384, 416, 448, 480],
+    //     &[0, 192, 256, 288, 320, 352, 384, 416],
+    // ];
+    // let sectional_patterns: &[&[Tick]] = &[&[0, 16, 32, 48], &[0, 16], &[0]];
+    // let sections: &[Range<Tick>] = &[0..256, 256..512];
+    let global_patterns: &[(&[Tick], Tick)] = &[
+        // (
+        //     &[
+        //         0,
+        //         32,
+        //         32 * 2,
+        //         32 * 3,
+        //         32 * 4,
+        //         32 * 5,
+        //         32 * 6,
+        //         32 * 7,
+        //         32 * 8,
+        //         32 * 9,
+        //         32 * 10,
+        //         32 * 11,
+        //         32 * 12,
+        //         32 * 13,
+        //         32 * 14,
+        //         32 * 15,
+        //     ],
+        //     0,
+        // ),
+        // (&[0, 64, 64 * 2, 64 * 3, 64 * 4, 64 * 5, 64 * 6, 64 * 7], 0),
+        // (
+        //     &[
+        //         0,
+        //         128,
+        //         128 * 2,
+        //         128 * 3,
+        //         128 * 4,
+        //         128 * 5,
+        //         128 * 6,
+        //         128 * 7,
+        //         128 * 8,
+        //     ],
+        //     0,
+        // ),
+        (&[0, 64, 64 * 2, 64 * 3], 0),
+        (&[0, 128], 0),
+        // (&[0, 256], 0),
+        (&[0], 0), // any
+    ];
+    let sectional_patterns: &[(&[Tick], Tick)] = &[];
+    let sections: &[Range<Tick>] = &[];
+
+    let mut all_matched: Vec<(MatchedGroups, Tick)> = vec![];
+
+    // 第一步：全局匹配
+    let mut remaining = notes.clone();
+    for &(pattern, coarse) in global_patterns {
+        let (matched, unmatched) = try_match(remaining, pattern);
+        all_matched.push((matched, coarse));
+        remaining = unmatched;
+    }
+
+    // 第二步：未匹配上的进入章节匹配
+    for section_range in sections {
+        let section_notes: Notes = remaining
+            .clone()
+            .into_iter()
+            .filter(|(p, _)| section_range.contains(&p.into_tick()))
+            .collect();
+
+        if section_notes.is_empty() {
+            continue;
+        }
+
+        let mut remaining_in_section = section_notes;
+        for &(pattern, coarse) in sectional_patterns {
+            let (matched, unmatched) = try_match(remaining_in_section, pattern);
+            all_matched.push((matched, coarse));
+            remaining_in_section = unmatched;
+        }
+    }
+
+    // 输出 nbs
+    song.notes = Notes::reassign_layers(
+        all_matched.iter().map(|(mg, _coarse)| {
+            mg.groups()
+                .iter()
+                .flat_map(|g| g.iter().map(|(p, n)| (p.into_tick(), n.clone())))
+        }),
+        1,
+    );
+    song.header.is_loop = true;
+    song.save_nbs("fixtures/out_sectional.nbs").unwrap();
+
+    // 输出 litematic
+    let projection_clusters: Vec<(Notes, Tick)> = all_matched
+        .iter()
+        .map(|(mg, coarse)| (mg.templates(), *coarse))
+        .collect();
+
+    let tempo = song.header.tempo;
+    let scale = (20.0 / tempo).round() as u32;
+
+    let tracks = projection_clusters
+        .into_iter()
+        .map(|(cluster, track_coarse)| {
+            let mut notes: BTreeMap<Tick, Vec<Note>> = BTreeMap::new();
+            for (pos, note) in cluster {
+                let tick = if scale > 1 {
+                    pos.into_tick() * scale
+                } else {
+                    pos.into_tick()
+                };
+                notes.entry(tick).or_default().push(note);
+            }
+            (notes, NonZero::new(track_coarse))
+        });
+    let layout = MultiCompactLayout::new(tracks, NonZero::new(wrap_length), 0);
+    let litematic = SchematicBuilder(layout).build("Sectional from source.nbs", "Planet");
+    litematic
+        .write_file("fixtures/generated_sectional.litematic")
+        .unwrap();
+}
+
+#[test]
+#[cfg(feature = "unstable")]
+fn analyze_tones() {
+    let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
+
+    let mut by_tone: BTreeMap<Tone, Vec<(Position, Note)>> = Default::default();
+    for (pos, note) in song.notes {
+        by_tone.entry(note.tone()).or_default().push((pos, note));
+    }
+    let slices: Vec<Notes> = by_tone.into_values().map(|v| Notes::from_iter(v)).collect();
+
+    song.notes = Notes::reassign_layers(
+        slices
+            .into_iter()
+            .map(|m| m.into_iter().map(|(p, n)| (p.into_tick(), n))),
+        0,
+    );
+    song.header.is_loop = true;
+    song.save_nbs("fixtures/analyzed.nbs").unwrap();
+}
+
+//
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+#[test]
+fn test_deconvolve_m1() {
+    let song = Song::open_nbs("fixtures/source.nbs").unwrap();
+
+    let loop_length = song.len();
+    let half_loop = loop_length / 2;
+
+    let points: Vec<Point> = song
+        .notes
+        .iter()
+        .map(|(pos, note)| (pos.into_tick(), note.tone()))
+        .collect();
+
+    let pairs = points
+        .iter()
+        .enumerate()
+        .flat_map(|(i, r)| points[..i].iter().map(move |l| (l, r)));
+
+    // left point of translation `{offset: {&tone: [&tick]}}`
+    let mut offsets: HashMap<Tick, HashMap<&Tone, Multiset<&Tick>>>;
+
+    offsets = pairs.fold(Default::default(), |mut acc, pair| {
+        let (left @ &(tl, nl), right @ &(tr, nr)) = pair;
+        let offset = match nr == nl {
+            true => tr - tl,
+            false => return acc,
+        };
+        let ((tick, tone), offset) = match offset <= half_loop {
+            true => (left, offset),
+            false => (right, loop_length - offset),
+        };
+        acc.entry(offset)
+            .or_default()
+            .entry(tone)
+            .or_default()
+            .entry(tick)
+            .and_modify(|c| *c = c.saturating_add(1))
+            .or_insert(NonZero::new(1).unwrap());
+        acc
+    });
+
+    // 过滤自重叠
+    for (offset, multiset) in offsets
+        .iter_mut()
+        .flat_map(|(&offset, tones)| tones.values_mut().map(move |m| (offset, m)))
+    {
+        let old = std::mem::take(multiset);
+        let mut mset: Multiset<&Tick> = Default::default();
+        for (&tick, count) in &old {
+            let pred = (loop_length + tick - offset) % loop_length;
+            let base = mset.get(&pred).map(|&c| c.get()).unwrap_or_default();
+            let kept = count.get().saturating_sub(base);
+            let _ = NonZero::new(kept).map(|k| mset.insert(tick, k));
+        }
+        *multiset = mset;
+    }
+
+    todo!()
+}
+
+//
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+#[test]
+#[cfg(feature = "unstable")]
+fn test_analyze_transposition_equivalence() {
+    let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
+
+    // params
+    let song_length: Tick = song.notes.iter().map(|(p, _)| p.into_tick()).max().unwrap() + 1;
+
+    // Plane-form notes multiset [note: (x: tick, y: tone), ...]
+    let mut notes_multiset: Vec<Point> = song
+        .notes
+        .into_iter()
+        .map(|(p, n)| (p.into_tick(), n.tone()))
+        .collect();
+    notes_multiset.sort_unstable();
+
+    // Left point of translation {offset: [note_point, ...], ...}
+    let offsets: HashMap<Tick, Vec<Point>> = notes_multiset
+        .iter()
+        .enumerate()
+        .flat_map(|(i, r)| notes_multiset[..i].iter().map(move |l| (l, r)))
+        .fold(Default::default(), |mut acc, ((tl, nl), (tr, nr))| {
+            let offset = match nr == nl {
+                true => (tr - tl).min(song_length - (tr - tl)),
+                false => return acc,
+            };
+            acc.entry(offset).or_default().push((*tl, *nl));
+            acc
+        });
+
+    let mut offset_counts: Vec<(usize, Tick)> = offsets
+        .into_iter()
+        .filter(|(_, v)| v.len() > 1)
+        .map(|(k, v)| (v.len(), k))
+        .collect();
+    offset_counts.sort_unstable_by(|a, b| b.cmp(&a));
+
+    // TEST: This theory is unstable
+
+    let mut subset: Counter<Point> = Default::default();
+    let mut pattern: HashSet<Tick> = From::from([0]);
+
+    for &(count, offset) in &offset_counts {
+        // if count < subset.len() {
+        //     continue;
+        // }
+
+        let pat = {
+            let mut pat = pattern.clone();
+            pat.insert(offset);
+            pat
+        };
+        let sub = satisfy_constraints(
+            &mut notes_multiset.iter().copied().collect(),
+            &pat,
+            song_length,
+        );
+        if sub.len() >= subset.len() {
+            subset = sub;
+            pattern = pat;
+
+            print!(
+                "offset {}: count {}, pattern: {:?}, subset:",
+                offset, count, pattern
+            );
+            for ((tick, _), cnt) in &subset {
+                print!(" ({}: {}),", tick, cnt);
+            }
+            println!("");
+        }
+    }
+
+    // Collect matched subset and remaining notes into slices
+    let mut subset_counts: HashMap<Point, usize> = subset.iter().map(|(&p, &c)| (p, c)).collect();
+    let mut matched_notes: Vec<(Tick, Note)> = Vec::new();
+    let mut remaining_notes: Vec<(Tick, Note)> = Vec::new();
+
+    for &(tick, tone) in &notes_multiset {
+        let note: Note = tone.into();
+        if let Some(count) = subset_counts.get_mut(&(tick, tone)) {
+            if *count > 0 {
+                matched_notes.push((tick, note));
+                *count -= 1;
+                continue;
+            }
+        }
+        remaining_notes.push((tick, note));
+    }
+
+    song.notes = Notes::reassign_layers(vec![matched_notes, remaining_notes], 1);
+    song.header.is_loop = true;
+    song.save_nbs("fixtures/transposition.nbs").unwrap();
+}
+
+/// Approximate Minkowski sum decomposition via conflict resolution for noisy data.
+///
+/// Find all possible positions for the `pattern`,
+/// then iteratively select the group with the least conflict.
+///
+/// Suppose multiset = [0, 1, 2, 3, 3, 5, 6], pattern = [0, 1, 3], Then:
+///
+/// | 0^1 | 1^1 | 2^1 | 3^2 | 5^1 | 6^1 |
+/// |-----|-----|-----|-----|-----|-----|
+/// | A0  | A1  |     | A3  |     |     |
+/// |     | B0  | B1  |     | B3  |     |
+/// |     |     | C0  | C1  |     | C3  |
+///
+/// Group A overlap degree: 4 (1/1 + 2/1 + 2/2)
+/// Group B overlap degree: 5 (2/1 + 2/1 + 1/1)
+/// Group C overlap degree: 4 (2/1 + 2/2 + 1/1)
+pub fn satisfy_constraints(
+    multiset: &mut Counter<Point>,
+    pattern: &HashSet<Tick>,
+    song_length: Tick,
+) -> Counter<Point> {
+    debug_assert!(pattern.len() > 1);
+    debug_assert!(pattern.get(&0).is_some());
+    // if cfg!(debug_assertions) {
+    //     print!("multiset:");
+    //     for (point, count) in multiset.iter() {
+    //         let (tick, (inst, key)) = point;
+    //         print!(" ({}: {}, {}, x{})", tick, inst, key, count);
+    //     }
+    //     println!();
+    //     println!("pattern: {:?}", pattern);
+    //     println!("song_length: {:?}", song_length);
+    //     println!();
+    // }
+
+    // Any positions satisfying the matching pattern
+    let find_groups = |multiset: &Counter<Point>| -> Option<Vec<BTreeSet<Point>>> {
+        let groups: Vec<BTreeSet<Point>> = multiset
+            .keys()
+            .filter_map(|&(anchor, tone)| {
+                let map_pat = |pat: &Tick| ((anchor + pat) % song_length, tone);
+                let has_stock = |pp: &Point| multiset.contains_key(pp);
+                let group: BTreeSet<Point> = pattern.iter().map(map_pat).collect();
+                group.iter().all(has_stock).then_some(group)
+            })
+            .collect();
+        (!groups.is_empty()).then_some(groups)
+    };
+
+    // Matched multiset
+    let mut result: Counter<Point> = Default::default();
+
+    while let Some(groups) = find_groups(&multiset) {
+        // Count how many groups cover each point (multiplicity)
+        let multiplicity: Counter<Point> = groups.iter().flat_map(|g| g).copied().collect();
+
+        // Least conflict; tie-break by smallest point
+        let chosen_group = groups
+            .into_iter()
+            .min_by_key(|group| {
+                let score: f32 = group
+                    .iter()
+                    .map(|&pp| multiplicity[&pp] as f32 / multiset[&pp] as f32)
+                    .sum();
+                (OrderedFloat(score), group.first().copied())
+            })
+            .unwrap();
+
+        // Move the chosen group to result
+        multiset.subtract(chosen_group.iter().copied());
+        result.extend(chosen_group);
+    }
+    result
+}
+
+//
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+#[test]
+#[cfg(feature = "unstable")]
+pub fn test_deconvolve_d1() {
+    // TODO: 优化空间巨大，但先验证理论模型
+    //       开放性问题，评价模型尚不完善
+
+    /// find best pattern arrangement via backtracking
+    fn deconvolve(points_mset: &Vec<Point>, loop_len: Tick) -> Vec<Point> {
+        let mut result: Vec<Point> = Default::default();
+        let mut candidate: Vec<Point>;
+        // stack
+        let mut task = vec![points_mset.iter()];
+        let mut pattern: Vec<Point> = vec![];
+        let mut base_size: Vec<usize> = vec![0];
+
+        while !task.is_empty() {
+            // backtrack
+            let Some(p) = task.last_mut().unwrap().next() else {
+                task.pop();
+                pattern.pop();
+                base_size.pop();
+                continue;
+            };
+            // matchs
+            pattern.push(*p);
+            candidate = place_pattern(points_mset, &pattern, loop_len);
+
+            if candidate.len() >= *base_size.last().unwrap() {
+                // recurse
+                task.push(task.last().unwrap().clone());
+                base_size.push(candidate.len());
+                // elected
+                if candidate.len() > result.len() {
+                    result = candidate;
+                } // TODO: tie-break if equal
+            } else {
+                pattern.pop();
+            }
+        }
+        result
+    }
+
+    /// sequential matching. sensitive to input, prone to local optima
+    fn place_pattern(points_mset: &[Point], pattern: &[Point], loop_len: Tick) -> Vec<Point> {
+        let mut points: Counter<Point> = points_mset.iter().copied().collect();
+        let pattern: Counter<Point> = pattern.iter().copied().collect();
+        let mut result = Vec::with_capacity(points.len());
+
+        for i in 0..loop_len {
+            let offset_pattern: Counter<Point> = pattern
+                .iter()
+                .map(|(&(t, n), &c)| (((t + i) % loop_len, n), c))
+                .collect();
+
+            if offset_pattern
+                .iter()
+                .all(|(p, &c)| points.get(p).copied().unwrap_or(0) >= c)
+            {
+                for (p, &c) in &offset_pattern {
+                    *points.get_mut(p).unwrap() -= c;
+                    result.extend(repeat(*p).take(c));
+                }
+            }
+        }
+        result
+    }
+
+    //
+
+    let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
+
+    // params
+    let song_length: Tick = song.notes.iter().map(|(p, _)| p.into_tick()).max().unwrap() + 1;
+
+    // 构建点集 multiset
+    let points_mset: Vec<Point> = song
+        .notes
+        .iter()
+        .map(|(pos, note)| (pos.into_tick(), (note.tone())))
+        .collect();
+
+    // 找到最大重复模式
+    let pattern = deconvolve(&points_mset, song_length);
+
+    // 将音符分为模式匹配部分和剩余部分
+    let mut pattern_counter: Counter<Point> = pattern.iter().copied().collect();
+    let mut matched: Vec<(Tick, Note)> = Vec::new();
+    let mut remaining: Vec<(Tick, Note)> = Vec::new();
+
+    for (pos, note) in &song.notes {
+        let p = (pos.into_tick(), note.tone());
+        if pattern_counter.get(&p).copied().unwrap_or(0) > 0 {
+            *pattern_counter.get_mut(&p).unwrap() -= 1;
+            matched.push((pos.into_tick(), note.clone()));
+        } else {
+            remaining.push((pos.into_tick(), note.clone()));
+        }
+    }
+
+    song.notes = Notes::reassign_layers(vec![matched, remaining], 1);
+    song.header.is_loop = true;
+    song.save_nbs("fixtures/deconvolve.nbs").unwrap();
+}
+
+#[test]
+#[cfg(feature = "unstable")]
+pub fn test_deconvolve() {
+    fn deconvolve(points_mset: &[Point], loop_len: Tick) -> Vec<Point> {
+        let points: Counter<Point> = points_mset.iter().copied().collect();
+        let mut local_points: HashMap<Point, Counter<Tick>> = points
+            .keys()
+            .map(|&(tick, note)| {
+                let offset_by_tick = |(&(ti, _), &c)| ((ti + loop_len - tick) % loop_len, c);
+                ((tick, note), points.iter().map(offset_by_tick).collect())
+            })
+            .collect();
+        // let mut local_points: HashMap<Point, HashSet<Tick>> = points.keys()
+        //     .map(|&(tick, note)| {
+        //         let offset_by_tick = |&(ti, _)| (ti + loop_len - tick) % loop_len;
+        //         ((tick, note), points.keys().map(offset_by_tick).collect())
+        //     }).collect();
+
+        // {N} -> {{K}} * {T} = {{M}} - residual
+        let mut note_palette: HashSet<Tone> = Default::default();
+        let mut time_pattern: HashSet<Tick> = Default::default();
+        let mut conv_kernel: Counter<Tick> = Default::default();
+
+        // TODO: 1. 建立初始值
+        //       2. 迭代贪婪的匹配，消耗 loval_points 对 conv_kernel 做不缩小匹配
+        //       3. 重建为整体返回
+
+        while !local_points.is_empty() {
+            //
+        }
+
+        todo!()
+    }
+
+    fn seed_best<'a, I: IntoIterator<Item = (&'a Point, &'a Counter<Tick>)>>(
+        local_points: I,
+    ) -> Counter<Tick> {
+        let local_points = Vec::from_iter(local_points);
+        // local_points.sort_unstable_by_key(|(p, _)| *p);
+        let mut best_size: usize = Default::default();
+        let mut best: Counter<Tick> = Default::default();
+
+        // TODO: 先比较最多的两个局部坐标系的交集作为迭代初始值。
+        // TODO: 一个音在时间上的图案，不随时间变化而变化，而只是位移。
+        //       同种音和不同音的匹配行为应该有区分。
+        for ((&(_tkl, _ntl), cntl), (&(_tkr, _ntr), cntr)) in local_points
+            .iter()
+            .enumerate()
+            .flat_map(|(i, r)| local_points[..i].iter().map(move |l| (*l, *r)))
+        {
+            // if ntl == ntr {}
+
+            let candidate: Counter<Tick> = cntl
+                .iter()
+                .filter_map(|(&t, &cnt)| {
+                    cntr.get(&t)
+                        .map(|&cr| cnt.min(cr))
+                        .filter(|&c| c > 0)
+                        .map(|c| (t, c))
+                })
+                .collect();
+
+            let candidate_size = candidate.values().sum();
+            if candidate_size > best_size {
+                best_size = candidate_size;
+                best = candidate;
+            }
+        }
+        best
+    }
+
+    /// sequential matching. sensitive to input, prone to local optima
+    fn place_pattern(points_mset: &[Point], pattern: &[Point], loop_len: Tick) -> Vec<Point> {
+        let mut points: Counter<Point> = points_mset.iter().copied().collect();
+        let pattern: Counter<Point> = pattern.iter().copied().collect();
+        let mut result = Vec::with_capacity(points.len());
+
+        for i in 0..loop_len {
+            let offset_pattern: Counter<Point> = pattern
+                .iter()
+                .map(|(&(t, n), &c)| (((t + i) % loop_len, n), c))
+                .collect();
+
+            if offset_pattern
+                .iter()
+                .all(|(p, &c)| points.get(p).copied().unwrap_or(0) >= c)
+            {
+                for (p, &c) in &offset_pattern {
+                    *points.get_mut(p).unwrap() -= c;
+                    result.extend(repeat(*p).take(c));
+                }
+            }
+        }
+        result
+    }
+
+    //
+
+    let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
+
+    // params
+    let song_length: Tick = song.notes.iter().map(|(p, _)| p.into_tick()).max().unwrap() + 1;
+
+    // 构建点集 multiset
+    let points_mset: Vec<Point> = song
+        .notes
+        .iter()
+        .map(|(pos, note)| (pos.into_tick(), note.tone()))
+        .collect();
+
+    // 找到最大重复模式
+    let pattern = deconvolve(&points_mset, song_length);
+
+    // 将音符分为模式匹配部分和剩余部分
+    let mut pattern_counter: Counter<Point> = pattern.iter().copied().collect();
+    let mut matched: Vec<(Tick, Note)> = Vec::new();
+    let mut remaining: Vec<(Tick, Note)> = Vec::new();
+
+    for (pos, note) in &song.notes {
+        let p = (pos.into_tick(), note.tone());
+        if pattern_counter.get(&p).copied().unwrap_or(0) > 0 {
+            *pattern_counter.get_mut(&p).unwrap() -= 1;
+            matched.push((pos.into_tick(), note.clone()));
+        } else {
+            remaining.push((pos.into_tick(), note.clone()));
+        }
+    }
+
+    song.notes = Notes::reassign_layers(vec![matched, remaining], 1);
+    song.header.is_loop = true;
+    song.save_nbs("fixtures/deconvolve.nbs").unwrap();
+}
+
+// Schematic generation
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+#[test]
+fn dump_litematic() {
+    use rustmatica::Litematic;
+    let litematic: Litematic<
+        mcdata::GenericBlockState,
+        mcdata::GenericEntity,
+        mcdata::GenericBlockEntity,
+    > = Litematic::read_file("fixtures/Unnamed.litematic").unwrap();
+    for (i, region) in litematic.regions.iter().enumerate() {
+        println!("=== Region {}: {} ===", i, region.name);
+        println!("Position: {:?}, Size: {:?}", region.position, region.size);
+        for y in 0..region.size.y.abs() {
+            println!("--- Layer y={} ---", y);
+            for z in 0..region.size.z.abs() {
+                for x in 0..region.size.x.abs() {
+                    let pos = mcdata::util::BlockPos::new(x, y, z);
+                    let block: &mcdata::GenericBlockState = region.get_block(pos);
+                    if block.name != "minecraft:air" {
+                        println!("{:#?}", block);
+                    }
+                }
+                println!();
+            }
+        }
+    }
+    panic!("stop here");
+}
+
+#[test]
+fn test_linear_layout() {
+    use crate::schematic::MultiLinearLayout;
+    use crate::schematic::SchematicBuilder;
+
+    let song = Song::open_nbs("fixtures/source.nbs").unwrap();
+    let scale = (20.0 / song.header.tempo).round() as u32;
+    let notes: Notes = song
+        .notes
+        .into_iter()
+        .map(|(pos, note)| {
+            let tick = match scale > 1 {
+                true => pos.into_tick() * scale,
+                false => pos.into_tick(),
+            };
+            (Position::new(tick, pos.layer()), note)
+        })
+        .collect();
+    let n: Vec<Notes> = notes.split_by_layer_gaps();
+    let layout = MultiLinearLayout::new::<Vec<Notes>, _, _>(n, 0);
+    let litematic = SchematicBuilder(layout).build("Linear from source.nbs", "rustnbs");
+    litematic
+        .write_file("fixtures/generated_linear.litematic")
+        .unwrap();
+}
+
+// Helpers
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// Greedily find up to `max_off` offsets and the union of notes they cover.
+fn best_offsets(
+    notes: &Notes<Position, Note>,
+    candidates: &[NonZero<Tick>],
+    song_len: Tick,
+    max_off: usize,
+) -> (BTreeSet<NonZero<Tick>>, HashSet<(Tick, Tone)>) {
+    let pos_set: HashSet<(Tick, Tone)> = notes
+        .iter()
+        .map(|(p, n)| (p.into_tick(), n.tone()))
+        .collect();
+
+    let mut planes: Vec<(NonZero<Tick>, HashSet<(Tick, Tone)>)> = candidates
+        .iter()
+        .filter_map(|&off| {
+            let o = off.get();
+            let covered: HashSet<_> = pos_set
+                .iter()
+                .filter(|&&(t, tone)| {
+                    (t + o < song_len && pos_set.contains(&(t + o, tone)))
+                        || (t >= o && pos_set.contains(&(t - o, tone)))
+                })
+                .copied()
+                .collect();
+            if covered.is_empty() {
+                None
+            } else {
+                Some((off, covered))
+            }
+        })
+        .collect();
+
+    planes.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+
+    let mut selected = BTreeSet::new();
+    let mut covered_all: HashSet<(Tick, Tone)> = HashSet::new();
+
+    for _ in 0..max_off {
+        let best = planes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, (off, cov))| {
+                if selected.contains(off) {
+                    return None;
+                }
+                let new = cov.difference(&covered_all).count();
+                (new > 0).then_some((i, new))
+            })
+            .max_by_key(|&(_, new)| new);
+
+        match best {
+            Some((idx, _)) => {
+                let (off, cov) = &planes[idx];
+                covered_all.extend(cov.iter().copied());
+                selected.insert(*off);
+            }
+            None => break,
+        }
+    }
+
+    (selected, covered_all)
+}
+
+#[test]
+#[cfg(feature = "unstable")]
+#[allow(deprecated)]
+fn test_tapped_layout() {
+    let song = Song::open_nbs("fixtures/source.nbs").unwrap();
+    let song_len = song.len();
+    let mut remaining = song.notes.clone();
+    let mut tecs = Vec::new();
+
+    // candidate offsets: vector table (step=8) + bar-aligned
+    let bar = (song.header.tempo * 4.0) as Tick;
+    let all_plane = TpPlane::from_iter(remaining.clone());
+    let vt = VectorTable::from_plane(&all_plane, NonZero::new(song_len), 8);
+    let mut candidates: BTreeSet<NonZero<Tick>> =
+        vt.keys().copied().filter_map(NonZero::new).collect();
+    for m in 1..=8 {
+        if let Some(o) = NonZero::new(bar * m) {
+            if o.get() < song_len {
+                candidates.insert(o);
+            }
+        }
+    }
+    let candidates: Vec<NonZero<Tick>> = candidates.into_iter().collect();
+    eprintln!(
+        "tempo={}, bar={}, {} candidate offsets",
+        song.header.tempo,
+        bar,
+        candidates.len()
+    );
+
+    // 3 rounds of greedy matching + residual
+    for round in 0..3 {
+        if remaining.is_empty() {
+            break;
+        }
+        let (offs, covered) = best_offsets(&remaining, &candidates, song_len, 1);
+        if offs.is_empty() {
+            break;
+        }
+
+        // only covered notes → tight kernel → limited expansion
+        let covered_plane: TpPlane = covered.into_iter().map(|(t, tone)| (t, tone)).collect();
+        let tec = TransEqClass::new(offs, covered_plane);
+        #[allow(deprecated)]
+        let (pat, res) = tec.decompose(&remaining, song_len);
+        if pat.is_empty() {
+            break;
+        }
+
+        eprintln!(
+            "  round {}: {:?} → {} pattern notes",
+            round + 1,
+            tec.offsets().iter().map(|o| o.get()).collect::<Vec<_>>(),
+            pat.len(),
+        );
+        tecs.push(tec);
+        remaining = res;
+    }
+
+    // residual as a no-offset TEC
+    if !remaining.is_empty() {
+        eprintln!("  residual: {} notes", remaining.len());
+        tecs.push(TransEqClass::new(
+            BTreeSet::new(),
+            TpPlane::from_iter(remaining),
+        ));
+    }
+
+    eprintln!("found {} TEC groups total", tecs.len());
+    let layout = TappedLayout::new(tecs, NonZero::new(18), false);
+    let litematic = SchematicBuilder(layout).build("Tapped from source.nbs", "rustnbs");
+    litematic
+        .write_file("fixtures/generated_tapped.litematic")
+        .unwrap();
+
+    eprintln!("litematic regions: {}", litematic.regions.len());
+    for (i, r) in litematic.regions.iter().enumerate() {
+        eprintln!("  region[{}]: size {:?}", i, r.size);
+        let mut non_air = 0;
+        for y in 0..r.size.y.abs() {
+            for z in 0..r.size.z.abs() {
+                for x in 0..r.size.x.abs() {
+                    let pos = mcdata::util::BlockPos::new(x, y, z);
+                    let block = r.get_block(pos);
+                    if block.name != "minecraft:air" {
+                        non_air += 1;
+                    }
+                }
+            }
+        }
+        eprintln!("  region[{}]: {} non-air blocks", i, non_air);
+    }
 }

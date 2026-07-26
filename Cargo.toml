@@ -1,18 +1,28 @@
 [package]
 name = "rsnbs"
 version = "0.1.2"
-authors = ["Joppe Stuyck <joppe@stuyck.be>"]
-edition = "2021"
-description = "IO functionality for the OpenNBS .nbs format"
-license = "MIT"
+authors = ["kemiamu <kemya@tuta.io>", "Joppe Stuyck <joppe@stuyck.be>"]
+edition = "2024"
+description = "A fundamental library for working with the OpenNBS .nbs format"
+license = "AGPL-3.0-or-later"
 repository = "https://github.com/omninbs/rsnbs"
 readme = "README.md"
 keywords = ["nbs", "music", "minecraft", "file-format"]
 categories = ["games"]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+default = ["unstable", "cli"]
+unstable = []
+cli = ["dep:clap", "clap/derive"]
 
 [dependencies]
-paste = "1.0"
-byteorder = "1.4"
-diff = "0.1"
+clap = { version = "4.6.1", optional = true }
+counter = "0.7.1"
+encoding_rs = "0.8.35"
+itertools = "0.15.0"
+mcdata = "0.4.0"
+rustmatica = "0.5.2"
+thiserror = "2.0.18"
+
+[dev-dependencies]
+ordered-float = "5.3.0"
