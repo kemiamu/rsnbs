@@ -275,7 +275,7 @@ pub struct TransEqClass {
 }
 
 impl TransEqClass {
-    pub(crate) fn new(offsets: BTreeSet<NonZero<Tick>>, points: TpPlane) -> Self {
+    pub fn new(offsets: BTreeSet<NonZero<Tick>>, points: TpPlane) -> Self {
         Self { offsets, points }
     }
 
