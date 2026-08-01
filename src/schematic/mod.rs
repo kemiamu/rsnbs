@@ -1,6 +1,6 @@
 //! Generate Minecraft litematic projections from NBS songs.
 
-use crate::note::{Instrument, Tone};
+use crate::note::{ImitateInstrument, Instrument, Tone};
 use itertools::iproduct;
 use mcdata::BlockState;
 use mcdata::{GenericBlockState, util::BlockPos};
@@ -351,7 +351,7 @@ impl Tone {
     /// returns the minecraft note block block state for this tone.
     pub fn note_block_state(&self) -> Option<GenericBlockState> {
         let note = self.key().minecraft_note()?;
-        let instr = self.instrument().instrument_property();
+        let instr = self.instrument().note_property();
         let properties = HashMap::from([
             ("note".into(), note.to_string().into()),
             ("powered".into(), "false".into()),
@@ -362,53 +362,87 @@ impl Tone {
             properties,
         })
     }
+
+    /// returns the block under the note block for this tone's instrument sound.
+    pub fn instrument_block_state(&self) -> Option<GenericBlockState> {
+        if !self.is_valid() || matches!(self.instrument(), Instrument::Imitate(_)) {
+            return None;
+        }
+        let block = self.instrument().block_resource().unwrap();
+        Some(GenericBlockState {
+            name: block.into(),
+            properties: HashMap::new(),
+        })
+    }
+
+    /// returns the mob head block for this tone, if it is a mob head instrument.
+    pub fn head_block_state(&self) -> Option<GenericBlockState> {
+        if !self.is_valid() || !matches!(self.instrument(), Instrument::Imitate(_)) {
+            return None;
+        }
+        let block = self.instrument().block_resource().unwrap();
+        Some(GenericBlockState {
+            name: block.into(),
+            properties: HashMap::new(),
+        })
+    }
 }
 
 impl Instrument {
-    /// Minecraft render data, indexed parallel to Instrument::NBS_INDEX.
-    const INSTRUMENT_MAP: &[(&'static str, &'static str)] = &[
-        ("harp", "minecraft:dirt"),
-        ("bass", "minecraft:oak_planks"),
-        ("basedrum", "minecraft:stone"),
-        ("snare", "minecraft:sand"),
-        ("hat", "minecraft:glass"),
-        ("guitar", "minecraft:white_wool"),
-        ("flute", "minecraft:clay"),
-        ("bell", "minecraft:gold_block"),
-        ("chime", "minecraft:packed_ice"),
-        ("xylophone", "minecraft:bone_block"),
-        ("iron_xylophone", "minecraft:iron_block"),
-        ("cow_bell", "minecraft:soul_sand"),
-        ("didgeridoo", "minecraft:pumpkin"),
-        ("bit", "minecraft:emerald_block"),
-        ("banjo", "minecraft:hay_block"),
-        ("pling", "minecraft:glowstone"),
-        ("trumpet", "minecraft:waxed_copper_block"),
-        ("trumpet_exposed", "minecraft:waxed_exposed_copper"),
-        ("trumpet_weathered", "minecraft:waxed_weathered_copper"),
-        ("trumpet_oxidized", "minecraft:waxed_oxidized_copper"),
-        ("creeper", "minecraft:creeper_head"),
-        ("skeleton", "minecraft:skeleton_skull"),
-        ("ender_dragon", "minecraft:dragon_head"),
-        ("wither_skeleton", "minecraft:wither_skeleton_skull"),
-        ("piglin", "minecraft:piglin_head"),
-        ("zombie", "minecraft:zombie_head"),
-        ("custom_head", "minecraft:player_head"),
-    ];
-
-    /// returns the instrument property string for minecraft note block state.
-    pub fn instrument_property(&self) -> &'static str {
-        let idx = u8::from(*self) as usize;
-        Self::INSTRUMENT_MAP
-            .get(idx)
-            .map(|(prop, _)| *prop)
-            .unwrap_or("custom")
+    /// returns the minecraft instrument property string for note block state.
+    pub fn note_property(&self) -> &'static str {
+        match self {
+            Self::Harp => "harp",
+            Self::DoubleBass => "bass",
+            Self::BassDrum => "basedrum",
+            Self::SnareDrum => "snare",
+            Self::Click => "hat",
+            Self::Guitar => "guitar",
+            Self::Flute => "flute",
+            Self::Bell => "bell",
+            Self::Chime => "chime",
+            Self::Xylophone => "xylophone",
+            Self::IronXylophone => "iron_xylophone",
+            Self::CowBell => "cow_bell",
+            Self::Didgeridoo => "didgeridoo",
+            Self::Bit => "bit",
+            Self::Banjo => "banjo",
+            Self::Pling => "pling",
+            Self::Trumpet => "trumpet",
+            Self::TrumpetExposed => "trumpet_exposed",
+            Self::TrumpetWeathered => "trumpet_weathered",
+            Self::TrumpetOxidized => "trumpet_oxidized",
+            Self::Imitate(instrument) => instrument.note_property(),
+            Self::Other(_) => "custom",
+        }
     }
 
     /// returns the block resource name for this instrument.
     pub fn block_resource(&self) -> Option<&'static str> {
-        let idx = u8::from(*self) as usize;
-        Self::INSTRUMENT_MAP.get(idx).map(|(_, block)| *block)
+        Some(match self {
+            Self::Harp => "minecraft:dirt",
+            Self::DoubleBass => "minecraft:oak_planks",
+            Self::BassDrum => "minecraft:stone",
+            Self::SnareDrum => "minecraft:sand",
+            Self::Click => "minecraft:glass",
+            Self::Guitar => "minecraft:white_wool",
+            Self::Flute => "minecraft:clay",
+            Self::Bell => "minecraft:gold_block",
+            Self::Chime => "minecraft:packed_ice",
+            Self::Xylophone => "minecraft:bone_block",
+            Self::IronXylophone => "minecraft:iron_block",
+            Self::CowBell => "minecraft:soul_sand",
+            Self::Didgeridoo => "minecraft:pumpkin",
+            Self::Bit => "minecraft:emerald_block",
+            Self::Banjo => "minecraft:hay_block",
+            Self::Pling => "minecraft:glowstone",
+            Self::Trumpet => "minecraft:waxed_copper_block",
+            Self::TrumpetExposed => "minecraft:waxed_exposed_copper",
+            Self::TrumpetWeathered => "minecraft:waxed_weathered_copper",
+            Self::TrumpetOxidized => "minecraft:waxed_oxidized_copper",
+            Self::Imitate(instrument) => instrument.block_resource(),
+            Self::Other(_) => return None,
+        })
     }
 
     /// returns the block under the note block for this instrument's sound.
@@ -436,6 +470,34 @@ impl Instrument {
     }
 }
 
+impl ImitateInstrument {
+    /// returns the minecraft instrument property string for note block state.
+    pub fn note_property(self) -> &'static str {
+        match self {
+            Self::Creeper => "creeper",
+            Self::Skeleton => "skeleton",
+            Self::Dragon => "ender_dragon",
+            Self::WitherSkeleton => "wither_skeleton",
+            Self::Piglin => "piglin",
+            Self::Zombie => "zombie",
+            Self::CustomHead => "custom_head",
+        }
+    }
+
+    /// returns the block resource name for this mob head.
+    pub fn block_resource(self) -> &'static str {
+        match self {
+            Self::Creeper => "minecraft:creeper_head",
+            Self::Skeleton => "minecraft:skeleton_skull",
+            Self::Dragon => "minecraft:dragon_head",
+            Self::WitherSkeleton => "minecraft:wither_skeleton_skull",
+            Self::Piglin => "minecraft:piglin_head",
+            Self::Zombie => "minecraft:zombie_head",
+            Self::CustomHead => "minecraft:player_head",
+        }
+    }
+}
+
 // Helpers
 //
 // ++++++++++++============++++++++++++============++++++++++++============
@@ -458,7 +520,7 @@ fn inst_block<T: AsRef<Tone>>(
     note: Option<T>,
     fallback: fn() -> GenericBlockState,
 ) -> GenericBlockState {
-    note.and_then(|t| t.as_ref().instrument().instrument_block())
+    note.and_then(|t| t.as_ref().instrument_block_state())
         .unwrap_or_else(fallback)
 }
 

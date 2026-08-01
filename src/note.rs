@@ -144,6 +144,12 @@ impl Tone {
     pub fn key(&self) -> Key {
         self.key
     }
+
+    /// returns whether this tone is renderable: a built-in instrument with a
+    /// minecraft note (f#3-f#5).
+    pub(crate) fn is_valid(&self) -> bool {
+        !matches!(self.instrument, Instrument::Other(_)) && self.key.minecraft_note().is_some()
+    }
 }
 
 impl From<Note> for Tone {
@@ -217,7 +223,7 @@ impl Default for Instrument {
 }
 
 impl Instrument {
-    /// Maps NBS file instrument index → (variant, Minecraft property, Minecraft block).
+    /// Maps NBS file instrument index → variant.
     /// The array position is the NBS serialization index.
     const NBS_INDEX: &'static [Instrument] = &[
         Instrument::Harp,
