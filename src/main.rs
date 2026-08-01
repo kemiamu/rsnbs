@@ -167,7 +167,7 @@ struct Decompose {
 #[cfg(feature = "unstable")]
 impl Decompose {
     fn run(self) {
-        // 有向锚点集：p ∈ M 且 p+o ∈ M 的点，重数取 min
+        // 有向锚点集：p 属于 M 且 p+o 属于 M 的点，重数取 min
         fn anchors_of(plane: &TpPlane, o: Tick) -> TpPlane {
             let mut out = TpPlane::default();
             for (&(t, tone), &c) in plane.iter() {

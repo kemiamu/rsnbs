@@ -2,7 +2,6 @@ use crate::note::{Note, Notes, Tone};
 use crate::types::{Index, IntoTick, Position, Tick};
 use counter::Counter;
 use itertools::{Itertools, iproduct};
-use std::collections::HashMap;
 use std::collections::{BTreeMap, BTreeSet};
 use std::iter::repeat;
 use std::num::NonZero;
@@ -12,10 +11,10 @@ use std::ops::{BitAnd, Deref, DerefMut};
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// A point in the TP (tick–tone) plane.
+/// A point in the TP (tick-tone) plane.
 pub type Point = (Tick, Tone);
 
-/// TP (tick–tone) plane multiset.
+/// TP (tick-tone) plane multiset.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TpPlane(Counter<Point>);
 
@@ -105,7 +104,7 @@ impl VectorTable {
     /// FP-Growth to discover frequent offset sets, then selecting the one
     /// with the best effective-coverage-to-simplicity ratio.
     ///
-    /// `min_support` (0.0–1.0) controls the minimum relative frequency an
+    /// `min_support` (0.0-1.0) controls the minimum relative frequency an
     /// offset must have among anchor points to be considered frequent.
     #[deprecated(note = "FP-Growth TEC mining is under analysis; results are unreliable")]
     pub fn mine_tec(&self, min_support: f64) -> Option<TransEqClass> {
@@ -115,7 +114,7 @@ impl VectorTable {
 
         // Build transaction database:
         // For each unique anchor point, collect all offsets whose plane contains it.
-        // Each such (point → set of offsets) is one transaction.
+        // Each such (point -> set of offsets) is one transaction.
         let mut point_offsets: BTreeMap<Point, BTreeSet<Tick>> = BTreeMap::new();
         for (&offset, plane) in self.iter() {
             for (point, _count) in plane.iter() {
@@ -173,7 +172,7 @@ impl VectorTable {
                 continue;
             }
 
-            // Score: effective (pruned) points² / n_offsets.
+            // Score: effective (pruned) points^2 / n_offsets.
             #[allow(deprecated)]
             let effective = TransEqClass {
                 offsets: offsets.clone(),
@@ -194,7 +193,7 @@ impl VectorTable {
 
     /// Mine the largest TEC with at least `min_offsets` offsets using greedy
     /// plane intersection. Unlike `mine_tec` (which requires frequency via
-    /// FP-Growth), this only needs non-empty intersection — it finds TECs
+    /// FP-Growth), this only needs non-empty intersection - it finds TECs
     /// with more offsets that FP-Growth might miss due to support threshold.
     #[deprecated(note = "greedy TEC mining is under analysis; results are unreliable")]
     pub fn find_largest_tec(&self, min_offsets: usize) -> Option<TransEqClass> {
@@ -395,7 +394,7 @@ struct FpNode {
 #[deprecated(note = "FP-Growth analysis is under analysis; will be replaced")]
 struct FpTree {
     nodes: Vec<FpNode>,
-    /// header table: item → (total_count, first_node_index)
+    /// header table: item -> (total_count, first_node_index)
     header: BTreeMap<Tick, (usize, Option<usize>)>,
     min_support: usize,
 }
@@ -422,7 +421,7 @@ impl FpTree {
         }
         freq_items.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 
-        // Build header table: item → (total_count, first_node_index).
+        // Build header table: item -> (total_count, first_node_index).
         let mut header: BTreeMap<Tick, (usize, Option<usize>)> = BTreeMap::new();
         for &(item, count) in &freq_items {
             header.insert(item, (count, None));
@@ -540,7 +539,7 @@ impl FpTree {
             let node = &self.nodes[node_idx];
             let count = node.count;
 
-            // Build the prefix path (root → parent of this node).
+            // Build the prefix path (root -> parent of this node).
             let mut path = Vec::new();
             let mut curr = node.parent;
             while curr != 0 {
@@ -652,7 +651,7 @@ impl Notes<Position, Note> {
         stacked.collect()
     }
 
-    // Experimental — gated behind `unstable` feature
+    // Experimental - gated behind `unstable` feature
     //
     // ++++++++++++============++++++++++++============++++++++++++============
 

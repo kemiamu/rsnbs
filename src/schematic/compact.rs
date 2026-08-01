@@ -89,7 +89,7 @@ pub struct CompactLayout {
 impl CompactLayout {
     const ELEVATION: i32 = 3;
 
-    /// Create a compact layout from redstone-tick–grouped notes.
+    /// Create a compact layout from redstone-tick-grouped notes.
     ///
     /// The input must already be split into a single redstone tick line.
     /// See [`MultiCompactLayout`] for the high-level constructor that handles
@@ -346,7 +346,7 @@ impl DerefMut for Track {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// A stem–canopy tile pair.
+/// A stem-canopy tile pair.
 enum Tile {
     Delay(RedStoneTick),
     Link,

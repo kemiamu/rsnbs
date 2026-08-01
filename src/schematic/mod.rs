@@ -280,11 +280,11 @@ impl<L: Layout> Layout for WithFloor<L> {
 /// Which spatial direction sub-layouts are placed along.
 #[derive(Clone, Copy)]
 pub enum Axis {
-    /// East–west axis (X).
+    /// East-west axis (X).
     Easting,
     /// Vertical axis (Y).
     Elevation,
-    /// South–north axis (Z).
+    /// South-north axis (Z).
     Southing,
 }
 

@@ -872,7 +872,7 @@ fn test_tapped_layout() {
             break;
         }
 
-        // only covered notes → tight kernel → limited expansion
+        // only covered notes -> tight kernel -> limited expansion
         let covered_plane: TpPlane = covered.into_iter().map(|(t, tone)| (t, tone)).collect();
         let tec = TransEqClass::new(offs, covered_plane);
         #[allow(deprecated)]
@@ -882,7 +882,7 @@ fn test_tapped_layout() {
         }
 
         eprintln!(
-            "  round {}: {:?} → {} pattern notes",
+            "  round {}: {:?} -> {} pattern notes",
             round + 1,
             tec.offsets().iter().map(|o| o.get()).collect::<Vec<_>>(),
             pat.len(),
