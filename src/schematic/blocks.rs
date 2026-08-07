@@ -2,8 +2,11 @@
 
 use crate::note::{ImitateInstrument, Instrument, Tone};
 use mcdata::GenericBlockState;
-use std::borrow::Cow;
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
+
+// Tone block states
+//
+// ++++++++++++============++++++++++++============++++++++++++============
 
 impl Tone {
     /// returns the minecraft note block block state for this tone.
@@ -45,6 +48,10 @@ impl Tone {
         })
     }
 }
+
+// Instrument block states
+//
+// ++++++++++++============++++++++++++============++++++++++++============
 
 impl Instrument {
     /// returns the minecraft instrument property string for note block state.
@@ -128,6 +135,10 @@ impl Instrument {
     }
 }
 
+// ImitateInstrument block states
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
 impl ImitateInstrument {
     /// returns the minecraft instrument property string for note block state.
     pub fn note_property(self) -> &'static str {
@@ -155,6 +166,10 @@ impl ImitateInstrument {
         }
     }
 }
+
+// Block state helpers
+//
+// ++++++++++++============++++++++++++============++++++++++++============
 
 /// Note block, or fallback on None.
 pub fn note_block<T: AsRef<Tone>>(
