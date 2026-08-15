@@ -9,6 +9,8 @@
 
 This library references [pynbs](https://github.com/OpenNBS/pynbs) and implements its basic functionality, aiming to serve as a fundamental NBS file processing library with a few extra utilities on top. Currently supports version 6 of the NBS standard.
 
+It is also a concrete implementation of the [formal reduction of redstone music](DESIGN.md), pioneeringly validating the feasibility of its formal logic and layout structures.
+
 However, due to language differences, some adaptations have been made, so behavior may not always be consistent. Since this project is quite niche, it hasn't been thoroughly tested. If you encounter any issues or have feature requests, please submit an issue.
 
 This library is in early development with a frequently changing API. Please pin your dependency to a specific version.
