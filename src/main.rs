@@ -1,13 +1,12 @@
 use clap::Parser;
 use rsnbs::note::{Note, Notes};
-use rsnbs::reuse::reuse_flow;
+use rsnbs::reuse::{plan_to_tecs, reuse_flow};
 use rsnbs::schematic::{MultiCompactLayout, MultiLinearLayout, StackedLinearLayout};
 use rsnbs::schematic::{SchematicBuilder, TappedLayout, WithFloor};
 use rsnbs::song::Song;
 use rsnbs::types::{IntoTick, Tick};
-use rsnbs::util::{TpPlane, TransEqClass};
+use rsnbs::util::TpPlane;
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 use std::num::NonZero;
 
 // Cli
@@ -180,21 +179,10 @@ impl Decompose {
             );
         }
 
-        // 每层转为 TEC：偏移集（去 0）+ 容量安全核；残差作为空偏移层
-        let mut tecs: Vec<TransEqClass> = plan
-            .into_iter()
-            .map(|layer| {
-                let offsets: BTreeSet<NonZero<Tick>> = layer
-                    .scatter
-                    .into_iter()
-                    .skip(1)
-                    .filter_map(NonZero::new)
-                    .collect();
-                TransEqClass::new(offsets, layer.kernel)
-            })
-            .collect();
-        if !residual.is_empty() {
-            tecs.push(TransEqClass::new(BTreeSet::new(), residual));
+        // 物化适配：延迟线最小间距限制内的层进入 TEC，其余退回残差
+        let (tecs, skipped) = plan_to_tecs(plan, residual);
+        if skipped > 0 {
+            eprintln!("  {skipped} layer(s) skipped: min gap < 8");
         }
 
         let layout = TappedLayout::new(tecs, NonZero::new(18), false);

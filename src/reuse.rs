@@ -18,10 +18,11 @@
 
 use crate::note::Tone;
 use crate::types::Tick;
-use crate::util::TpPlane;
+use crate::util::{Point, TpPlane, TransEqClass};
 use itertools::Itertools;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
+use std::num::NonZero;
 
 // Layer
 //
@@ -43,6 +44,23 @@ impl Layer {
     }
 }
 
+// Multiset helpers
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// Add `count` to the multiplicity of `event` in `plane`.
+fn add_to(plane: &mut TpPlane, event: Point, count: usize) {
+    plane
+        .entry(event)
+        .and_modify(|mult| *mult += count)
+        .or_insert(count);
+}
+
+/// Add `count` to the support of `offset`.
+fn add_count(support: &mut BTreeMap<Tick, usize>, offset: Tick, count: usize) {
+    *support.entry(offset).or_default() += count;
+}
+
 // Expansion
 //
 // ++++++++++++============++++++++++++============++++++++++++============
@@ -53,9 +71,7 @@ pub fn expand(kernel: &TpPlane, scatter: &[Tick]) -> TpPlane {
     for &offset in scatter {
         for (&(tick, tone), &count) in kernel.iter() {
             if count > 0 {
-                out.entry((tick + offset, tone))
-                    .and_modify(|mult| *mult += count)
-                    .or_insert(count);
+                add_to(&mut out, (tick + offset, tone), count);
             }
         }
     }
@@ -98,7 +114,8 @@ pub fn autocorrelation(source: &TpPlane) -> BTreeMap<Tick, usize> {
         let ticks: Vec<Tick> = timeline.keys().copied().collect();
         for (index, &left) in ticks.iter().enumerate() {
             for &right in &ticks[index + 1..] {
-                *support.entry(right - left).or_default() += timeline[&left].min(timeline[&right]);
+                let matched = timeline[&left].min(timeline[&right]);
+                add_count(&mut support, right - left, matched);
             }
         }
     }
@@ -128,85 +145,132 @@ pub fn feasible_kernel(source: &TpPlane, scatter: &[Tick]) -> TpPlane {
 
     let mut kernel = TpPlane::default();
     for (tone, capacities) in &by_tone {
-        let mut available = capacities.clone();
-
-        // Anchors: points whose full offset neighborhood still has capacity.
-        let anchors: BTreeSet<Tick> = capacities
-            .keys()
-            .copied()
-            .filter(|&anchor| {
-                offsets
-                    .iter()
-                    .all(|&offset| capacities.get(&(anchor + offset)).copied().unwrap_or(0) > 0)
-            })
-            .collect();
-
-        // Anchor -> the ticks it covers (anchor + each offset).
-        let covered: BTreeMap<Tick, Vec<Tick>> = anchors
-            .iter()
-            .map(|&anchor| {
-                (
-                    anchor,
-                    offsets.iter().map(|&offset| anchor + offset).collect(),
-                )
-            })
-            .collect();
-
-        // Tick -> anchors covering it.
-        let mut by_tick: BTreeMap<Tick, BTreeSet<Tick>> = BTreeMap::new();
-        for (&anchor, ticks) in &covered {
-            for &tick in ticks {
-                by_tick.entry(tick).or_default().insert(anchor);
-            }
-        }
-
-        // Least-conflict first (conflict count excluding self), ties by anchor.
-        let mut ranked: BTreeSet<(usize, Tick)> = BTreeSet::new();
-        for (&anchor, ticks) in &covered {
-            let mut conflicts: BTreeSet<Tick> = BTreeSet::new();
-            for &tick in ticks {
-                if let Some(anchors) = by_tick.get(&tick) {
-                    conflicts.extend(anchors);
-                }
-            }
-            ranked.insert((conflicts.len() - 1, anchor));
-        }
-
-        let mut active: BTreeSet<Tick> = anchors;
-        while let Some(&key) = ranked.iter().next() {
-            ranked.remove(&key);
-            let (_, anchor) = key;
-            if !active.contains(&anchor) {
-                continue;
-            }
-            let ticks = &covered[&anchor];
-            let count = ticks
-                .iter()
-                .map(|tick| available.get(tick).copied().unwrap_or(0))
-                .min()
-                .unwrap_or(0);
-            if count > 0 {
-                kernel
-                    .entry((anchor, *tone))
-                    .and_modify(|mult| *mult += count)
-                    .or_insert(count);
-                for &tick in ticks {
-                    if let Some(cap) = available.get_mut(&tick) {
-                        *cap -= count;
-                    }
-                }
-            }
-            active.remove(&anchor);
-            for &tick in ticks {
-                if available.get(&tick).copied().unwrap_or(0) == 0 {
-                    if let Some(anchors) = by_tick.get(&tick) {
-                        active.retain(|a| !anchors.contains(a));
-                    }
-                }
-            }
-        }
+        kernel_for_tone(tone, capacities, &offsets, &mut kernel);
     }
     kernel
+}
+
+/// Per-tone greedy independent set over the anchor conflict graph.
+fn kernel_for_tone(
+    tone: &Tone,
+    capacities: &BTreeMap<Tick, usize>,
+    offsets: &[Tick],
+    kernel: &mut TpPlane,
+) {
+    let mut available = capacities.clone();
+
+    // Anchors: points whose full offset neighborhood still has capacity.
+    let anchors: BTreeSet<Tick> = capacities
+        .keys()
+        .copied()
+        .filter(|&anchor| has_full_neighborhood(capacities, offsets, anchor))
+        .collect();
+
+    // Anchor -> the ticks it covers (anchor + each offset).
+    let covered: BTreeMap<Tick, Vec<Tick>> = anchors
+        .iter()
+        .map(|&anchor| (anchor, covered_ticks(anchor, offsets)))
+        .collect();
+
+    // Tick -> anchors covering it.
+    let mut by_tick: BTreeMap<Tick, BTreeSet<Tick>> = BTreeMap::new();
+    for (&anchor, ticks) in &covered {
+        for &tick in ticks {
+            by_tick.entry(tick).or_default().insert(anchor);
+        }
+    }
+
+    // Least-conflict first (conflict count excluding self), ties by anchor.
+    let mut ranked: BTreeSet<(usize, Tick)> = BTreeSet::new();
+    for (&anchor, ticks) in &covered {
+        let conflicts = conflicting_anchors(&by_tick, ticks);
+        ranked.insert((conflicts.len() - 1, anchor));
+    }
+
+    let mut active: BTreeSet<Tick> = anchors;
+    while let Some(&key) = ranked.iter().next() {
+        ranked.remove(&key);
+        let (_, anchor) = key;
+        if !active.contains(&anchor) {
+            continue;
+        }
+        let ticks = &covered[&anchor];
+        commit_anchor(kernel, *tone, anchor, ticks, &mut available);
+        active.remove(&anchor);
+        for &tick in ticks {
+            expire_depleted(tick, &by_tick, &available, &mut active);
+        }
+    }
+}
+
+/// Whether every offset neighborhood of `anchor` still has capacity.
+fn has_full_neighborhood(
+    capacities: &BTreeMap<Tick, usize>,
+    offsets: &[Tick],
+    anchor: Tick,
+) -> bool {
+    offsets
+        .iter()
+        .all(|&offset| capacities.get(&(anchor + offset)).copied().unwrap_or(0) > 0)
+}
+
+/// Ticks covered by an anchor: anchor + each offset.
+fn covered_ticks(anchor: Tick, offsets: &[Tick]) -> Vec<Tick> {
+    offsets.iter().map(|&offset| anchor + offset).collect()
+}
+
+/// Anchors sharing at least one covered tick with `ticks`.
+fn conflicting_anchors(by_tick: &BTreeMap<Tick, BTreeSet<Tick>>, ticks: &[Tick]) -> BTreeSet<Tick> {
+    let mut conflicts = BTreeSet::new();
+    for &tick in ticks {
+        let Some(anchors) = by_tick.get(&tick) else {
+            continue;
+        };
+        conflicts.extend(anchors);
+    }
+    conflicts
+}
+
+/// Commit the least-conflicting anchor: write its minimum multiplicity into
+/// the kernel and deduct it from the available capacities.
+fn commit_anchor(
+    kernel: &mut TpPlane,
+    tone: Tone,
+    anchor: Tick,
+    ticks: &[Tick],
+    available: &mut BTreeMap<Tick, usize>,
+) {
+    let count = ticks
+        .iter()
+        .map(|tick| available.get(tick).copied().unwrap_or(0))
+        .min()
+        .unwrap_or(0);
+    if count == 0 {
+        return;
+    }
+    add_to(kernel, (anchor, tone), count);
+    for &tick in ticks {
+        let Some(cap) = available.get_mut(&tick) else {
+            continue;
+        };
+        *cap -= count;
+    }
+}
+
+/// Drop anchors whose covered ticks are fully consumed from the active set.
+fn expire_depleted(
+    tick: Tick,
+    by_tick: &BTreeMap<Tick, BTreeSet<Tick>>,
+    available: &BTreeMap<Tick, usize>,
+    active: &mut BTreeSet<Tick>,
+) {
+    if available.get(&tick).copied().unwrap_or(0) > 0 {
+        return;
+    }
+    let Some(anchors) = by_tick.get(&tick) else {
+        return;
+    };
+    active.retain(|a| !anchors.contains(a));
 }
 
 // Family deep-first
@@ -343,6 +407,45 @@ pub fn reuse_flow(
     (plan, total_reuse, residual)
 }
 
+// Layout adaptation
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// Convert a reuse plan and residual into layout TECs.
+///
+/// Layers whose minimum offset gap is too tight for the tapped delay line
+/// (repeater coarse >= 4, i.e. min gap >= 8) are skipped and absorbed back
+/// into the residual (degenerate absorption).
+///
+/// Returns `(tecs, skipped_layers)` where the residual is appended as a
+/// no-offset TEC when non-empty.
+pub fn plan_to_tecs(plan: Vec<Layer>, mut residual: TpPlane) -> (Vec<TransEqClass>, usize) {
+    let mut tecs = Vec::new();
+    let mut skipped = 0;
+    for layer in plan {
+        let min_gap = layer.scatter.windows(2).map(|w| w[1] - w[0]).min();
+        if min_gap < Some(8) {
+            let expansion = expand(&layer.kernel, &layer.scatter);
+            for (event, count) in expansion.iter() {
+                add_to(&mut residual, *event, *count);
+            }
+            skipped += 1;
+            continue;
+        }
+        let offsets: BTreeSet<NonZero<Tick>> = layer
+            .scatter
+            .into_iter()
+            .skip(1)
+            .filter_map(NonZero::new)
+            .collect();
+        tecs.push(TransEqClass::new(offsets, layer.kernel));
+    }
+    if !residual.is_empty() {
+        tecs.push(TransEqClass::new(BTreeSet::new(), residual));
+    }
+    (tecs, skipped)
+}
+
 // Tests
 //
 // ++++++++++++============++++++++++++============++++++++++++============
@@ -371,10 +474,7 @@ mod tests {
         for layer in plan {
             let expanded = expand(&layer.kernel, &layer.scatter);
             for (event, count) in expanded.iter() {
-                total
-                    .entry(*event)
-                    .and_modify(|mult| *mult += count)
-                    .or_insert(*count);
+                add_to(&mut total, *event, *count);
             }
         }
         assert_eq!(&total, source);
