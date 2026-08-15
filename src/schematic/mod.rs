@@ -241,7 +241,7 @@ pub struct WithFloor<L: Layout> {
 
 impl<L: Layout> WithFloor<L> {
     /// Whether the floor fully covers the entire bounding box.
-    /// When `false`, only positions with a block above get a floor.
+    /// When `false`, only positions with a gravity block above get a floor.
     pub fn new(layout: L, full: bool) -> Self {
         Self { layout, full }
     }
@@ -260,8 +260,8 @@ impl<L: Layout> Layout for WithFloor<L> {
 
         let floor = || match self.full {
             true => floor_block(),
-            false if self.layout.get_block(pos).name == "minecraft:air" => air(),
-            false => floor_block(),
+            false if self.layout.get_block(pos).needs_floor() => floor_block(),
+            false => air(),
         };
         let local_pos = || BlockPos::new(pos.x, pos.y - 1, pos.z);
 
@@ -269,6 +269,18 @@ impl<L: Layout> Layout for WithFloor<L> {
             0 => floor(),
             _ => self.layout.get_block(local_pos()),
         }
+    }
+}
+
+/// Whether a block state is a gravity block that needs floor support.
+pub trait NeedsFloor {
+    /// Whether this block state needs a floor to hold it up.
+    fn needs_floor(&self) -> bool;
+}
+
+impl NeedsFloor for GenericBlockState {
+    fn needs_floor(&self) -> bool {
+        self.name == "minecraft:sand"
     }
 }
 

@@ -56,7 +56,7 @@ struct Compact {
     /// Add a floor platform below the build
     #[arg(short, long)]
     floor: bool,
-    /// Only place floor where blocks exist above (default: full coverage)
+    /// Only place floor below gravity blocks (default: full coverage)
     #[arg(short, long)]
     sparse_floor: bool,
 }
@@ -107,7 +107,7 @@ struct Linear {
     /// Add a floor platform below the build (only when wrap = 0)
     #[arg(short, long)]
     floor: bool,
-    /// Only place floor where blocks exist above (default: full coverage)
+    /// Only place floor below gravity blocks (default: full coverage)
     #[arg(short, long)]
     sparse_floor: bool,
 }
