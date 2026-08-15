@@ -6,6 +6,7 @@ mod nbs_ext;
 mod tests;
 
 pub mod note;
+pub mod reuse;
 pub mod schematic;
 pub mod util;
 

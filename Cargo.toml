@@ -11,8 +11,7 @@ keywords = ["nbs", "music", "minecraft", "file-format"]
 categories = ["games"]
 
 [features]
-default = ["unstable", "cli"]
-unstable = []
+default = ["cli"]
 cli = ["dep:clap", "clap/derive"]
 
 [dependencies]
