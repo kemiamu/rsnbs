@@ -119,6 +119,7 @@ impl Linear {
         let tracks: Vec<Notes> = song
             .notes
             .rescale_to_game_tick(song.header.tempo)
+            .collect::<Notes>()
             .split_by_layer_gaps()
             .into_iter()
             .flat_map(|notes| notes.split_by_layer_count(NonZero::new(3)))
@@ -171,7 +172,8 @@ impl Decompose {
     fn run(self) {
         // 复用流：族深先分层 + 族仲裁（wf_0813_reuse 移植）
         let song = Song::open_nbs(&self.input).unwrap();
-        let all_plane = TpPlane::from_iter(song.notes.clone());
+        // 统一 tempo 到红石刻 (10tps)
+        let all_plane = TpPlane::from_iter(song.notes.rescale_to_redstone_tick(song.header.tempo));
 
         // 层数预算 = 布局高度的物理替身：分解在预算耗尽时停止；
         // 0 = 无预算，持续到自然极限（残差无任何同音色配对），层数可能远超布局可行范围
