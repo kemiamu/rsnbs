@@ -138,7 +138,7 @@ impl Linear {
         };
 
         litematic.write_file(&self.output).unwrap();
-        eprintln!("Wrote {}", self.output);
+        eprintln!("Wrote {output}", output = self.output);
     }
 }
 
@@ -158,6 +158,15 @@ struct Decompose {
     /// Path to output litematic file
     #[arg(default_value = "generated_tapped.litematic")]
     output: String,
+    /// Max number of layers (TECs) to generate; 0 = unlimited
+    #[arg(short, long, default_value_t = 3)]
+    layers: usize,
+    /// Max tiles per row before wrapping (0 = no wrap)
+    #[arg(short, long, default_value_t = 18)]
+    wrap: usize,
+    /// Add a full floor platform below the build (default: floor only below gravity blocks)
+    #[arg(short, long)]
+    floor: bool,
 }
 
 impl Decompose {
@@ -166,21 +175,15 @@ impl Decompose {
         let song = Song::open_nbs(&self.input).unwrap();
         let all_plane = TpPlane::from_iter(song.notes.clone());
 
-        let (plan, total_reuse, residual) = reuse_flow(&all_plane, 4, 4);
+        // 0 = 无预算：跑到自然终止为止（无更多可提交的族）
+        let max_layers = match self.layers {
+            0 => usize::MAX,
+            n => n,
+        };
+        let (plan, total_reuse, residual) = reuse_flow(&all_plane, 6, max_layers);
 
-        eprintln!(
-            "total reuse = {total_reuse}, residual events = {}",
-            residual.values().sum::<usize>()
-        );
-        for layer in &plan {
-            eprintln!(
-                "  {:?}: K={} (sum {}) reuse={}",
-                layer.scatter,
-                layer.kernel.len(),
-                layer.kernel.values().sum::<usize>(),
-                layer.reuse(),
-            );
-        }
+        let residual_events = residual.values().sum::<usize>();
+        eprintln!("total reuse = {total_reuse}, residual events = {residual_events}");
 
         // 物化适配：延迟线最小间距限制内的层进入 TEC，其余退回残差
         let (tecs, skipped) = plan_to_tecs(plan, residual);
@@ -188,9 +191,9 @@ impl Decompose {
             eprintln!("  {skipped} layer(s) skipped: min gap < 8");
         }
 
-        let layout = TappedLayout::new(tecs, NonZero::new(18), false);
+        let layout = TappedLayout::new(tecs, NonZero::new(self.wrap), self.floor);
         let litematic = SchematicBuilder(layout).build("Tapped from source.nbs", "rsnbs");
         litematic.write_file(&self.output).unwrap();
-        eprintln!("Wrote {}", self.output);
+        eprintln!("Wrote {output}", output = self.output);
     }
 }

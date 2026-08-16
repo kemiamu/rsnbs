@@ -322,7 +322,10 @@ pub fn family_deep_first(
     let mut work = source.clone();
     let mut penalty = 0;
 
-    for n in (2..=max_len).rev() {
+    // 预算感知：len 上限受剩余层预算约束（层序律的预算边界）——
+    // 预算紧张时收缩到浅层，预算充足时才允许深层块占满预算
+    let len_cap = max_len.min(budget.saturating_add(1));
+    for n in (2..=len_cap).rev() {
         if layers.len() >= budget {
             break;
         }
@@ -377,14 +380,15 @@ pub fn reuse_flow(
             break;
         }
 
-        let mut best: Option<((usize, usize, Reverse<Tick>), Vec<Layer>)> = None;
+        let mut best: Option<((isize, usize, Reverse<Tick>), Vec<Layer>)> = None;
         for &d in &candidates {
             let budget = max_layers - plan.len();
             let (total, layers, penalty) = family_deep_first(&residual, d, max_len, budget);
             if total <= 0 {
                 continue;
             }
-            let score = total - penalty;
+            // 嵌套惩罚可能超过总量（Python 语义允许负 score，仅用于排序）
+            let score = total as isize - penalty as isize;
             let deepest = layers
                 .iter()
                 .map(|layer| layer.scatter.len())
