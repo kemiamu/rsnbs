@@ -135,7 +135,11 @@ impl TapLine {
         let local_easting = self.size.x - pos.x - 1;
         let local_elevation = pos.y;
         let switch = self.delays.size().x == 0;
-        let line_south = if switch { "none" } else { "side" };
+        let port_wire = || {
+            let switch_south = if switch { "none" } else { "side" };
+            let switch_west = if switch { "side" } else { "none" };
+            wire_state("side", "none", switch_south, switch_west, "0")
+        };
         let button = || {
             let tone = Tone::new(Instrument::BassDrum, Key::from_minecraft_note(0).unwrap());
             tone.note_block_state().unwrap_or_else(chain_block)
@@ -144,7 +148,7 @@ impl TapLine {
         match (local_easting, local_elevation) {
             (1, 3) => redstone_torch(None::<&'static str>, true),
             (0, 1) | (1, 2) => chain_block(),
-            (0, 2) => wire_state("side", "none", line_south, "side", "0"),
+            (0, 2) => port_wire(),
             (1..=4, 1) if switch => chain_block(),
             (2, 2) if switch => repeater("4", "west", false),
             (3, 2) if switch => observer("west"),
