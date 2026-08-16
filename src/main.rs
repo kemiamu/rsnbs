@@ -149,6 +149,9 @@ impl Linear {
 #[derive(clap::Args)]
 /// Decompose an NBS song into a matched layer and a residual layer,
 /// projected as a tapped delay line layout.
+///
+/// **Experimental**: the decomposition logic and its layout are still
+/// under development; the output may change.
 struct Decompose {
     /// Path to input NBS file
     input: String,

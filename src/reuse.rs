@@ -1,5 +1,8 @@
 //! Reuse-maximizing layer flow, ported from `wf_0813_reuse/reuse_flow.py`.
 //!
+//! **Experimental**: the decomposition algorithm and its layout adaptation
+//! are still under development; the output may change.
+//!
 //! Scientific basis (KNOWLEDGE.md §3.30-3.36):
 //!
 //! - §3.30 anchor-chain law: for AP scatter `{0,d,...,(n-1)d}` the conflict
