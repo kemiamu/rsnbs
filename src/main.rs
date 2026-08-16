@@ -36,8 +36,8 @@ fn main() {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-#[derive(clap::Args)]
 /// Compact layout
+#[derive(clap::Args)]
 struct Compact {
     /// Path to input NBS file
     input: String,
@@ -90,8 +90,8 @@ impl Compact {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-#[derive(clap::Args)]
 /// Linear time-proportional layout
+#[derive(clap::Args)]
 struct Linear {
     /// Path to input NBS file
     input: String,
@@ -146,23 +146,21 @@ impl Linear {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
+// **Experimental**: output may change.
+
+/// Decompose an NBS song into TEC layers and a residual (tapped delay line).
 #[derive(clap::Args)]
-/// Decompose an NBS song into a matched layer and a residual layer,
-/// projected as a tapped delay line layout.
-///
-/// **Experimental**: the decomposition logic and its layout are still
-/// under development; the output may change.
 struct Decompose {
     /// Path to input NBS file
     input: String,
     /// Path to output litematic file
     #[arg(default_value = "generated_tapped.litematic")]
     output: String,
-    /// Max number of layers (TECs) to generate; 0 = unlimited
+    /// Max number of layers (TECs) to generate; 0 = no budget
     #[arg(short, long, default_value_t = 3)]
     layers: usize,
     /// Max tiles per row before wrapping (0 = no wrap)
-    #[arg(short, long, default_value_t = 18)]
+    #[arg(short, long, default_value_t = 16)]
     wrap: usize,
     /// Add a full floor platform below the build (default: floor only below gravity blocks)
     #[arg(short, long)]
@@ -175,7 +173,8 @@ impl Decompose {
         let song = Song::open_nbs(&self.input).unwrap();
         let all_plane = TpPlane::from_iter(song.notes.clone());
 
-        // 0 = 无预算：跑到自然终止为止（无更多可提交的族）
+        // 层数预算 = 布局高度的物理替身：分解在预算耗尽时停止；
+        // 0 = 无预算，持续到自然极限（残差无任何同音色配对），层数可能远超布局可行范围
         let max_layers = match self.layers {
             0 => usize::MAX,
             n => n,
