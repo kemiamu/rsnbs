@@ -40,7 +40,11 @@ impl<K: IntoTick, V: Into<Tone>> FromIterator<(K, V)> for TpPlane {
 
 impl From<TpPlane> for Notes<Tick, Vec<Tone>> {
     fn from(plane: TpPlane) -> Self {
-        Self::from_iter(plane.into_points().into_group_map())
+        let mut by_tick = plane.into_points().into_group_map();
+        for tones in by_tick.values_mut() {
+            tones.sort();
+        }
+        Self::from_iter(by_tick)
     }
 }
 

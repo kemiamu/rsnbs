@@ -2,8 +2,9 @@
 
 use super::air;
 use super::{Arranged, Axis, CompactLayout, EdgeArranged, Layout, WithFloor};
-use crate::note::{Notes, Tone};
-use crate::schematic::{chain_block, redstone_torch, redstone_wire, repeater};
+use crate::note::{Instrument, Key, Notes, Tone};
+use crate::schematic::{chain_block, observer, redstone_torch};
+use crate::schematic::{redstone_wire, repeater, wire_state};
 use crate::types::{RedStoneTick, Tick};
 use crate::util::TransEqClass;
 use mcdata::{GenericBlockState, util::BlockPos};
@@ -116,6 +117,7 @@ impl TapLine {
         ticks: I,
         repeater_coarse: Option<NonZero<RedStoneTick>>,
     ) -> Self {
+        let ticks: Vec<NonZero<RedStoneTick>> = ticks.into_iter().collect();
         let taps = ticks.into_iter().scan(0, |prev, tick| {
             let diff = tick.get() - *prev;
             *prev = tick.get();
@@ -123,7 +125,8 @@ impl TapLine {
         });
         let delays = EdgeArranged::new(taps, Axis::Southing, 0, Axis::Easting.unit());
         let inner = delays.size();
-        let size = BlockPos::new(inner.x.max(2), Tap::ELEVATION, inner.z + 1);
+        let width = inner.x.max(5);
+        let size = BlockPos::new(width, Tap::ELEVATION, inner.z + 1);
 
         Self { size, delays }
     }
@@ -131,12 +134,23 @@ impl TapLine {
     fn port(&self, pos: BlockPos) -> GenericBlockState {
         let local_easting = self.size.x - pos.x - 1;
         let local_elevation = pos.y;
+        let switch = self.delays.size().x == 0;
+        let line_south = if switch { "none" } else { "side" };
+        let button = || {
+            let tone = Tone::new(Instrument::BassDrum, Key::from_minecraft_note(0).unwrap());
+            tone.note_block_state().unwrap_or_else(chain_block)
+        };
 
         match (local_easting, local_elevation) {
-            (0, 1) | (1, 0) | (1, 2) => chain_block(),
-            (1, 1) => redstone_torch(None::<&'static str>, false),
             (1, 3) => redstone_torch(None::<&'static str>, true),
-            (0, 2) => redstone_wire(),
+            (0, 1) | (1, 2) => chain_block(),
+            (0, 2) => wire_state("side", "none", line_south, "side", "0"),
+            (1..=4, 1) if switch => chain_block(),
+            (2, 2) if switch => repeater("4", "west", false),
+            (3, 2) if switch => observer("west"),
+            (4, 2) if switch => button(),
+            (1, 0) if !switch => chain_block(),
+            (1, 1) if !switch => redstone_torch(None::<&'static str>, false),
             _ => air(),
         }
     }
@@ -193,21 +207,23 @@ impl Layout for Tap {
         let clamp = |tick: Tick| tick.min(4).to_string();
         let cycle = |off: Tick, modu: Tick| clamp((delay + off) % modu);
         let decay = |sub: Tick| clamp(delay.saturating_sub(sub));
+        let phase = || (delay + 3) % 8;
 
         match (rev_easting, pos.x, pos.z, pos.y) {
             (_, _, _, 1) | (_, 0, 0, 2) | (1, _, 1, 2) => chain_block(),
-            (_, 0, 1, 2) | (1, _, 0, 2) => redstone_torch(Some("south"), true),
-            (3.., 2.., 0, 2) => repeater("4", "east"),
-            (2.., 2.., 1, 2) => repeater("4", "west"),
-            (2, 1, 1, 2) => repeater(decay(6), "west"),
-            (3.., 1, 1, 2) => repeater(cycle(3, 8), "west"),
+            (_, 0, 1, 2) => redstone_torch(Some("south"), false),
+            (1, _, 0, 2) => redstone_torch(Some("south"), true),
+            (3.., 2.., 0, 2) => repeater("4", "east", true),
+            (2.., 2.., 1, 2) => repeater("4", "west", false),
+            (2, 1, 1, 2) => repeater(decay(6), "west", false),
+            (3.., 1, 1, 2) => repeater(cycle(3, 8), "west", false),
             (2, 1, 0, 2) if delay < 11 => redstone_wire(),
-            (2, 1, 0, 2) => repeater(decay(10), "west"),
-            (2, 2.., 0, 2) if (delay + 3) % 8 < 4 => redstone_wire(),
-            (2, 2.., 0, 2) => repeater(cycle(3, 8), "east"),
-            (3.., 1, 0, 2) => repeater("3", "east"),
-            (0, _, 1, 2) => redstone_wire(),
-            (0, _, 0, 2) => repeater(decay(3), "south"),
+            (2, 1, 0, 2) => repeater(decay(10), "west", false),
+            (2, 2.., 0, 2) if phase() < 4 => wire_state("side", "none", "none", "side", "15"),
+            (2, 2.., 0, 2) => repeater(cycle(3, 8), "east", true),
+            (3.., 1, 0, 2) => repeater("3", "east", true),
+            (0, _, 1, 2) => wire_state("none", "side", "side", "none", "0"),
+            (0, _, 0, 2) => repeater(decay(3), "south", false),
             _ => air(),
         }
     }

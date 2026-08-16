@@ -24,15 +24,19 @@ impl Tone {
         })
     }
 
-    /// returns the block under the note block for this tone's instrument sound.
+    /// returns the block under the note block for this instrument's sound.
     pub fn instrument_block_state(&self) -> Option<GenericBlockState> {
         if !self.is_valid() || matches!(self.instrument(), Instrument::Imitate(_)) {
             return None;
         }
         let block = self.instrument().block_resource().unwrap();
+        let properties = match self.instrument() {
+            Instrument::Banjo => HashMap::from([("axis".into(), "y".into())]),
+            _ => HashMap::new(),
+        };
         Some(GenericBlockState {
             name: block.into(),
-            properties: HashMap::new(),
+            properties,
         })
     }
 
@@ -209,17 +213,53 @@ pub fn redstone_wire() -> GenericBlockState {
     }
 }
 
-/// Repeater block with delay and facing.
+/// Redstone wire with explicit connection states
+/// (east/north/south/west: none|side|up) and signal strength.
+///
+/// These are the post-update states a placed wire settles into.
+pub fn wire_state(
+    east: &'static str,
+    north: &'static str,
+    south: &'static str,
+    west: &'static str,
+    power: &'static str,
+) -> GenericBlockState {
+    GenericBlockState {
+        name: "minecraft:redstone_wire".into(),
+        properties: HashMap::from([
+            ("power".into(), power.into()),
+            ("north".into(), north.into()),
+            ("south".into(), south.into()),
+            ("east".into(), east.into()),
+            ("west".into(), west.into()),
+        ]),
+    }
+}
+
+/// Repeater block with delay, facing, and powered state.
 pub fn repeater(
     delay: impl Into<Cow<'static, str>>,
     facing: impl Into<Cow<'static, str>>,
+    powered: bool,
 ) -> GenericBlockState {
+    let powered = if powered { "true" } else { "false" };
     GenericBlockState {
         name: "minecraft:repeater".into(),
         properties: HashMap::from([
             ("delay".into(), delay.into()),
             ("facing".into(), facing.into()),
             ("locked".into(), "false".into()),
+            ("powered".into(), powered.into()),
+        ]),
+    }
+}
+
+/// Observer block with facing.
+pub fn observer(facing: impl Into<Cow<'static, str>>) -> GenericBlockState {
+    GenericBlockState {
+        name: "minecraft:observer".into(),
+        properties: HashMap::from([
+            ("facing".into(), facing.into()),
             ("powered".into(), "false".into()),
         ]),
     }
