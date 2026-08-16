@@ -1,11 +1,11 @@
 use clap::Parser;
 use rsnbs::note::{Note, Notes};
+use rsnbs::reuse::{plan_to_tecs, reuse_flow};
 use rsnbs::schematic::{MultiCompactLayout, MultiLinearLayout, StackedLinearLayout};
-use rsnbs::schematic::{SchematicBuilder, WithFloor};
+use rsnbs::schematic::{SchematicBuilder, TappedLayout, WithFloor};
 use rsnbs::song::Song;
 use rsnbs::types::{IntoTick, Tick};
-#[cfg(feature = "unstable")]
-use rsnbs::util::{TpPlane, VectorTable};
+use rsnbs::util::TpPlane;
 use std::collections::BTreeMap;
 use std::num::NonZero;
 
@@ -21,7 +21,6 @@ use std::num::NonZero;
 enum Cli {
     Compact(Compact),
     Linear(Linear),
-    #[cfg(feature = "unstable")]
     Decompose(Decompose),
 }
 
@@ -29,7 +28,6 @@ fn main() {
     match Cli::parse() {
         Cli::Compact(cmd) => cmd.run(),
         Cli::Linear(cmd) => cmd.run(),
-        #[cfg(feature = "unstable")]
         Cli::Decompose(cmd) => cmd.run(),
     }
 }
@@ -38,8 +36,8 @@ fn main() {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-#[derive(clap::Args)]
 /// Compact layout
+#[derive(clap::Args)]
 struct Compact {
     /// Path to input NBS file
     input: String,
@@ -58,7 +56,7 @@ struct Compact {
     /// Add a floor platform below the build
     #[arg(short, long)]
     floor: bool,
-    /// Only place floor where blocks exist above (default: full coverage)
+    /// Only place floor below gravity blocks (default: full coverage)
     #[arg(short, long)]
     sparse_floor: bool,
 }
@@ -92,8 +90,8 @@ impl Compact {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-#[derive(clap::Args)]
 /// Linear time-proportional layout
+#[derive(clap::Args)]
 struct Linear {
     /// Path to input NBS file
     input: String,
@@ -109,7 +107,7 @@ struct Linear {
     /// Add a floor platform below the build (only when wrap = 0)
     #[arg(short, long)]
     floor: bool,
-    /// Only place floor where blocks exist above (default: full coverage)
+    /// Only place floor below gravity blocks (default: full coverage)
     #[arg(short, long)]
     sparse_floor: bool,
 }
@@ -140,7 +138,7 @@ impl Linear {
         };
 
         litematic.write_file(&self.output).unwrap();
-        eprintln!("Wrote {}", self.output);
+        eprintln!("Wrote {output}", output = self.output);
     }
 }
 
@@ -148,94 +146,53 @@ impl Linear {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-#[cfg(feature = "unstable")]
+// **Experimental**: output may change.
+
+/// Decompose an NBS song into TEC layers and a residual (tapped delay line).
 #[derive(clap::Args)]
-/// Decompose an NBS song into pattern and residual notes using FP-Growth.
 struct Decompose {
     /// Path to input NBS file
     input: String,
-    /// Path to output NBS file (pattern on top, residual below)
-    #[arg(default_value = "decomposed.nbs")]
+    /// Path to output litematic file
+    #[arg(default_value = "generated_tapped.litematic")]
     output: String,
-    /// FP-Growth min_support (0.0–1.0), higher = smaller/stronger patterns
-    #[arg(long, default_value_t = 0.3)]
-    min_support: f64,
+    /// Max number of layers (TECs) to generate; 0 = no budget
+    #[arg(short, long, default_value_t = 3)]
+    layers: usize,
+    /// Max tiles per row before wrapping (0 = no wrap)
+    #[arg(short, long, default_value_t = 16)]
+    wrap: usize,
+    /// Add a full floor platform below the build (default: floor only below gravity blocks)
+    #[arg(short, long)]
+    floor: bool,
 }
 
-#[cfg(feature = "unstable")]
 impl Decompose {
     fn run(self) {
+        // 复用流：族深先分层 + 族仲裁（wf_0813_reuse 移植）
         let song = Song::open_nbs(&self.input).unwrap();
-        let song_len = song.len();
-        let mut remaining = song.notes.clone();
-        let total = song.notes.len();
+        let all_plane = TpPlane::from_iter(song.notes.clone());
 
-        // 多级步长：先大粒度提取，再逐步细化
-        let steps: &[Tick] = &[4, 2, 1];
-        let mut patterns: Vec<(Notes, Tick)> = vec![];
-        let mut infos: Vec<String> = vec![];
+        // 层数预算 = 布局高度的物理替身：分解在预算耗尽时停止；
+        // 0 = 无预算，持续到自然极限（残差无任何同音色配对），层数可能远超布局可行范围
+        let max_layers = match self.layers {
+            0 => usize::MAX,
+            n => n,
+        };
+        let (plan, total_reuse, residual) = reuse_flow(&all_plane, 6, max_layers);
 
-        for &step in steps {
-            let plane = TpPlane::from_iter(remaining.clone());
-            let vt = VectorTable::from_plane(&plane, NonZero::new(song_len), step);
+        let residual_events = residual.values().sum::<usize>();
+        eprintln!("total reuse = {total_reuse}, residual events = {residual_events}");
 
-            if let Some(tec) = vt.find_largest_tec(3) {
-                let offsets: Vec<Tick> = tec.offsets().iter().map(|o| o.get()).collect();
-                let n_anchors = tec.points().len();
-                let (pat, res) = tec.decompose(&remaining, song_len);
-
-                if pat.len() > 0 {
-                    patterns.push((pat, step));
-                    infos.push(format!(
-                        "  Step {}: offsets {:?}, {} anchors → {} pattern notes",
-                        step,
-                        offsets,
-                        n_anchors,
-                        patterns.last().unwrap().0.len(),
-                    ));
-                    remaining = res;
-                }
-            }
+        // 物化适配：延迟线最小间距限制内的层进入 TEC，其余退回残差
+        let (tecs, skipped) = plan_to_tecs(plan, residual);
+        if skipped > 0 {
+            eprintln!("  {skipped} layer(s) skipped: min gap < 8");
         }
 
-        let pattern_total: usize = patterns.iter().map(|(p, _)| p.len()).sum();
-        let residual_total = remaining.len();
-
-        // 构建多轨组装：每个 pattern 一轨 + residual 最后一轨
-        let mut all_layers: Vec<Vec<(Tick, Note)>> = patterns
-            .iter()
-            .map(|(pat, _)| {
-                pat.iter()
-                    .map(|(pos, note)| (pos.into_tick(), note.clone()))
-                    .collect()
-            })
-            .collect();
-        all_layers.push(
-            remaining
-                .iter()
-                .map(|(pos, note)| (pos.into_tick(), note.clone()))
-                .collect(),
-        );
-
-        let rebuilt = Notes::reassign_layers(all_layers, 1);
-
-        let mut out = Song::new();
-        out.notes = rebuilt;
-        out.refresh();
-        out.save_nbs(&self.output).unwrap();
-
-        // 打印结果
-        for info in &infos {
-            eprintln!("{}", info);
-        }
-        eprintln!(
-            "  Pattern total: {:>5} ({:.1}%)\n  Residual total: {:>5} ({:.1}%)\n  Overall:        {:>5}",
-            pattern_total,
-            pattern_total as f64 / total as f64 * 100.0,
-            residual_total,
-            residual_total as f64 / total as f64 * 100.0,
-            total,
-        );
-        eprintln!("Wrote {}", self.output);
+        let layout = TappedLayout::new(tecs, NonZero::new(self.wrap), self.floor);
+        let litematic = SchematicBuilder(layout).build("Tapped from source.nbs", "rsnbs");
+        litematic.write_file(&self.output).unwrap();
+        eprintln!("Wrote {output}", output = self.output);
     }
 }

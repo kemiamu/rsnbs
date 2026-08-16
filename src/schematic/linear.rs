@@ -283,14 +283,14 @@ impl Track {
             (true, true, 0, 1, 1) => note_block(note(branch_tick, 1), air),
 
             (true, false, 3, 1, 0) => chain_block(),
-            (true, false, 3, 1, 1) => repeater((scale / 2).to_string(), "east"),
+            (true, false, 3, 1, 1) => repeater((scale / 2).to_string(), "east", false),
             (true, false, 1, 1, 0) => inst_block(note(branch_tick, 0), chain_block),
             (true, false, 1, 1, 1) => note_block(note(branch_tick, 0), chain_block),
             (true, false, 0, 1, 0) => inst_block(note(branch_tick, 1), air),
             (true, false, 0, 1, 1) => note_block(note(branch_tick, 1), air),
 
             (_, _, 4, 0, 0) => chain_block(),
-            (_, _, 4, 0, 1) => repeater(scale.to_string(), repeater_facing),
+            (_, _, 4, 0, 1) => repeater(scale.to_string(), repeater_facing, false),
             (_, _, 4, 1, 0) => inst_block(note(0, 0), chain_block),
             (_, _, 4, 1, 1) => note_block(note(0, 0), chain_block),
             (_, _, 5, 1, 0) => inst_block(note(0, 1), air),

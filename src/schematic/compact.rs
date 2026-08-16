@@ -89,7 +89,7 @@ pub struct CompactLayout {
 impl CompactLayout {
     const ELEVATION: i32 = 3;
 
-    /// Create a compact layout from redstone-tick–grouped notes.
+    /// Create a compact layout from redstone-tick-grouped notes.
     ///
     /// The input must already be split into a single redstone tick line.
     /// See [`MultiCompactLayout`] for the high-level constructor that handles
@@ -346,7 +346,7 @@ impl DerefMut for Track {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// A stem–canopy tile pair.
+/// A stem-canopy tile pair.
 enum Tile {
     Delay(RedStoneTick),
     Link,
@@ -382,7 +382,7 @@ impl Tile {
         match (self, layout_index) {
             // main straight track
             (Self::Delay(_), 0) => chain_block(),
-            (Self::Delay(delay), 1) => repeater(delay.to_string(), repeater_facing),
+            (Self::Delay(delay), 1) => repeater(delay.to_string(), repeater_facing, false),
             (Self::Link, 0) => chain_block(),
             (Self::Link, 1) => redstone_wire(),
             (Self::Terminal(center, _, _), 0) => inst_block(center.as_ref(), chain_block),
@@ -400,7 +400,7 @@ impl Tile {
             // turning variants
             (Self::TurningDelay(_), 0 | 3) => chain_block(),
             (Self::TurningDelay(_), 1) => redstone_wire(),
-            (Self::TurningDelay(delay), 4) => repeater(delay.to_string(), repeater_facing),
+            (Self::TurningDelay(delay), 4) => repeater(delay.to_string(), repeater_facing, false),
             (Self::TurningLink, 0 | 3) => chain_block(),
             (Self::TurningLink, 1 | 4) => redstone_wire(),
             (Self::TurningTerminal(center, _), 0) => inst_block(center.as_ref(), chain_block),
