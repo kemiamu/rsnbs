@@ -414,6 +414,103 @@ pub fn reuse_flow(
     (plan, total_reuse, residual)
 }
 
+/// Beam-search layer flow: each round explores up to `beam` candidate layer
+/// sequences within the remaining budget, committing the globally best one.
+///
+/// Unlike the family-complete commit of [`reuse_flow`], layers from different
+/// families compete freely at every step, so cross-family combinations emerge
+/// naturally (e.g. a deep AP block from one family plus a pair from another).
+pub fn reuse_flow_beam(
+    source: &TpPlane,
+    max_len: usize,
+    max_layers: usize,
+    beam: usize,
+) -> (Vec<Layer>, usize, TpPlane) {
+    #[derive(Clone)]
+    struct Path {
+        layers: Vec<(Vec<Tick>, usize)>,
+        work: TpPlane,
+        acc: usize,
+    }
+
+    let mut residual = source.clone();
+    let mut plan: Vec<Layer> = Vec::new();
+    let mut total_reuse = 0;
+
+    while plan.len() < max_layers {
+        let budget = max_layers - plan.len();
+        let support = autocorrelation(&residual);
+        let Some(&max_support) = support.values().max() else {
+            break;
+        };
+        if max_support == 0 {
+            break;
+        }
+
+        let mut paths = vec![Path {
+            layers: Vec::new(),
+            work: residual.clone(),
+            acc: 0,
+        }];
+        for _ in 0..budget {
+            let mut next: Vec<Path> = Vec::new();
+            for path in &paths {
+                // Enumerate candidate layers on this path's residual:
+                // family-deep-first within each d, competing across families.
+                let sup = autocorrelation(&path.work);
+                let Some(&ms) = sup.values().max() else {
+                    continue;
+                };
+                let threshold = ms / (max_len - 1);
+                let mut cand: Vec<(Vec<Tick>, usize)> = Vec::new();
+                for (&d, &v) in &sup {
+                    if v <= threshold {
+                        continue;
+                    }
+                    for n in (2..=max_len).rev() {
+                        let scatter: Vec<Tick> = (0..n as Tick).map(|i| i * d).collect();
+                        let kernel = feasible_kernel(&path.work, &scatter);
+                        let gain = kernel.values().sum::<usize>() * (n - 1);
+                        if gain == 0 {
+                            continue;
+                        }
+                        cand.push((scatter, gain));
+                    }
+                }
+                cand.sort_by(|a, b| b.1.cmp(&a.1));
+                for (scatter, gain) in cand.into_iter().take(beam) {
+                    let kernel = feasible_kernel(&path.work, &scatter);
+                    let work = subtract_exact(&path.work, &expand(&kernel, &scatter));
+                    let mut layers = path.layers.clone();
+                    layers.push((scatter, gain));
+                    next.push(Path {
+                        layers,
+                        work,
+                        acc: path.acc + gain,
+                    });
+                }
+            }
+            next.sort_by(|a, b| b.acc.cmp(&a.acc));
+            next.truncate(beam);
+            paths = next;
+            if paths.is_empty() {
+                break;
+            }
+        }
+        let Some(best) = paths.into_iter().next() else {
+            break;
+        };
+        for (scatter, gain) in best.layers {
+            let kernel = feasible_kernel(&residual, &scatter);
+            total_reuse += gain;
+            residual = subtract_exact(&residual, &expand(&kernel, &scatter));
+            plan.push(Layer { scatter, kernel });
+        }
+    }
+
+    (plan, total_reuse, residual)
+}
+
 // Layout adaptation
 //
 // ++++++++++++============++++++++++++============++++++++++++============
