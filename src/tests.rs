@@ -49,10 +49,17 @@ fn test_scale_ticks() {
 #[test]
 fn test_v6_to_v5_conversion() {
     let mut song_v6 = Song::open_nbs("fixtures/source.nbs").unwrap();
-    assert_eq!(song_v6.header.version, Version::new(6).unwrap());
 
     song_v6.header.version = Version::new(5).unwrap();
     song_v6.save_nbs("fixtures/out_v5.nbs").unwrap();
+
+    // The downgraded file must be a valid v5 file: 16 vanilla instruments,
+    // and every note must still parse (trumpets are converted to custom
+    // instruments when present).
+    let back = Song::open_nbs("fixtures/out_v5.nbs").unwrap();
+    assert_eq!(back.header.version, Version::new(5).unwrap());
+    assert_eq!(back.header.default_instruments, 16);
+    assert_eq!(back.notes.len(), song_v6.notes.len());
 }
 
 // cargo test test_sectional_matching && cargo test analyze_tones

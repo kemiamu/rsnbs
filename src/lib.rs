@@ -15,8 +15,9 @@ pub mod util;
 // ++++++++++++============++++++++++++============++++++++++++============
 
 pub mod song {
-    use crate::note::{Note, Notes};
+    use crate::note::{Instrument, Note, Notes};
     use crate::types::{Index, IntoTick, Panning, Position, Result, Tick, Version, Volume};
+    use std::collections::HashMap;
 
     /// represents a complete nbs song with header, notes, layers, and instruments.
     #[derive(Debug, Default, Clone, PartialEq, PartialOrd)]
@@ -77,6 +78,70 @@ pub mod song {
                 .unwrap_or(1);
             // 更新 layer 数量
             self.header.song_layers = self.layers.len() as _;
+            // 更新默认乐器数量
+            self.header.default_instruments = self.header.version.vanilla_instruments();
+        }
+
+        /// converts vanilla instruments that do not exist in the given NBS
+        /// version to custom instruments, so their sound survives saving the
+        /// song in an older version.
+        pub(crate) fn adapt_instruments_to_version(&mut self, version: Version) {
+            let fci = version.vanilla_instruments();
+            let unsupported = |instrument: Instrument| {
+                instrument.vanilla_index().is_some_and(|index| index >= fci)
+            };
+
+            // 按出现顺序收集所有目标版本无法表示的原生乐器
+            let mut needed: Vec<(&'static str, &'static str)> = Vec::new();
+            for instrument in self.notes.values().map(|note| note.tone().instrument()) {
+                if !unsupported(instrument) {
+                    continue;
+                }
+                let Some(definition) = instrument.nbs_definition() else {
+                    continue;
+                };
+                if !needed.contains(&definition) {
+                    needed.push(definition);
+                }
+            }
+
+            // 确保对应的自定义乐器存在,并记录槽位
+            let mut slots: HashMap<(&'static str, &'static str), u8> = HashMap::new();
+            for &(name, file) in &needed {
+                let slot = match self
+                    .custom_instruments
+                    .iter()
+                    .position(|ci| ci.name == name && ci.file == file)
+                {
+                    Some(existing) => existing as u8,
+                    None => {
+                        let slot = self.custom_instruments.len().min(u8::MAX as usize) as u8;
+                        self.custom_instruments.push(CustomInstrument {
+                            name: name.into(),
+                            file: file.into(),
+                            pitch: 45,
+                            press_key: true,
+                        });
+                        slot
+                    }
+                };
+                slots.insert((name, file), slot);
+            }
+
+            // 把受影响的音符改指自定义乐器槽位
+            for note in self.notes.values_mut() {
+                let instrument = note.tone().instrument();
+                if !unsupported(instrument) {
+                    continue;
+                }
+                let Some((name, file)) = instrument.nbs_definition() else {
+                    continue;
+                };
+                let Some(&slot) = slots.get(&(name, file)) else {
+                    continue;
+                };
+                note.set_instrument(Instrument::Custom(slot));
+            }
         }
     }
 
@@ -114,7 +179,7 @@ pub mod song {
         fn default() -> Self {
             Self {
                 version: Version::default(),
-                default_instruments: 16,
+                default_instruments: Version::default().vanilla_instruments(),
                 song_length: 0,
                 song_layers: 0,
                 song_name: String::new(),
@@ -209,6 +274,16 @@ pub mod types {
 
         pub fn get(&self) -> u8 {
             self.0
+        }
+
+        /// the amount of vanilla instruments in this NBS version.
+        /// version 6 added the four trumpet instruments.
+        pub fn vanilla_instruments(self) -> u8 {
+            match self.0 {
+                0 => 10,
+                1..=5 => 16,
+                _ => 20,
+            }
         }
     }
 

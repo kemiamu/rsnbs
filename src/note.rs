@@ -101,6 +101,11 @@ impl Note {
             pitch: self.pitch,
         }
     }
+
+    /// replaces the note's instrument, keeping its key and modulation.
+    pub fn set_instrument(&mut self, instrument: Instrument) {
+        self.tone.instrument = instrument;
+    }
 }
 
 impl AsRef<Tone> for Note {
@@ -146,7 +151,7 @@ impl Tone {
 
     /// whether this tone is renderable: built-in instrument with a minecraft note.
     pub(crate) fn is_valid(&self) -> bool {
-        !matches!(self.instrument, Instrument::Other(_)) && self.key.minecraft_note().is_some()
+        !matches!(self.instrument, Instrument::Custom(_)) && self.key.minecraft_note().is_some()
     }
 }
 
@@ -197,12 +202,18 @@ pub enum Instrument {
     TrumpetExposed,
     TrumpetWeathered,
     TrumpetOxidized,
-    // Mob head instruments
+    // Mob head instruments. Reserved by rsnbs: not part of the NBS file
+    // format, used for schematic rendering of mob head note blocks. They
+    // are not encodable in files and fall back to Harp when saved.
     Imitate(ImitateInstrument),
-    // Other custom instruments
-    Other(u8),
+    // Custom instruments, identified by their slot index in the song's
+    // custom instrument list (the NBS instrument byte minus the song's
+    // first custom instrument index).
+    Custom(u8),
 }
 
+/// mob head sounds, reserved by rsnbs for schematic rendering.
+/// these are not NBS instruments and cannot be saved to files.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ImitateInstrument {
     Creeper,
@@ -221,9 +232,11 @@ impl Default for Instrument {
 }
 
 impl Instrument {
-    /// Maps NBS file instrument index -> variant.
-    /// The array position is the NBS serialization index.
-    const NBS_INDEX: &'static [Instrument] = &[
+    /// Vanilla instruments in NBS serialization order; the array position is
+    /// the NBS instrument index. The four v6 trumpets occupy indexes 16-19.
+    /// Note: byte encoding/decoding relative to the first custom instrument
+    /// index lives in codec.rs.
+    pub(crate) const NBS_INDEX: &'static [Instrument] = &[
         Instrument::Harp,
         Instrument::DoubleBass,
         Instrument::BassDrum,
@@ -244,34 +257,47 @@ impl Instrument {
         Instrument::TrumpetExposed,
         Instrument::TrumpetWeathered,
         Instrument::TrumpetOxidized,
-        Instrument::Imitate(ImitateInstrument::Creeper),
-        Instrument::Imitate(ImitateInstrument::Skeleton),
-        Instrument::Imitate(ImitateInstrument::Dragon),
-        Instrument::Imitate(ImitateInstrument::WitherSkeleton),
-        Instrument::Imitate(ImitateInstrument::Piglin),
-        Instrument::Imitate(ImitateInstrument::Zombie),
-        Instrument::Imitate(ImitateInstrument::CustomHead),
     ];
-}
 
-impl From<u8> for Instrument {
-    fn from(value: u8) -> Self {
+    /// The number of vanilla instruments in the newest NBS version.
+    pub(crate) const VANILLA_COUNT: u8 = 20;
+
+    /// Returns the fixed table index of a vanilla instrument, if this is one.
+    /// Vanilla instruments occupy indexes 0..20 (including the v6 trumpets).
+    pub fn vanilla_index(self) -> Option<u8> {
         Self::NBS_INDEX
-            .get(value as usize)
-            .copied()
-            .unwrap_or(Self::Other(value))
-    }
-}
-
-impl From<Instrument> for u8 {
-    fn from(instrument: Instrument) -> Self {
-        let idx = Instrument::NBS_INDEX
             .iter()
-            .position(|&inst| inst == instrument)
-            .map(|i| i as u8);
-        idx.unwrap_or_else(|| match instrument {
-            Instrument::Other(v) => v,
-            _ => unreachable!(),
+            .position(|&inst| inst == self)
+            .map(|index| index as u8)
+    }
+
+    /// Returns the canonical OpenNBS name and sound file of a vanilla
+    /// instrument, used as the generic fallback when such an instrument must
+    /// be stored as a custom instrument in an older NBS version.
+    pub fn nbs_definition(self) -> Option<(&'static str, &'static str)> {
+        use Instrument::*;
+        Some(match self {
+            Harp => ("Harp", "harp.ogg"),
+            DoubleBass => ("Double Bass", "dbass.ogg"),
+            BassDrum => ("Bass Drum", "bdrum.ogg"),
+            SnareDrum => ("Snare Drum", "sdrum.ogg"),
+            Click => ("Click", "click.ogg"),
+            Guitar => ("Guitar", "guitar.ogg"),
+            Flute => ("Flute", "flute.ogg"),
+            Bell => ("Bell", "bell.ogg"),
+            Chime => ("Chime", "icechime.ogg"),
+            Xylophone => ("Xylophone", "xylobone.ogg"),
+            IronXylophone => ("Iron Xylophone", "iron_xylophone.ogg"),
+            CowBell => ("Cow Bell", "cow_bell.ogg"),
+            Didgeridoo => ("Didgeridoo", "didgeridoo.ogg"),
+            Bit => ("Bit", "bit.ogg"),
+            Banjo => ("Banjo", "banjo.ogg"),
+            Pling => ("Pling", "pling.ogg"),
+            Trumpet => ("Trumpet", "trumpet.ogg"),
+            TrumpetExposed => ("Exposed Trumpet", "trumpet_exposed.ogg"),
+            TrumpetWeathered => ("Weathered Trumpet", "trumpet_weathered.ogg"),
+            TrumpetOxidized => ("Oxidized Trumpet", "trumpet_oxidized.ogg"),
+            _ => return None,
         })
     }
 }

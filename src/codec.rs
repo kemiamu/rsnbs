@@ -11,15 +11,15 @@ use std::num::NonZeroU32;
 /// unified trait for both parsing and writing data, optionally with context
 pub(super) trait Codec {
     /// context type shared for both parsing and writing (use () when no context is needed)
-    type Context;
+    type Context: Copy;
 
     /// parse data from a reader with context
-    fn parse<R: io::Read>(reader: &mut R, context: &Self::Context) -> Result<Self>
+    fn parse<R: io::Read>(reader: &mut R, context: Self::Context) -> Result<Self>
     where
         Self: Sized;
 
     /// write data to a writer with context
-    fn write<W: io::Write>(&self, writer: &mut W, context: &Self::Context) -> Result<()>;
+    fn write<W: io::Write>(&self, writer: &mut W, context: Self::Context) -> Result<()>;
 }
 
 // Song
@@ -32,21 +32,22 @@ impl Song {
         let mut song = Self::default();
 
         // 头部分
-        song.header = Codec::parse(reader, &())?;
+        song.header = Codec::parse(reader, ())?;
+        let context = (song.header.version, song.header.default_instruments);
 
         // 音符部分
-        song.notes = Codec::parse(reader, &song.header.version)?;
+        song.notes = Codec::parse(reader, context)?;
 
         // 层部分
         for _ in 0..song.header.song_layers {
-            let layer = Codec::parse(reader, &song.header.version)?;
+            let layer = Codec::parse(reader, song.header.version)?;
             song.layers.push(layer);
         }
 
         // 自定义乐器部分
         let instr_count = reader.read_u8()?;
         for _ in 0..instr_count {
-            let instrument = Codec::parse(reader, &())?;
+            let instrument = Codec::parse(reader, ())?;
             song.custom_instruments.push(instrument);
         }
 
@@ -56,22 +57,24 @@ impl Song {
     /// writes the song to a writer.
     pub fn write<W: io::Write>(&mut self, writer: &mut W) -> Result<()> {
         self.refresh();
+        self.adapt_instruments_to_version(self.header.version);
+        let context = (self.header.version, self.header.default_instruments);
 
         // 头部分
-        self.header.write(writer, &())?;
+        self.header.write(writer, ())?;
 
         // 音符部分
-        self.notes.write(writer, &self.header.version)?;
+        self.notes.write(writer, context)?;
 
         // 层部分
         for layer in &self.layers {
-            layer.write(writer, &self.header.version)?;
+            layer.write(writer, self.header.version)?;
         }
 
         // 自定义乐器部分
         writer.write_u8(self.custom_instruments.len().try_into().unwrap_or(u8::MAX))?;
         for instr in self.custom_instruments.iter().take(u8::MAX.into()) {
-            instr.write(writer, &())?;
+            instr.write(writer, ())?;
         }
 
         Ok(())
@@ -85,7 +88,7 @@ impl Song {
 impl Codec for Header {
     type Context = ();
 
-    fn parse<R: io::Read>(reader: &mut R, _: &Self::Context) -> Result<Self> {
+    fn parse<R: io::Read>(reader: &mut R, _: Self::Context) -> Result<Self> {
         let mut header = Self::default();
 
         // 版本
@@ -111,7 +114,7 @@ impl Codec for Header {
         header.song_author = reader.read_string()?;
         header.original_author = reader.read_string()?;
         header.description = reader.read_string()?;
-        header.tempo = Codec::parse(reader, &())?;
+        header.tempo = Codec::parse(reader, ())?;
         header.auto_save = reader.read_bool()?;
         header.auto_save_duration = reader.read_u8()? as _;
         header.time_signature = reader.read_u8()?;
@@ -132,11 +135,11 @@ impl Codec for Header {
         Ok(header)
     }
 
-    fn write<W: io::Write>(&self, writer: &mut W, _: &Self::Context) -> Result<()> {
+    fn write<W: io::Write>(&self, writer: &mut W, _: Self::Context) -> Result<()> {
         // 版本
         if self.version.get() > 0 {
             writer.write_u16(0)?;
-            self.version.write(writer, &())?;
+            self.version.write(writer, ())?;
             writer.write_u8(self.default_instruments)?;
         } else {
             writer.write_u16(self.song_length.try_into().unwrap_or(u16::MAX))?;
@@ -152,7 +155,7 @@ impl Codec for Header {
         writer.write_string(&self.song_author)?;
         writer.write_string(&self.original_author)?;
         writer.write_string(&self.description)?;
-        self.tempo.write(writer, &())?;
+        self.tempo.write(writer, ())?;
         writer.write_bool(self.auto_save)?;
         writer.write_u8(self.auto_save_duration.try_into().unwrap_or(u8::MAX))?;
         writer.write_u8(self.time_signature)?;
@@ -179,9 +182,9 @@ impl Codec for Header {
 // ++++++++++++============++++++++++++============++++++++++++============
 
 impl Codec for Notes<Position, Note> {
-    type Context = Version;
+    type Context = (Version, u8);
 
-    fn parse<R: io::Read>(reader: &mut R, version: &Self::Context) -> Result<Self> {
+    fn parse<R: io::Read>(reader: &mut R, context: Self::Context) -> Result<Self> {
         let mut notes = BTreeMap::new();
 
         // tick
@@ -194,7 +197,7 @@ impl Codec for Notes<Position, Note> {
             while let Some(layer_jump) = reader.read_jump()? {
                 layer_cursor = layer_cursor.wrapping_add(layer_jump.get());
 
-                let note = Note::parse(reader, version)?;
+                let note = Note::parse(reader, context)?;
                 notes.insert(Position::new(tick_cursor, layer_cursor), note);
             }
         }
@@ -202,7 +205,7 @@ impl Codec for Notes<Position, Note> {
         Ok(notes.into())
     }
 
-    fn write<W: io::Write>(&self, writer: &mut W, context: &Self::Context) -> Result<()> {
+    fn write<W: io::Write>(&self, writer: &mut W, context: Self::Context) -> Result<()> {
         let mut iter = self.iter().peekable();
         let mut prev_tick = Tick::MAX;
         let mut prev_layer = Index::MAX;
@@ -239,30 +242,32 @@ impl Codec for Notes<Position, Note> {
 // ++++++++++++============++++++++++++============++++++++++++============
 
 impl Codec for Note {
-    type Context = Version;
+    type Context = (Version, u8);
 
-    fn parse<R: io::Read>(reader: &mut R, version: &Self::Context) -> Result<Self> {
+    fn parse<R: io::Read>(reader: &mut R, context: Self::Context) -> Result<Self> {
+        let (version, first_custom_index) = context;
         let mut note = Self::default();
-        let instrument: Instrument = Codec::parse(reader, &())?;
-        let key: Key = Codec::parse(reader, &())?;
+        let instrument: Instrument = Codec::parse(reader, first_custom_index)?;
+        let key: Key = Codec::parse(reader, ())?;
         note.tone = Tone::new(instrument, key);
 
         if version.get() >= 4 {
-            note.velocity = Codec::parse(reader, &())?;
-            note.panning = Codec::parse(reader, &())?;
+            note.velocity = Codec::parse(reader, ())?;
+            note.panning = Codec::parse(reader, ())?;
             note.pitch = reader.read_i16()?;
         }
 
         Ok(note)
     }
 
-    fn write<W: io::Write>(&self, writer: &mut W, version: &Self::Context) -> Result<()> {
-        self.tone.instrument().write(writer, &())?;
+    fn write<W: io::Write>(&self, writer: &mut W, context: Self::Context) -> Result<()> {
+        let (version, first_custom_index) = context;
+        self.tone.instrument().write(writer, first_custom_index)?;
         writer.write_u8(self.tone.key().into())?;
 
         if version.get() >= 4 {
-            self.velocity.write(writer, &())?;
-            self.panning.write(writer, &())?;
+            self.velocity.write(writer, ())?;
+            self.panning.write(writer, ())?;
             writer.write_i16(self.pitch)?;
         }
 
@@ -278,7 +283,7 @@ impl Codec for Layer {
     type Context = Version;
 
     /// parses a Layer from a reader with version context
-    fn parse<R: io::Read>(reader: &mut R, version: &Self::Context) -> Result<Self> {
+    fn parse<R: io::Read>(reader: &mut R, version: Self::Context) -> Result<Self> {
         let mut layer = Self::default();
         layer.name = reader.read_string()?;
 
@@ -286,27 +291,27 @@ impl Codec for Layer {
             layer.lock = reader.read_bool()?;
         }
 
-        layer.volume = Codec::parse(reader, &())?;
+        layer.volume = Codec::parse(reader, ())?;
 
         if version.get() >= 2 {
-            layer.panning = Codec::parse(reader, &())?;
+            layer.panning = Codec::parse(reader, ())?;
         }
 
         Ok(layer)
     }
 
     /// writes a Layer to a writer with version context
-    fn write<W: io::Write>(&self, writer: &mut W, version: &Self::Context) -> Result<()> {
+    fn write<W: io::Write>(&self, writer: &mut W, version: Self::Context) -> Result<()> {
         writer.write_string(&self.name)?;
 
         if version.get() >= 4 {
             writer.write_bool(self.lock)?;
         }
 
-        self.volume.write(writer, &())?;
+        self.volume.write(writer, ())?;
 
         if version.get() >= 2 {
-            self.panning.write(writer, &())?;
+            self.panning.write(writer, ())?;
         }
 
         Ok(())
@@ -321,7 +326,7 @@ impl Codec for CustomInstrument {
     type Context = ();
 
     /// parses an Instrument from a reader
-    fn parse<R: io::Read>(reader: &mut R, _: &Self::Context) -> Result<Self> {
+    fn parse<R: io::Read>(reader: &mut R, _: Self::Context) -> Result<Self> {
         let mut instrument = Self::default();
         instrument.name = reader.read_string()?;
         instrument.file = reader.read_string()?;
@@ -331,7 +336,7 @@ impl Codec for CustomInstrument {
     }
 
     /// writes an Instrument to a writer
-    fn write<W: io::Write>(&self, writer: &mut W, _: &Self::Context) -> Result<()> {
+    fn write<W: io::Write>(&self, writer: &mut W, _: Self::Context) -> Result<()> {
         writer.write_string(&self.name)?;
         writer.write_string(&self.file)?;
         writer.write_u8(self.pitch)?;
@@ -347,47 +352,57 @@ impl Codec for CustomInstrument {
 impl Codec for Version {
     type Context = ();
 
-    fn parse<R: io::Read>(reader: &mut R, _: &Self::Context) -> Result<Self> {
+    fn parse<R: io::Read>(reader: &mut R, _: Self::Context) -> Result<Self> {
         Version::new(reader.read_u8()?)
     }
 
-    fn write<W: io::Write>(&self, writer: &mut W, _: &Self::Context) -> Result<()> {
+    fn write<W: io::Write>(&self, writer: &mut W, _: Self::Context) -> Result<()> {
         Ok(writer.write_u8(self.get())?)
+    }
+}
+
+impl Codec for Instrument {
+    /// Byte index where custom instruments start.
+    type Context = u8;
+
+    fn parse<R: io::Read>(reader: &mut R, first_custom_index: Self::Context) -> Result<Self> {
+        let byte = reader.read_u8()?;
+        match byte < first_custom_index && byte < Instrument::VANILLA_COUNT {
+            true => Ok(Instrument::NBS_INDEX[byte as usize]),
+            false => Ok(Instrument::Custom(byte.saturating_sub(first_custom_index))),
+        }
+    }
+
+    fn write<W: io::Write>(&self, writer: &mut W, first_custom_index: Self::Context) -> Result<()> {
+        let byte = match *self {
+            Instrument::Custom(slot) => first_custom_index.saturating_add(slot),
+            _ => self.vanilla_index().unwrap_or(0),
+        };
+        writer.write_u8(byte)?;
+        Ok(())
     }
 }
 
 impl Codec for Volume {
     type Context = ();
 
-    fn parse<R: io::Read>(reader: &mut R, _: &Self::Context) -> Result<Self> {
+    fn parse<R: io::Read>(reader: &mut R, _: Self::Context) -> Result<Self> {
         Volume::new(reader.read_u8()?)
     }
 
-    fn write<W: io::Write>(&self, writer: &mut W, _: &Self::Context) -> Result<()> {
+    fn write<W: io::Write>(&self, writer: &mut W, _: Self::Context) -> Result<()> {
         Ok(writer.write_u8(self.get())?)
-    }
-}
-
-impl Codec for Instrument {
-    type Context = ();
-
-    fn parse<R: io::Read>(reader: &mut R, _: &Self::Context) -> Result<Self> {
-        Ok(reader.read_u8()?.into())
-    }
-
-    fn write<W: io::Write>(&self, writer: &mut W, _: &Self::Context) -> Result<()> {
-        Ok(writer.write_u8((*self).into())?)
     }
 }
 
 impl Codec for Key {
     type Context = ();
 
-    fn parse<R: io::Read>(reader: &mut R, _: &Self::Context) -> Result<Self> {
+    fn parse<R: io::Read>(reader: &mut R, _: Self::Context) -> Result<Self> {
         Ok(reader.read_u8()?.into())
     }
 
-    fn write<W: io::Write>(&self, writer: &mut W, _: &Self::Context) -> Result<()> {
+    fn write<W: io::Write>(&self, writer: &mut W, _: Self::Context) -> Result<()> {
         Ok(writer.write_u8((*self).into())?)
     }
 }
@@ -395,13 +410,13 @@ impl Codec for Key {
 impl Codec for Panning {
     type Context = ();
 
-    fn parse<R: io::Read>(reader: &mut R, _: &Self::Context) -> Result<Self> {
+    fn parse<R: io::Read>(reader: &mut R, _: Self::Context) -> Result<Self> {
         let raw = reader.read_u8()?;
         // Convert from file representation (0-200) to internal (-100..100)
         Panning::new(raw.wrapping_sub(100) as i8)
     }
 
-    fn write<W: io::Write>(&self, writer: &mut W, _: &Self::Context) -> Result<()> {
+    fn write<W: io::Write>(&self, writer: &mut W, _: Self::Context) -> Result<()> {
         // Convert from internal (-100..100) to file representation (0-200)
         Ok(writer.write_u8((self.get() as u8).wrapping_add(100))?)
     }
@@ -410,12 +425,12 @@ impl Codec for Panning {
 impl Codec for f32 {
     type Context = ();
 
-    fn parse<R: io::Read>(reader: &mut R, _: &Self::Context) -> Result<Self> {
+    fn parse<R: io::Read>(reader: &mut R, _: Self::Context) -> Result<Self> {
         // Convert from u16 to f32 and divide by 100.0
         Ok(reader.read_u16()? as f32 / 100.0)
     }
 
-    fn write<W: io::Write>(&self, writer: &mut W, _: &Self::Context) -> Result<()> {
+    fn write<W: io::Write>(&self, writer: &mut W, _: Self::Context) -> Result<()> {
         // Convert f32 to u16 by multiplying by 100.0
         Ok(writer.write_u16((self * 100.0) as u16)?)
     }

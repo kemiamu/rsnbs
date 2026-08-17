@@ -82,7 +82,7 @@ impl Instrument {
             Self::TrumpetWeathered => "trumpet_weathered",
             Self::TrumpetOxidized => "trumpet_oxidized",
             Self::Imitate(instrument) => instrument.note_property(),
-            Self::Other(_) => "custom",
+            Self::Custom(_) => "custom",
         }
     }
 
@@ -110,7 +110,7 @@ impl Instrument {
             Self::TrumpetWeathered => "minecraft:waxed_weathered_copper",
             Self::TrumpetOxidized => "minecraft:waxed_oxidized_copper",
             Self::Imitate(instrument) => instrument.block_resource(),
-            Self::Other(_) => return None,
+            Self::Custom(_) => return None,
         })
     }
 
