@@ -66,18 +66,6 @@ pub mod song {
                 .map(|(p, _)| p.into_tick() + 1)
                 .unwrap_or(0)
         }
-
-        /// refreshes song data for consistency.
-        pub fn refresh(&mut self) {
-            // 更新歌曲长度
-            self.header.song_length = self
-                .notes
-                .last_key_value()
-                .map(|(p, _)| p.into_tick())
-                .unwrap_or(1);
-            // 更新 layer 数量
-            self.header.song_layers = self.layers.len() as _;
-        }
     }
 
     // header
@@ -114,7 +102,7 @@ pub mod song {
         fn default() -> Self {
             Self {
                 version: Version::default(),
-                default_instruments: 16,
+                default_instruments: Version::default().vanilla_instruments(),
                 song_length: 0,
                 song_layers: 0,
                 song_name: String::new(),
@@ -209,6 +197,16 @@ pub mod types {
 
         pub fn get(&self) -> u8 {
             self.0
+        }
+
+        /// the amount of vanilla instruments in this NBS version.
+        /// version 6 added the four trumpet instruments.
+        pub fn vanilla_instruments(self) -> u8 {
+            match self.0 {
+                0 => 10,
+                1..=5 => 16,
+                _ => 20,
+            }
         }
     }
 

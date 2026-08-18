@@ -127,23 +127,35 @@ impl<const N: usize> From<([NonZero<Tick>; N], TpPlane)> for TransEqClass {
 
 impl Notes<Position, Note> {
     /// Rescales ticks from arbitrary tempo (tick/s) to standard game tick (20 t/s).
-    pub fn rescale_to_game_tick(self, tempo: f32) -> Notes {
+    pub fn rescale_to_game_tick(self, tempo: f32) -> impl Iterator<Item = (Position, Note)> {
         self.rescale_to_tick_rate(tempo, 20)
     }
 
     /// Rescales ticks from arbitrary tempo (tick/s) to redstone tick (10 t/s).
-    pub fn rescale_to_redstone_tick(self, tempo: f32) -> Notes {
+    pub fn rescale_to_redstone_tick(self, tempo: f32) -> impl Iterator<Item = (Position, Note)> {
         self.rescale_to_tick_rate(tempo, 10)
     }
 
     /// Rescales ticks from arbitrary tempo (tick/s) to the given target tick rate (t/s).
-    pub fn rescale_to_tick_rate(self, tempo: f32, target_rate: u32) -> Notes {
-        let scale = (target_rate as f32 / tempo).round() as u32;
-        let map_pos = |pos: Position| Position::new(pos.into_tick() * scale, pos.layer());
-        match scale > 1 {
-            true => self.into_iter().map(|(p, n)| (map_pos(p), n)).collect(),
-            false => self,
-        }
+    pub fn rescale_to_tick_rate(
+        self,
+        tempo: f32,
+        target_rate: u32,
+    ) -> impl Iterator<Item = (Position, Note)> {
+        // tempo outside (0, 30): assume NBS tick ≡ game tick, fold by target/20
+        let scale = match (0.0..30.0).contains(&tempo) {
+            true => target_rate as f32 / tempo,
+            false => target_rate as f32 / 20.0,
+        };
+        // approximate scale to {z, 1/z} as (num, den), keeping tick transforms integral
+        let (num, den) = match scale >= 1.0 {
+            true => (scale.round() as u32, 1),
+            false => (1, (1.0 / scale).round() as u32),
+        };
+        self.into_iter().map(move |(pos, note)| {
+            let tick = pos.into_tick() * num / den;
+            (Position::new(tick, pos.layer()), note)
+        })
     }
 
     /// Groups notes into contiguous blocks separated by empty layers.
