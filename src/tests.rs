@@ -21,6 +21,57 @@ type Multiset<T> = BTreeMap<T, NonZero<usize>>;
 type Point = (Tick, Tone);
 
 #[test]
+fn test_adapt_instruments_v6_to_v5() {
+    use crate::note::Instrument;
+
+    let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
+
+    // 注入一个 v6 独有的原生乐器（Trumpet，索引 16），v5 无法表示
+    song.notes
+        .values_mut()
+        .next()
+        .unwrap()
+        .set_instrument(Instrument::Trumpet);
+
+    song.header.version = Version::new(5).unwrap();
+    let path = std::env::temp_dir().join("rsnbs_exp_out_v5.nbs");
+    song.save_nbs(&path).unwrap();
+
+    // 写入是纯投影：原 song 不被修改
+    assert!(
+        song.notes
+            .values()
+            .any(|n| n.tone().instrument() == Instrument::Trumpet)
+    );
+
+    // 回读：v5 文件、16 个原生乐器、音符数不变
+    let back = Song::open_nbs(&path).unwrap();
+    assert_eq!(back.header.version, Version::new(5).unwrap());
+    assert_eq!(back.header.default_instruments, 16);
+    assert_eq!(back.notes.len(), song.notes.len());
+
+    // 被注入的音符改指自定义槽位 0，其余音符保持原生乐器
+    let (_, first_note) = back.notes.iter().next().unwrap();
+    assert_eq!(first_note.tone().instrument(), Instrument::Custom(0));
+    let vanilla = back
+        .notes
+        .values()
+        .filter(|n| n.tone().instrument().vanilla_index().is_some())
+        .count();
+    assert_eq!(vanilla, song.notes.len() - 1);
+
+    // 自定义乐器表包含 Trumpet 的 OpenNBS 定义
+    assert_eq!(back.custom_instruments.len(), 1);
+    assert_eq!(back.custom_instruments[0].name, "Trumpet");
+    assert_eq!(back.custom_instruments[0].file, "trumpet.ogg");
+
+    // roundtrip 字节稳定：再写一次应与首次写入一致
+    let mut out = Vec::new();
+    back.write(&mut out).unwrap();
+    assert_eq!(out, std::fs::read(&path).unwrap());
+}
+
+#[test]
 fn test_scale_ticks() {
     let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
 

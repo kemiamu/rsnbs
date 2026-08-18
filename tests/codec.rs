@@ -152,6 +152,42 @@ fn v5_parses_custom_byte_as_custom_slot_not_trumpet() {
     assert_eq!(notes[0].1.tone().instrument(), Instrument::Custom(1));
 }
 
+// write() goes through the encoding wrapper: derived header fields and the
+// downgrade mapping are applied on the wrapper, so the in-memory song is
+// never modified.
+#[test]
+fn write_does_not_modify_the_song() {
+    let bytes = build(
+        6,
+        20,
+        0,
+        1,
+        &[(Some(1), 1, 16, 45)], // Trumpet
+        &[("Layer", 0, 100, 100)],
+        &[],
+    );
+    let mut song = parse(bytes);
+    song.header.version = Version::new(5).unwrap();
+
+    let out = write(&mut song);
+
+    // The written file converted the trumpet to a custom instrument...
+    let downgraded = parse(out);
+    assert_eq!(downgraded.custom_instruments[0].name, "Trumpet");
+    assert_eq!(downgraded.header.default_instruments, 16);
+    // ...but the song itself is unchanged: no custom instruments were added
+    // and the trumpet note still references the vanilla instrument.
+    assert!(song.custom_instruments.is_empty());
+    let instruments: Vec<_> = song
+        .notes
+        .values()
+        .map(|note| note.tone().instrument())
+        .collect();
+    assert_eq!(instruments, [Instrument::Trumpet]);
+    assert_eq!(song.header.song_length, 0);
+    assert_eq!(song.header.song_layers, 1);
+}
+
 // Downgrading a v6 song with trumpets to v5 must convert them to custom
 // instruments (following OpenNBS naming) instead of writing broken bytes.
 #[test]
@@ -293,7 +329,7 @@ fn v1_roundtrip_is_byte_identical() {
 #[test]
 fn classic_v0_parses_and_roundtrips() {
     // The first u16 is the song length in the classic format and must stay
-    // consistent with the last note's tick when refresh() recomputes it.
+    // consistent with the derived song length (the last note's tick).
     let bytes = build(
         0,
         0,
