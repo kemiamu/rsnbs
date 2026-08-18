@@ -103,7 +103,7 @@ impl Note {
     }
 
     /// replaces the note's instrument, keeping its key and modulation.
-    pub fn set_instrument(&mut self, instrument: Instrument) {
+    pub(crate) fn set_instrument(&mut self, instrument: Instrument) {
         self.tone.instrument = instrument;
     }
 }

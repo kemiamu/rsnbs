@@ -4,6 +4,7 @@ use crate::nbs_ext::{NbsReadExt, NbsWriteExt};
 use crate::note::{Instrument, Key, Note, Notes, Tone};
 use crate::song::{CustomInstrument, Header, Layer, Song};
 use crate::types::{Index, IntoTick, Panning, Position, Result, Tick, Version, Volume};
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::num::NonZeroU32;
@@ -105,13 +106,8 @@ impl Codec for EncodedSong {
         }
 
         // 自定义乐器部分
-        writer.write_u8(
-            self.0
-                .custom_instruments
-                .len()
-                .try_into()
-                .unwrap_or(u8::MAX),
-        )?;
+        let count = self.0.custom_instruments.len();
+        writer.write_u8(count.try_into().unwrap_or(u8::MAX))?;
         for instr in self.0.custom_instruments.iter().take(u8::MAX.into()) {
             instr.write(writer, ())?;
         }
@@ -124,59 +120,42 @@ impl Codec for EncodedSong {
 /// instrument slots.
 fn adapt_instruments(song: &mut Song) {
     let fci = song.header.version.vanilla_instruments();
-    let unsupported =
-        |instrument: Instrument| instrument.vanilla_index().is_some_and(|index| index >= fci);
 
-    // 按出现顺序收集所有目标版本无法表示的原生乐器
-    let mut needed: Vec<(&'static str, &'static str)> = Vec::new();
-    for instrument in song.notes.values().map(|note| note.tone().instrument()) {
-        if !unsupported(instrument) {
-            continue;
-        }
-        let Some(definition) = instrument.nbs_definition() else {
-            continue;
-        };
-        if !needed.contains(&definition) {
-            needed.push(definition);
-        }
-    }
+    // name+file → 槽位；先收录已有自定义乐器，同名乐器复用同一槽位
+    let mut slots: HashMap<(String, String), u8> = song
+        .custom_instruments
+        .iter()
+        .enumerate()
+        .map(|(slot, ci)| ((ci.name.clone(), ci.file.clone()), slot as u8))
+        .collect();
 
-    // 确保对应的自定义乐器存在,并记录槽位
-    let mut slots: HashMap<(&'static str, &'static str), u8> = HashMap::new();
-    for &(name, file) in &needed {
-        let slot = match song
-            .custom_instruments
-            .iter()
-            .position(|ci| ci.name == name && ci.file == file)
-        {
-            Some(existing) => existing as u8,
-            None => {
-                let slot = song.custom_instruments.len().min(u8::MAX as usize) as u8;
-                song.custom_instruments.push(CustomInstrument {
-                    name: name.into(),
-                    file: file.into(),
-                    pitch: 45,
-                    press_key: true,
-                });
-                slot
-            }
-        };
-        slots.insert((name, file), slot);
-    }
+    // 追加自定义乐器并返回其槽位
+    let mut append_slot = |name: &'static str, file: &'static str| {
+        let slot = song.custom_instruments.len().min(u8::MAX as usize) as u8;
+        song.custom_instruments.push(CustomInstrument {
+            name: name.into(),
+            file: file.into(),
+            pitch: 45,
+            press_key: true,
+        });
+        slot
+    };
 
-    // 把受影响的音符改指自定义乐器槽位
+    // 分派槽位：已有则复用，缺失则追加
+    let mut ensure_slot = |name: &'static str, file: &'static str| match slots
+        .entry((name.to_owned(), file.to_owned()))
+    {
+        Entry::Occupied(occupied) => *occupied.get(),
+        Entry::Vacant(vacant) => *vacant.insert(append_slot(name, file)),
+    };
+
+    // 按版本派发默认乐器或自定义乐器
     for note in song.notes.values_mut() {
         let instrument = note.tone().instrument();
-        if !unsupported(instrument) {
-            continue;
+        let unsupported = instrument.vanilla_index().is_some_and(|index| index >= fci);
+        if let Some((name, file)) = instrument.nbs_definition().filter(|_| unsupported) {
+            note.set_instrument(Instrument::Custom(ensure_slot(name, file)));
         }
-        let Some((name, file)) = instrument.nbs_definition() else {
-            continue;
-        };
-        let Some(&slot) = slots.get(&(name, file)) else {
-            continue;
-        };
-        note.set_instrument(Instrument::Custom(slot));
     }
 }
 
