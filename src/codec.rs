@@ -171,11 +171,8 @@ impl EncodedHeader {
     /// song's state; the song itself is not modified.
     fn wrap(song: &Song) -> Self {
         let mut header = song.header.clone();
-        header.song_length = song
-            .notes
-            .last_key_value()
-            .map(|(p, _)| p.into_tick())
-            .unwrap_or(1);
+        let last = song.notes.last_key_value();
+        header.song_length = last.map(|(p, _)| p.into_tick()).unwrap_or(1);
         header.song_layers = song.layers.len() as _;
         header.default_instruments = header.version.vanilla_instruments();
         Self(header)
@@ -472,8 +469,9 @@ impl Codec for Instrument {
     type Target = Self;
 
     fn parse<R: io::Read>(reader: &mut R, first_custom_index: Self::Context) -> Result<Self> {
+        debug_assert!(first_custom_index <= Instrument::VANILLA_COUNT);
         let byte = reader.read_u8()?;
-        match byte < first_custom_index && byte < Instrument::VANILLA_COUNT {
+        match byte < first_custom_index {
             true => Ok(Instrument::NBS_INDEX[byte as usize]),
             false => Ok(Instrument::Custom(byte.saturating_sub(first_custom_index))),
         }
