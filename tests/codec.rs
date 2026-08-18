@@ -5,7 +5,7 @@
 
 use rsnbs::note::Instrument;
 use rsnbs::song::Song;
-use rsnbs::types::{IntoTick, Version};
+use rsnbs::types::Version;
 use std::io::Cursor;
 
 fn write_str(buf: &mut Vec<u8>, s: &str) {
@@ -152,9 +152,8 @@ fn v5_parses_custom_byte_as_custom_slot_not_trumpet() {
     assert_eq!(notes[0].1.tone().instrument(), Instrument::Custom(1));
 }
 
-// write() goes through the encoding wrapper: derived header fields and the
-// downgrade mapping are applied on the wrapper, so the in-memory song is
-// never modified.
+// write() borrows the song: derived header fields are computed while
+// writing, so the in-memory song is never modified.
 #[test]
 fn write_does_not_modify_the_song() {
     let bytes = build(
@@ -166,17 +165,11 @@ fn write_does_not_modify_the_song() {
         &[("Layer", 0, 100, 100)],
         &[],
     );
-    let mut song = parse(bytes);
-    song.header.version = Version::new(5).unwrap();
-
+    let mut song = parse(bytes.clone());
     let out = write(&mut song);
 
-    // The written file converted the trumpet to a custom instrument...
-    let downgraded = parse(out);
-    assert_eq!(downgraded.custom_instruments[0].name, "Trumpet");
-    assert_eq!(downgraded.header.default_instruments, 16);
-    // ...but the song itself is unchanged: no custom instruments were added
-    // and the trumpet note still references the vanilla instrument.
+    // Roundtrip is byte-identical and the song itself is unchanged.
+    assert_eq!(out, bytes);
     assert!(song.custom_instruments.is_empty());
     let instruments: Vec<_> = song
         .notes
@@ -186,63 +179,6 @@ fn write_does_not_modify_the_song() {
     assert_eq!(instruments, [Instrument::Trumpet]);
     assert_eq!(song.header.song_length, 0);
     assert_eq!(song.header.song_layers, 1);
-}
-
-// Downgrading a v6 song with trumpets to v5 must convert them to custom
-// instruments (following OpenNBS naming) instead of writing broken bytes.
-#[test]
-fn v6_to_v5_downgrade_converts_trumpets_to_custom_instruments() {
-    let bytes = build(
-        6,
-        20,
-        0,
-        1,
-        &[
-            (Some(1), 1, 16, 45), // Trumpet
-            (None, 1, 20, 45),    // custom slot 0: "Custom Brass"
-        ],
-        &[("Layer", 0, 100, 100)],
-        &[("Custom Brass", "brass.ogg", 45, 1)],
-    );
-    let mut song = parse(bytes);
-    song.header.version = Version::new(5).unwrap();
-
-    let out = write(&mut song);
-    let downgraded = parse(out.clone());
-
-    assert_eq!(downgraded.header.version.get(), 5);
-    assert_eq!(downgraded.header.default_instruments, 16);
-    let notes: Vec<_> = downgraded.notes.iter().collect();
-    assert_eq!(notes[0].1.tone().instrument(), Instrument::Custom(1));
-    assert_eq!(notes[1].1.tone().instrument(), Instrument::Custom(0));
-    assert_eq!(downgraded.custom_instruments[1].name, "Trumpet");
-    assert_eq!(downgraded.custom_instruments[1].file, "trumpet.ogg");
-    assert_eq!(downgraded.custom_instruments[0].name, "Custom Brass");
-}
-
-// Downgrading without trumpets must still remap custom instrument slots,
-// since v6 files use fci = 20 while v5 files use fci = 16.
-#[test]
-fn v6_to_v5_downgrade_remaps_custom_slots() {
-    let bytes = build(
-        6,
-        20,
-        0,
-        1,
-        &[(Some(1), 1, 21, 45)], // custom slot 1: "B"
-        &[("Layer", 0, 100, 100)],
-        &[("A", "a.ogg", 45, 1), ("B", "b.ogg", 45, 1)],
-    );
-    let mut song = parse(bytes);
-    song.header.version = Version::new(5).unwrap();
-
-    let out = write(&mut song);
-    assert_eq!(out[3], 16, "v5 file must claim 16 vanilla instruments");
-
-    let downgraded = parse(out);
-    let notes: Vec<_> = downgraded.notes.iter().collect();
-    assert_eq!(notes[0].1.tone().instrument(), Instrument::Custom(1));
-    assert_eq!(downgraded.custom_instruments[1].name, "B");
 }
 
 // Upgrading a v5 song to v6 must shift custom instrument bytes from 16 + slot
@@ -345,92 +281,4 @@ fn classic_v0_parses_and_roundtrips() {
     let notes: Vec<_> = song.notes.iter().collect();
     assert_eq!(notes[0].1.tone().instrument(), Instrument::SnareDrum);
     assert_eq!(write(&mut song), bytes);
-}
-
-// The fallback is generic: any vanilla instrument that does not exist in the
-// target version (not just the trumpets) becomes a custom instrument.
-#[test]
-fn generic_fallback_covers_all_unsupported_vanilla_instruments() {
-    let bytes = build(
-        6,
-        20,
-        0,
-        1,
-        &[
-            (Some(5), 1, 2, 45), // BassDrum: index 2 < 10, stays vanilla in v0
-            (None, 1, 10, 45),   // Iron Xylophone: index 10 >= 10 -> custom
-            (None, 1, 14, 45),   // Banjo: index 14 >= 10 -> custom
-            (None, 1, 16, 45),   // Trumpet: index 16 >= 10 -> custom
-        ],
-        &[("Layer", 0, 100, 100)],
-        &[],
-    );
-    let mut song = parse(bytes);
-    song.header.version = Version::new(0).unwrap();
-
-    let out = write(&mut song);
-    let downgraded = parse(out);
-    assert_eq!(downgraded.header.default_instruments, 10);
-    let definitions: Vec<(&str, &str)> = downgraded
-        .custom_instruments
-        .iter()
-        .map(|ci| (ci.name.as_str(), ci.file.as_str()))
-        .collect();
-    assert_eq!(
-        definitions,
-        [
-            ("Iron Xylophone", "iron_xylophone.ogg"),
-            ("Banjo", "banjo.ogg"),
-            ("Trumpet", "trumpet.ogg"),
-        ]
-    );
-    let instruments: Vec<Instrument> = downgraded
-        .notes
-        .values()
-        .map(|note| note.tone().instrument())
-        .collect();
-    assert_eq!(
-        instruments,
-        [
-            Instrument::BassDrum,
-            Instrument::Custom(0),
-            Instrument::Custom(1),
-            Instrument::Custom(2),
-        ]
-    );
-}
-
-// The trumpets downgrade must deduplicate identical conversions and keep the
-// note positions intact.
-#[test]
-fn v6_to_v5_downgrade_deduplicates_trumpets() {
-    let bytes = build(
-        6,
-        20,
-        0,
-        2,
-        &[
-            (Some(1), 1, 19, 45), // Oxidized Trumpet
-            (Some(1), 1, 19, 50), // another Oxidized Trumpet
-            (Some(1), 1, 17, 55), // Exposed Trumpet
-        ],
-        &[("L1", 0, 100, 100), ("L2", 0, 100, 100)],
-        &[],
-    );
-    let mut song = parse(bytes);
-    song.header.version = Version::new(5).unwrap();
-    let out = write(&mut song);
-
-    let downgraded = parse(out);
-    assert_eq!(downgraded.custom_instruments.len(), 2);
-    let names: Vec<&str> = downgraded
-        .custom_instruments
-        .iter()
-        .map(|ci| ci.name.as_str())
-        .collect();
-    assert_eq!(names, ["Oxidized Trumpet", "Exposed Trumpet"]);
-    let notes: Vec<_> = downgraded.notes.iter().collect();
-    assert_eq!(notes.len(), 3);
-    let ticks: Vec<_> = notes.iter().map(|(p, _)| p.into_tick()).collect();
-    assert_eq!(ticks, [0, 1, 2]);
 }

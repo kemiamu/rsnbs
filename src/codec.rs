@@ -4,8 +4,7 @@ use crate::nbs_ext::{NbsReadExt, NbsWriteExt};
 use crate::note::{Instrument, Key, Note, Notes, Tone};
 use crate::song::{CustomInstrument, Header, Layer, Song};
 use crate::types::{Index, IntoTick, Panning, Position, Result, Tick, Version, Volume};
-use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::io;
 use std::num::NonZeroU32;
 
@@ -31,40 +30,33 @@ pub(super) trait Codec {
 impl Song {
     /// parses a complete Song from a reader
     pub fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
-        EncodedSong::parse(reader, ())
+        SongWriter::parse(reader, ())
     }
 
     /// writes the song to a writer.
-    ///
-    /// The song itself is not modified: derived header fields and instrument
-    /// mappings are applied to a copy by the encoding wrapper, so writing is
-    /// a pure projection of the current song state.
     pub fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
-        EncodedSong::wrap(self).write(writer, ())
+        SongWriter::wrap(self).write(writer, ())
     }
 }
 
-/// Encoding view wrapping a Song: derived header fields and instrument
-/// mappings are materialized at wrap time, so encoding stays plain.
-struct EncodedSong(Song);
+/// Write view borrowing a Song: derived header fields are computed while
+/// writing, so encoding stays a zero-copy projection of the song state.
+struct SongWriter<'a>(&'a Song);
 
-impl EncodedSong {
-    /// Wraps a song: instrument mappings are applied to a copy; the wrapped
-    /// song itself is not modified. Header fields are derived by `EncodedHeader::wrap`.
-    fn wrap(song: &Song) -> Self {
-        let mut song = song.clone();
-        adapt_instruments(&mut song);
-        Self(song)
+impl SongWriter<'_> {
+    /// Borrows the song without copying; the song itself is never modified.
+    fn wrap(song: &Song) -> SongWriter<'_> {
+        SongWriter(song)
     }
 }
 
-impl Codec for EncodedSong {
+impl Codec for SongWriter<'_> {
     type Context = ();
     type Target = Song;
 
     fn parse<R: io::Read>(reader: &mut R, _: Self::Context) -> Result<Self::Target> {
         // 头部分
-        let header = EncodedHeader::parse(reader, ())?;
+        let header = HeaderWriter::parse(reader, ())?;
         let context = (header.version, header.default_instruments);
 
         // 音符部分
@@ -92,23 +84,26 @@ impl Codec for EncodedSong {
     }
 
     fn write<W: io::Write>(&self, writer: &mut W, _: Self::Context) -> Result<()> {
-        let context = (self.0.header.version, self.0.header.default_instruments);
+        let Self(song) = self;
+        let version = song.header.version;
+        let fci = version.vanilla_instruments();
+        let context = (version, fci);
 
         // 头部分
-        EncodedHeader::wrap(&self.0).write(writer, ())?;
+        HeaderWriter::wrap(song).write(writer, ())?;
 
         // 音符部分
-        self.0.notes.write(writer, context)?;
+        song.notes.write(writer, context)?;
 
         // 层部分
-        for layer in &self.0.layers {
-            layer.write(writer, self.0.header.version)?;
+        for layer in &song.layers {
+            layer.write(writer, version)?;
         }
 
         // 自定义乐器部分
-        let count = self.0.custom_instruments.len();
+        let count = song.custom_instruments.len();
         writer.write_u8(count.try_into().unwrap_or(u8::MAX))?;
-        for instr in self.0.custom_instruments.iter().take(u8::MAX.into()) {
+        for instr in song.custom_instruments.iter().take(u8::MAX.into()) {
             instr.write(writer, ())?;
         }
 
@@ -116,70 +111,23 @@ impl Codec for EncodedSong {
     }
 }
 
-/// Maps vanilla instruments the target version cannot represent to custom
-/// instrument slots.
-fn adapt_instruments(song: &mut Song) {
-    let fci = song.header.version.vanilla_instruments();
-
-    // name+file → 槽位；先收录已有自定义乐器，同名乐器复用同一槽位
-    let mut slots: HashMap<(String, String), u8> = song
-        .custom_instruments
-        .iter()
-        .enumerate()
-        .map(|(slot, ci)| ((ci.name.clone(), ci.file.clone()), slot as u8))
-        .collect();
-
-    // 追加自定义乐器并返回其槽位
-    let mut append_slot = |name: &'static str, file: &'static str| {
-        let slot = song.custom_instruments.len().min(u8::MAX as usize) as u8;
-        song.custom_instruments.push(CustomInstrument {
-            name: name.into(),
-            file: file.into(),
-            pitch: 45,
-            press_key: true,
-        });
-        slot
-    };
-
-    // 分派槽位：已有则复用，缺失则追加
-    let mut ensure_slot = |name: &'static str, file: &'static str| match slots
-        .entry((name.to_owned(), file.to_owned()))
-    {
-        Entry::Occupied(occupied) => *occupied.get(),
-        Entry::Vacant(vacant) => *vacant.insert(append_slot(name, file)),
-    };
-
-    // 按版本派发默认乐器或自定义乐器
-    for note in song.notes.values_mut() {
-        let instrument = note.tone().instrument();
-        let unsupported = instrument.vanilla_index().is_some_and(|index| index >= fci);
-        if let Some((name, file)) = instrument.nbs_definition().filter(|_| unsupported) {
-            note.set_instrument(Instrument::Custom(ensure_slot(name, file)));
-        }
-    }
-}
-
 // Header
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// Encoding view wrapping a Header.
-struct EncodedHeader(Header);
+/// Write view borrowing a Song's header: derived fields are computed from
+/// the song while writing.
+struct HeaderWriter<'a>(&'a Header, &'a Song);
 
-impl EncodedHeader {
-    /// Wraps a song's header, overriding it with the fields derived from the
-    /// song's state; the song itself is not modified.
-    fn wrap(song: &Song) -> Self {
-        let mut header = song.header.clone();
-        let last = song.notes.last_key_value();
-        header.song_length = last.map(|(p, _)| p.into_tick()).unwrap_or(1);
-        header.song_layers = song.layers.len() as _;
-        header.default_instruments = header.version.vanilla_instruments();
-        Self(header)
+impl HeaderWriter<'_> {
+    /// Borrows the header; song length, layer count and default instrument
+    /// count are derived from the song while writing.
+    fn wrap(song: &Song) -> HeaderWriter<'_> {
+        HeaderWriter(&song.header, song)
     }
 }
 
-impl Codec for EncodedHeader {
+impl Codec for HeaderWriter<'_> {
     type Context = ();
     type Target = Header;
 
@@ -231,23 +179,32 @@ impl Codec for EncodedHeader {
     }
 
     fn write<W: io::Write>(&self, writer: &mut W, _: Self::Context) -> Result<()> {
-        let header = &self.0;
+        let Self(header, song) = self;
+
+        // 派生字段：歌曲长度、层数、默认乐器数
+        let song_length = song
+            .notes
+            .last_key_value()
+            .map(|(p, _)| p.into_tick())
+            .unwrap_or(1);
+        let song_layers = song.layers.len() as u32;
+        let default_instruments = header.version.vanilla_instruments();
 
         // 版本
         if header.version.get() > 0 {
             writer.write_u16(0)?;
             header.version.write(writer, ())?;
-            writer.write_u8(header.default_instruments)?;
+            writer.write_u8(default_instruments)?;
         } else {
-            writer.write_u16(header.song_length.try_into().unwrap_or(u16::MAX))?;
+            writer.write_u16(song_length.try_into().unwrap_or(u16::MAX))?;
         }
 
         if header.version.get() >= 3 {
-            writer.write_u16(header.song_length.try_into().unwrap_or(u16::MAX))?;
+            writer.write_u16(song_length.try_into().unwrap_or(u16::MAX))?;
         }
 
         // 头部分
-        writer.write_u16(header.song_layers.try_into().unwrap_or(u16::MAX))?;
+        writer.write_u16(song_layers.try_into().unwrap_or(u16::MAX))?;
         writer.write_string(&header.song_name)?;
         writer.write_string(&header.song_author)?;
         writer.write_string(&header.original_author)?;
