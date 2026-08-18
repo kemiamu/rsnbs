@@ -5,7 +5,7 @@
 
 use rsnbs::note::Instrument;
 use rsnbs::song::Song;
-use rsnbs::types::Version;
+use rsnbs::types::{IntoTick, Version};
 use std::io::Cursor;
 
 fn write_str(buf: &mut Vec<u8>, s: &str) {
@@ -231,8 +231,10 @@ fn v6_roundtrip_is_byte_identical() {
     assert_eq!(write(&mut song), bytes);
 }
 
+// v5（fci=16）写入会全量预设 4 个小号；读回折叠后表只剩用户条目，
+// 再写与首次写出字节一致（写→读→写幂等）。
 #[test]
-fn v5_roundtrip_is_byte_identical() {
+fn v5_roundtrip_is_idempotent() {
     let bytes = build(
         5,
         16,
@@ -242,12 +244,23 @@ fn v5_roundtrip_is_byte_identical() {
         &[("Layer", 0, 100, 100)],
         &[("Custom", "custom.ogg", 45, 1)],
     );
-    let mut song = parse(bytes.clone());
-    assert_eq!(write(&mut song), bytes);
+    let mut song = parse(bytes);
+    let first = write(&mut song);
+
+    // 读回折叠：预设条目不入内存表
+    let mut back = parse(first.clone());
+    assert_eq!(back.custom_instruments.len(), 1);
+    let notes: Vec<_> = back.notes.iter().collect();
+    assert_eq!(notes[0].1.tone().instrument(), Instrument::Custom(0));
+
+    // 幂等：再写与首次写出字节一致
+    let second = write(&mut back);
+    assert_eq!(second, first);
 }
 
+// v1（fci=16）写入同样全量预设 4 个小号，写→读→写幂等。
 #[test]
-fn v1_roundtrip_is_byte_identical() {
+fn v1_roundtrip_is_idempotent() {
     let bytes = build(
         1,
         16,
@@ -259,7 +272,11 @@ fn v1_roundtrip_is_byte_identical() {
     );
     let mut song = parse(bytes.clone());
     assert_eq!(song.header.version.get(), 1);
-    assert_eq!(write(&mut song), bytes);
+    let first = write(&mut song);
+    let mut back = parse(first.clone());
+    assert_eq!(back.custom_instruments.len(), 1);
+    let second = write(&mut back);
+    assert_eq!(second, first);
 }
 
 #[test]
@@ -280,5 +297,150 @@ fn classic_v0_parses_and_roundtrips() {
     assert_eq!(song.header.default_instruments, 10);
     let notes: Vec<_> = song.notes.iter().collect();
     assert_eq!(notes[0].1.tone().instrument(), Instrument::SnareDrum);
+
+    // v0（fci=10）写出的表尾追加 10 条预设；读回折叠后表只剩用户条目，
+    // 再写与首次写出字节一致
+    let first = write(&mut song);
+    let mut back = parse(first.clone());
+    assert_eq!(back.custom_instruments.len(), 1);
+    let second = write(&mut back);
+    assert_eq!(second, first);
+}
+
+// v6 写入（fci=20）无预设：用户自定义的 "Trumpet" 条目不被折叠，保持 Custom。
+// v6 → v5 降级：Trumpet 写入预设区域（表尾追加定义），读回折叠还原为 vanilla。
+#[test]
+fn v6_to_v5_downgrade_presets_trumpet_and_folds_on_read() {
+    let bytes = build(
+        6,
+        20,
+        0,
+        1,
+        &[(Some(1), 1, 16, 45)], // Trumpet
+        &[("Layer", 0, 100, 100)],
+        &[],
+    );
+    let mut song = parse(bytes);
+    song.header.version = Version::new(5).unwrap();
+
+    let out = write(&mut song);
+    assert_eq!(out[3], 16, "v5 file must claim 16 vanilla instruments");
+
+    // 折叠：预设条目还原为原生乐器，不入内存表
+    let downgraded = parse(out);
+    assert!(downgraded.custom_instruments.is_empty());
+    let notes: Vec<_> = downgraded.notes.iter().collect();
+    assert_eq!(notes[0].1.tone().instrument(), Instrument::Trumpet);
+
+    // 幂等：再写一次与首次写入字节一致
+    let mut again = Vec::new();
+    downgraded.write(&mut again).unwrap();
+    let mut first = Vec::new();
+    song.write(&mut first).unwrap();
+    assert_eq!(again, first);
+}
+
+// 降级 + 已有自定义乐器：预设槽位偏移到现有表尾之后，读回压缩保序重映射。
+#[test]
+fn v6_to_v5_downgrade_mixes_preset_and_user_customs() {
+    let bytes = build(
+        6,
+        20,
+        0,
+        1,
+        &[
+            (Some(1), 1, 16, 45), // tick 0: Trumpet → 预设
+            (Some(1), 1, 21, 45), // tick 1: Custom(1): "B"
+            (Some(1), 1, 20, 45), // tick 2: Custom(0): "A"
+        ],
+        &[("Layer", 0, 100, 100)],
+        &[("A", "a.ogg", 45, 1), ("B", "b.ogg", 45, 1)],
+    );
+    let mut song = parse(bytes);
+    song.header.version = Version::new(5).unwrap();
+
+    let out = write(&mut song);
+    let downgraded = parse(out);
+    // 表只剩用户条目（预设条目被折叠移除）
+    let names: Vec<&str> = downgraded
+        .custom_instruments
+        .iter()
+        .map(|ci| ci.name.as_str())
+        .collect();
+    assert_eq!(names, ["A", "B"]);
+    // 音符：Trumpet 还原 vanilla，自定义槽位保持
+    let notes: Vec<_> = downgraded.notes.iter().collect();
+    assert_eq!(notes[0].1.tone().instrument(), Instrument::Trumpet);
+    assert_eq!(notes[1].1.tone().instrument(), Instrument::Custom(1));
+    assert_eq!(notes[2].1.tone().instrument(), Instrument::Custom(0));
+}
+
+// v6 写入（fci=20）无预设：用户自定义的 "Trumpet" 条目不被折叠，保持 Custom。
+#[test]
+fn v6_roundtrip_keeps_user_custom_named_like_trumpet() {
+    let bytes = build(
+        6,
+        20,
+        0,
+        1,
+        &[(Some(1), 1, 20, 45)], // Custom(0): "Trumpet"
+        &[("Layer", 0, 100, 100)],
+        &[("Trumpet", "trumpet.ogg", 45, 1)],
+    );
+    let mut song = parse(bytes.clone());
     assert_eq!(write(&mut song), bytes);
+    let notes: Vec<_> = song.notes.iter().collect();
+    assert_eq!(notes[0].1.tone().instrument(), Instrument::Custom(0));
+}
+
+// v0 降级（fci=10）：铁琴等 10 个乐器全量预设，读回折叠还原。
+#[test]
+fn v0_downgrade_presets_all_instruments_above_fci() {
+    let bytes = build(
+        6,
+        20,
+        0,
+        1,
+        &[(Some(5), 1, 10, 45)], // tick 4: Iron Xylophone (index 10)
+        &[("Layer", 0, 100, 100)],
+        &[],
+    );
+    let mut song = parse(bytes);
+    song.header.version = Version::new(0).unwrap();
+
+    let out = write(&mut song);
+    let downgraded = parse(out);
+    assert_eq!(downgraded.header.default_instruments, 10);
+    assert!(downgraded.custom_instruments.is_empty());
+    let notes: Vec<_> = downgraded.notes.iter().collect();
+    assert_eq!(notes[0].1.tone().instrument(), Instrument::IronXylophone);
+}
+
+// 折叠保持音符位置：多 tick 多 layer 的音符在折叠后位置不变。
+#[test]
+fn fold_preserves_note_positions() {
+    let bytes = build(
+        6,
+        20,
+        0,
+        2,
+        &[
+            (Some(1), 1, 16, 45), // tick 0, layer 0: Trumpet → 预设
+            (Some(3), 1, 21, 45), // tick 3, layer 0: Custom(1)
+            (Some(1), 2, 20, 45), // tick 4, layer 1: Custom(0)
+        ],
+        &[("L1", 0, 100, 100), ("L2", 0, 100, 100)],
+        &[("A", "a.ogg", 45, 1), ("B", "b.ogg", 45, 1)],
+    );
+    let mut song = parse(bytes);
+    song.header.version = Version::new(5).unwrap();
+
+    let out = write(&mut song);
+    let downgraded = parse(out);
+    let ticks: Vec<_> = downgraded
+        .notes
+        .iter()
+        .map(|(p, _)| p.into_tick())
+        .collect();
+    assert_eq!(ticks, [0, 3, 4]);
 }

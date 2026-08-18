@@ -75,6 +75,10 @@ impl Codec for SongWriter<'_> {
             custom_instruments.push(CustomInstrument::parse(reader, ())?);
         }
 
+        // 折叠：高版本回退条目还原为原生乐器，其余自定义乐器压缩保序
+        let (notes, custom_instruments) =
+            fold_preset_instruments(header.version, notes, custom_instruments);
+
         Ok(Song {
             header,
             notes,
@@ -100,15 +104,99 @@ impl Codec for SongWriter<'_> {
             layer.write(writer, version)?;
         }
 
-        // 自定义乐器部分
-        let count = song.custom_instruments.len();
-        writer.write_u8(count.try_into().unwrap_or(u8::MAX))?;
-        for instr in song.custom_instruments.iter().take(u8::MAX.into()) {
+        // 预设区在前（槽位 = 偏移，字节 = 原生索引），用户表在后（槽位 = 预设数 + 下标）
+        let preset_count = Instrument::vanilla_count() - fci;
+        let count = preset_count.saturating_add(song.custom_instruments.len() as u8);
+        let custom_count = count.saturating_sub(preset_count);
+        writer.write_u8(count)?;
+
+        for instr in preset_definitions(version) {
+            instr.write(writer, ())?;
+        }
+        for instr in song.custom_instruments.iter().take(custom_count as usize) {
             instr.write(writer, ())?;
         }
 
         Ok(())
     }
+}
+
+// Preset
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// All preset instruments the target version requires, written at the head
+/// of the custom instrument table with fixed playback parameters.
+fn preset_definitions(version: Version) -> impl Iterator<Item = CustomInstrument> {
+    let fci = version.vanilla_instruments() as usize;
+    let presets = Instrument::NBS_INDEX.into_iter().skip(fci);
+    presets.map(|instrument| {
+        let (name, file) = instrument.nbs_definition().unwrap();
+        CustomInstrument {
+            name: name.into(),
+            file: file.into(),
+            pitch: 45,
+            press_key: true,
+        }
+    })
+}
+
+/// The vanilla instrument whose preset definition matches the custom entry,
+/// if the target version actually presets it; such entries fold on read.
+fn fold_instrument(version: Version, custom: &CustomInstrument) -> Option<Instrument> {
+    let fci = version.vanilla_instruments() as usize;
+    let mut presets = Instrument::NBS_INDEX.into_iter().skip(fci);
+    presets.find(|instrument| {
+        instrument.nbs_definition() == Some((custom.name.as_str(), custom.file.as_str()))
+    })
+}
+
+/// Folds preset entries back into vanilla instruments, compressing the
+/// remaining custom entries in order; returns unchanged when nothing matches.
+fn fold_preset_instruments(
+    version: Version,
+    mut notes: Notes<Position, Note>,
+    custom_instruments: Vec<CustomInstrument>,
+) -> (Notes<Position, Note>, Vec<CustomInstrument>) {
+    // 条目命中预设定义 → (槽位, 还原乐器)
+    let fold_entry = |(slot, custom): (usize, &CustomInstrument)| {
+        fold_instrument(version, custom).map(|vanilla| (slot as u8, vanilla))
+    };
+    let folded: Vec<(u8, Instrument)> = custom_instruments
+        .iter()
+        .enumerate()
+        .filter_map(fold_entry)
+        .collect();
+    if folded.is_empty() {
+        return (notes, custom_instruments);
+    }
+
+    // 槽位不在折叠表 → 保留条目
+    let keep_entry = |(slot, custom): (usize, CustomInstrument)| {
+        let keep = folded
+            .binary_search_by_key(&(slot as u8), |&(s, _)| s)
+            .is_err();
+        keep.then_some(custom)
+    };
+    let kept: Vec<CustomInstrument> = custom_instruments
+        .into_iter()
+        .enumerate()
+        .filter_map(keep_entry)
+        .collect();
+
+    // 重映射音符（就地修改，位置不变）
+    for (_, note) in notes.iter_mut() {
+        let Instrument::Custom(slot) = note.tone().instrument() else {
+            continue;
+        };
+        let instrument = folded
+            .binary_search_by_key(&slot, |&(s, _)| s)
+            .map(|index| folded[index].1)
+            .unwrap_or_else(|insert| Instrument::Custom(slot - insert as u8));
+        note.set_instrument(instrument);
+    }
+
+    (notes, kept)
 }
 
 // Header
@@ -196,7 +284,7 @@ impl Codec for HeaderWriter<'_> {
             header.version.write(writer, ())?;
             writer.write_u8(default_instruments)?;
         } else {
-            writer.write_u16(song_length.try_into().unwrap_or(u16::MAX))?;
+            writer.write_u16(song_length.max(1).try_into().unwrap_or(u16::MAX))?;
         }
 
         if header.version.get() >= 3 {
@@ -426,7 +514,7 @@ impl Codec for Instrument {
     type Target = Self;
 
     fn parse<R: io::Read>(reader: &mut R, first_custom_index: Self::Context) -> Result<Self> {
-        debug_assert!(first_custom_index <= Instrument::VANILLA_COUNT);
+        debug_assert!(first_custom_index <= Instrument::vanilla_count());
         let byte = reader.read_u8()?;
         match byte < first_custom_index {
             true => Ok(Instrument::NBS_INDEX[byte as usize]),
@@ -434,9 +522,10 @@ impl Codec for Instrument {
         }
     }
 
-    fn write<W: io::Write>(&self, writer: &mut W, first_custom_index: Self::Context) -> Result<()> {
+    fn write<W: io::Write>(&self, writer: &mut W, _: Self::Context) -> Result<()> {
+        // 写端字节与版本无关（读端按 FCI 分界还原）：原生写索引，自定义写 20 + 槽位
         let byte = match *self {
-            Instrument::Custom(slot) => first_custom_index.saturating_add(slot),
+            Instrument::Custom(slot) => Instrument::vanilla_count().saturating_add(slot),
             _ => self.vanilla_index().unwrap_or(0),
         };
         writer.write_u8(byte)?;

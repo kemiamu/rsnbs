@@ -21,7 +21,7 @@ type Multiset<T> = BTreeMap<T, NonZero<usize>>;
 type Point = (Tick, Tone);
 
 #[test]
-fn test_adapt_instruments_v6_to_v5() {
+fn test_v6_to_v5_preset_instruments() {
     use crate::note::Instrument;
 
     let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
@@ -50,20 +50,10 @@ fn test_adapt_instruments_v6_to_v5() {
     assert_eq!(back.header.default_instruments, 16);
     assert_eq!(back.notes.len(), song.notes.len());
 
-    // 被注入的音符改指自定义槽位 0，其余音符保持原生乐器
+    // 折叠：预设条目还原为原生乐器，不入内存表
     let (_, first_note) = back.notes.iter().next().unwrap();
-    assert_eq!(first_note.tone().instrument(), Instrument::Custom(0));
-    let vanilla = back
-        .notes
-        .values()
-        .filter(|n| n.tone().instrument().vanilla_index().is_some())
-        .count();
-    assert_eq!(vanilla, song.notes.len() - 1);
-
-    // 自定义乐器表包含 Trumpet 的 OpenNBS 定义
-    assert_eq!(back.custom_instruments.len(), 1);
-    assert_eq!(back.custom_instruments[0].name, "Trumpet");
-    assert_eq!(back.custom_instruments[0].file, "trumpet.ogg");
+    assert_eq!(first_note.tone().instrument(), Instrument::Trumpet);
+    assert!(back.custom_instruments.is_empty());
 
     // roundtrip 字节稳定：再写一次应与首次写入一致
     let mut out = Vec::new();

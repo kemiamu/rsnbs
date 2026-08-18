@@ -236,7 +236,7 @@ impl Instrument {
     /// the NBS instrument index. The four v6 trumpets occupy indexes 16-19.
     /// Note: byte encoding/decoding relative to the first custom instrument
     /// index lives in codec.rs.
-    pub(crate) const NBS_INDEX: &'static [Instrument] = &[
+    pub(crate) const NBS_INDEX: [Instrument; 20] = [
         Instrument::Harp,
         Instrument::DoubleBass,
         Instrument::BassDrum,
@@ -260,7 +260,9 @@ impl Instrument {
     ];
 
     /// The number of vanilla instruments in the newest NBS version.
-    pub(crate) const VANILLA_COUNT: u8 = 20;
+    pub(crate) fn vanilla_count() -> u8 {
+        Self::NBS_INDEX.len() as u8
+    }
 
     /// Returns the fixed table index of a vanilla instrument, if this is one.
     /// Vanilla instruments occupy indexes 0..20 (including the v6 trumpets).
