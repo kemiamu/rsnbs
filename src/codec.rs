@@ -31,33 +31,8 @@ pub(super) trait Codec {
 impl Song {
     /// parses a complete Song from a reader
     pub fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
-        SongWriter::parse(reader, ())
-    }
-
-    /// writes the song to a writer.
-    pub fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
-        SongWriter::wrap(self).write(writer, ())
-    }
-}
-
-/// Write view borrowing a Song: derived header fields are computed while
-/// writing, so encoding stays a zero-copy projection of the song state.
-struct SongWriter<'a>(&'a Song);
-
-impl SongWriter<'_> {
-    /// Borrows the song without copying; the song itself is never modified.
-    fn wrap(song: &Song) -> SongWriter<'_> {
-        SongWriter(song)
-    }
-}
-
-impl Codec for SongWriter<'_> {
-    type Context = ();
-    type Target = Song;
-
-    fn parse<R: io::Read>(reader: &mut R, _: Self::Context) -> Result<Self::Target> {
         // 头部分
-        let header = HeaderWriter::parse(reader, ())?;
+        let header = Self::parse_header(reader)?;
         let context = (header.version, header.default_instruments);
 
         // 音符部分
@@ -88,34 +63,135 @@ impl Codec for SongWriter<'_> {
         })
     }
 
-    fn write<W: io::Write>(&self, writer: &mut W, _: Self::Context) -> Result<()> {
-        let Self(song) = self;
-        let version = song.header.version;
+    /// writes the song to a writer.
+    pub fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
+        let version = self.header.version;
         let fci = version.vanilla_instruments();
         let context = (version, fci);
 
         // 头部分
-        HeaderWriter::wrap(song).write(writer, ())?;
+        self.write_header(writer)?;
 
         // 音符部分
-        song.notes.write(writer, context)?;
+        self.notes.write(writer, context)?;
 
         // 层部分
-        for layer in &song.layers {
+        for layer in &self.layers {
             layer.write(writer, version)?;
         }
 
         // 预设区在前（槽位 = 偏移，字节 = 原生索引），用户表在后（槽位 = 预设数 + 下标）
         let preset_count = Instrument::vanilla_count() - fci;
-        let count = preset_count.saturating_add(song.custom_instruments.len() as u8);
+        let count = preset_count.saturating_add(self.custom_instruments.len() as u8);
         let custom_count = count.saturating_sub(preset_count);
         writer.write_u8(count)?;
 
         for instr in preset_definitions(version) {
             instr.write(writer, ())?;
         }
-        for instr in song.custom_instruments.iter().take(custom_count as usize) {
+        for instr in self.custom_instruments.iter().take(custom_count as usize) {
             instr.write(writer, ())?;
+        }
+
+        Ok(())
+    }
+
+    /// parses the header section from a reader.
+    fn parse_header<R: io::Read>(reader: &mut R) -> Result<Header> {
+        let mut header = Header::default();
+
+        // 版本
+        let song_length = reader.read_u16()?;
+        header.version = Version::new(match song_length == 0 {
+            true => reader.read_u8()?,
+            false => 0,
+        })?;
+
+        header.default_instruments = match header.version.get() {
+            0 => 10,
+            _ => reader.read_u8()?,
+        };
+
+        header.song_length = match header.version.get() >= 3 {
+            true => reader.read_u16()? as _,
+            false => song_length as _,
+        };
+
+        // 头部分
+        header.song_layers = reader.read_u16()? as _;
+        header.song_name = reader.read_string()?;
+        header.song_author = reader.read_string()?;
+        header.original_author = reader.read_string()?;
+        header.description = reader.read_string()?;
+        header.tempo = f32::parse(reader, ())?;
+        header.auto_save = reader.read_bool()?;
+        header.auto_save_duration = reader.read_u8()? as _;
+        header.time_signature = reader.read_u8()?;
+        header.minutes_spent = reader.read_u32()?;
+        header.left_clicks = reader.read_u32()?;
+        header.right_clicks = reader.read_u32()?;
+        header.blocks_added = reader.read_u32()?;
+        header.blocks_removed = reader.read_u32()?;
+        header.song_origin = reader.read_string()?;
+
+        // 循环部分
+        if header.version.get() >= 4 {
+            header.is_loop = reader.read_bool()?;
+            header.max_loop_count = reader.read_u8()? as _;
+            header.loop_start = reader.read_u16()? as _;
+        }
+
+        Ok(header)
+    }
+
+    /// writes the header section with fields derived from the song state.
+    fn write_header<W: io::Write>(&self, writer: &mut W) -> Result<()> {
+        let header = &self.header;
+
+        // 派生字段：歌曲长度、层数、默认乐器数
+        let song_length = self
+            .notes
+            .last_key_value()
+            .map(|(p, _)| p.into_tick())
+            .unwrap_or(1);
+        let song_layers = self.layers.len() as u32;
+        let default_instruments = header.version.vanilla_instruments();
+
+        // 版本
+        if header.version.get() > 0 {
+            writer.write_u16(0)?;
+            header.version.write(writer, ())?;
+            writer.write_u8(default_instruments)?;
+        } else {
+            writer.write_u16(song_length.max(1).try_into().unwrap_or(u16::MAX))?;
+        }
+
+        if header.version.get() >= 3 {
+            writer.write_u16(song_length.try_into().unwrap_or(u16::MAX))?;
+        }
+
+        // 头部分
+        writer.write_u16(song_layers.try_into().unwrap_or(u16::MAX))?;
+        writer.write_string(&header.song_name)?;
+        writer.write_string(&header.song_author)?;
+        writer.write_string(&header.original_author)?;
+        writer.write_string(&header.description)?;
+        header.tempo.write(writer, ())?;
+        writer.write_bool(header.auto_save)?;
+        writer.write_u8(header.auto_save_duration.try_into().unwrap_or(u8::MAX))?;
+        writer.write_u8(header.time_signature)?;
+        writer.write_u32(header.minutes_spent)?;
+        writer.write_u32(header.left_clicks)?;
+        writer.write_u32(header.right_clicks)?;
+        writer.write_u32(header.blocks_added)?;
+        writer.write_u32(header.blocks_removed)?;
+        writer.write_string(&header.song_origin)?;
+
+        // 循环部分
+        if header.version.get() >= 4 {
+            writer.write_bool(header.is_loop)?;
+            writer.write_u8(header.max_loop_count.try_into().unwrap_or(u8::MAX))?;
+            writer.write_u16(header.loop_start.try_into().unwrap_or(u16::MAX))?;
         }
 
         Ok(())
@@ -198,126 +274,6 @@ fn fold_preset_instruments(
     }
 
     (notes, kept)
-}
-
-// Header
-//
-// ++++++++++++============++++++++++++============++++++++++++============
-
-/// Write view borrowing a Song's header: derived fields are computed from
-/// the song while writing.
-struct HeaderWriter<'a>(&'a Header, &'a Song);
-
-impl HeaderWriter<'_> {
-    /// Borrows the header; song length, layer count and default instrument
-    /// count are derived from the song while writing.
-    fn wrap(song: &Song) -> HeaderWriter<'_> {
-        HeaderWriter(&song.header, song)
-    }
-}
-
-impl Codec for HeaderWriter<'_> {
-    type Context = ();
-    type Target = Header;
-
-    fn parse<R: io::Read>(reader: &mut R, _: Self::Context) -> Result<Self::Target> {
-        let mut header = Header::default();
-
-        // 版本
-        let song_length = reader.read_u16()?;
-        header.version = Version::new(match song_length == 0 {
-            true => reader.read_u8()?,
-            false => 0,
-        })?;
-
-        header.default_instruments = match header.version.get() {
-            0 => 10,
-            _ => reader.read_u8()?,
-        };
-
-        header.song_length = match header.version.get() >= 3 {
-            true => reader.read_u16()? as _,
-            false => song_length as _,
-        };
-
-        // 头部分
-        header.song_layers = reader.read_u16()? as _;
-        header.song_name = reader.read_string()?;
-        header.song_author = reader.read_string()?;
-        header.original_author = reader.read_string()?;
-        header.description = reader.read_string()?;
-        header.tempo = f32::parse(reader, ())?;
-        header.auto_save = reader.read_bool()?;
-        header.auto_save_duration = reader.read_u8()? as _;
-        header.time_signature = reader.read_u8()?;
-        header.minutes_spent = reader.read_u32()?;
-        header.left_clicks = reader.read_u32()?;
-        header.right_clicks = reader.read_u32()?;
-        header.blocks_added = reader.read_u32()?;
-        header.blocks_removed = reader.read_u32()?;
-        header.song_origin = reader.read_string()?;
-
-        // 循环部分
-        if header.version.get() >= 4 {
-            header.is_loop = reader.read_bool()?;
-            header.max_loop_count = reader.read_u8()? as _;
-            header.loop_start = reader.read_u16()? as _;
-        }
-
-        Ok(header)
-    }
-
-    fn write<W: io::Write>(&self, writer: &mut W, _: Self::Context) -> Result<()> {
-        let Self(header, song) = self;
-
-        // 派生字段：歌曲长度、层数、默认乐器数
-        let song_length = song
-            .notes
-            .last_key_value()
-            .map(|(p, _)| p.into_tick())
-            .unwrap_or(1);
-        let song_layers = song.layers.len() as u32;
-        let default_instruments = header.version.vanilla_instruments();
-
-        // 版本
-        if header.version.get() > 0 {
-            writer.write_u16(0)?;
-            header.version.write(writer, ())?;
-            writer.write_u8(default_instruments)?;
-        } else {
-            writer.write_u16(song_length.max(1).try_into().unwrap_or(u16::MAX))?;
-        }
-
-        if header.version.get() >= 3 {
-            writer.write_u16(song_length.try_into().unwrap_or(u16::MAX))?;
-        }
-
-        // 头部分
-        writer.write_u16(song_layers.try_into().unwrap_or(u16::MAX))?;
-        writer.write_string(&header.song_name)?;
-        writer.write_string(&header.song_author)?;
-        writer.write_string(&header.original_author)?;
-        writer.write_string(&header.description)?;
-        header.tempo.write(writer, ())?;
-        writer.write_bool(header.auto_save)?;
-        writer.write_u8(header.auto_save_duration.try_into().unwrap_or(u8::MAX))?;
-        writer.write_u8(header.time_signature)?;
-        writer.write_u32(header.minutes_spent)?;
-        writer.write_u32(header.left_clicks)?;
-        writer.write_u32(header.right_clicks)?;
-        writer.write_u32(header.blocks_added)?;
-        writer.write_u32(header.blocks_removed)?;
-        writer.write_string(&header.song_origin)?;
-
-        // 循环部分
-        if header.version.get() >= 4 {
-            writer.write_bool(header.is_loop)?;
-            writer.write_u8(header.max_loop_count.try_into().unwrap_or(u8::MAX))?;
-            writer.write_u16(header.loop_start.try_into().unwrap_or(u16::MAX))?;
-        }
-
-        Ok(())
-    }
 }
 
 // Notes
