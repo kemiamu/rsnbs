@@ -146,7 +146,7 @@ struct Decompose {
     #[arg(default_value = "out/generated_tapped.litematic")]
     output: String,
     /// Max number of layers (TECs) to generate; 0 = no budget
-    #[arg(short, long, default_value_t = 3)]
+    #[arg(short, long, default_value_t = 2)]
     layers: usize,
     /// Max tiles per row before wrapping (0 = no wrap)
     #[arg(short, long, default_value_t = 16)]
