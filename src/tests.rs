@@ -2,7 +2,7 @@ use crate::note::{Note, Notes, Tone};
 use crate::schematic::MultiCompactLayout;
 use crate::schematic::{SchematicBuilder, TappedLayout};
 use crate::song::Song;
-use crate::types::{GameTick, Index, IntoTick, Position, Tick, Version};
+use crate::types::{GameTick, Index, Position, Tick, TickAnchor, Version};
 use crate::util::MatchedGroups;
 use counter::Counter;
 use ordered_float::OrderedFloat;

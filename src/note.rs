@@ -8,8 +8,14 @@ use std::ops::{Deref, DerefMut};
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// ordered note set, guarantees position order for nbs serialization.
-#[derive(Debug, Default, Clone, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct Notes<Anchor = Position, Event = Note>(BTreeMap<Anchor, Event>);
+
+impl<Anchor, Event> Default for Notes<Anchor, Event> {
+    fn default() -> Self {
+        Notes(Default::default())
+    }
+}
 
 impl<Anchor, Event> From<BTreeMap<Anchor, Event>> for Notes<Anchor, Event> {
     fn from(map: BTreeMap<Anchor, Event>) -> Self {

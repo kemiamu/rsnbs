@@ -3,7 +3,7 @@
 use crate::nbs_ext::{NbsReadExt, NbsWriteExt};
 use crate::note::{Instrument, Key, Note, Notes, Tone};
 use crate::song::{CustomInstrument, Header, Layer, Song};
-use crate::types::{Index, IntoTick, Panning, Position, Result, Tick, Version, Volume};
+use crate::types::{Index, Panning, Position, Result, Tick, TickAnchor, Version, Volume};
 use std::collections::BTreeMap;
 use std::io;
 use std::num::NonZeroU32;

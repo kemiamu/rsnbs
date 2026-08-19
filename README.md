@@ -20,7 +20,7 @@ _This library is in early development with a frequently changing API. Please pin
 ```rust
 use rsnbs::note::{Instrument, Key, Note, Tone};
 use rsnbs::song::Song;
-use rsnbs::types::{IntoTick, Position, Tick};
+use rsnbs::types::{Position, Tick, TickAnchor};
 
 // example 1: iterating over a song's notes
 let song: Song = Song::open_nbs("fixtures/source.nbs").unwrap();

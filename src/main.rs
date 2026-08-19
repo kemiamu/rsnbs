@@ -4,7 +4,7 @@ use rsnbs::reuse::{plan_to_tecs, reuse_flow};
 use rsnbs::schematic::{Layout, MultiCompactLayout, MultiLinearLayout, SchematicBuilder};
 use rsnbs::schematic::{StackedLinearLayout, TappedLayout, WithFloor};
 use rsnbs::song::Song;
-use rsnbs::types::{IntoTick, Tick};
+use rsnbs::types::{Tick, TickAnchor};
 use rsnbs::util::TpPlane;
 use rustmatica::Litematic;
 use std::collections::BTreeMap;

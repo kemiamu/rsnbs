@@ -16,7 +16,7 @@ pub mod util;
 
 pub mod song {
     use crate::note::{Note, Notes};
-    use crate::types::{Index, IntoTick, Panning, Position, Result, Tick, Version, Volume};
+    use crate::types::{Index, Panning, Position, Result, Tick, TickAnchor, Version, Volume};
 
     /// represents a complete nbs song with header, notes, layers, and instruments.
     #[derive(Debug, Default, Clone, PartialEq, PartialOrd)]
@@ -180,17 +180,17 @@ pub mod song {
 // ++++++++++++============++++++++++++============++++++++++++============
 
 pub mod types {
-    /// the current nbs (note block studio) file format version.
-    const CURRENT_NBS_VERSION: u8 = 6;
-
     /// represents a valid nbs version format
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct Version(u8);
 
     impl Version {
+        /// The latest NBS file format version supported by this library.
+        const LATEST: u8 = 6;
+
         pub fn new(version: u8) -> Result<Self> {
             match version {
-                0..=CURRENT_NBS_VERSION => Ok(Self(version)),
+                0..=Self::LATEST => Ok(Self(version)),
                 _ => Err(Error::InvalidVersion(version.to_string())),
             }
         }
@@ -212,7 +212,59 @@ pub mod types {
 
     impl Default for Version {
         fn default() -> Self {
-            Self(CURRENT_NBS_VERSION)
+            Self(Self::LATEST)
+        }
+    }
+
+    // anchors
+    //
+    // ++++++++++++============++++++++++++============++++++++++++============
+
+    /// Time-axis anchor: reads and rebuilds its tick coordinate.
+    pub trait TickAnchor: Sized + Copy {
+        fn into_tick(self) -> Tick;
+        fn with_tick(self, tick: Tick) -> Self;
+    }
+
+    impl TickAnchor for Position {
+        fn into_tick(self) -> Tick {
+            self.tick
+        }
+        fn with_tick(self, tick: Tick) -> Self {
+            Self { tick, ..self }
+        }
+    }
+
+    impl TickAnchor for Tick {
+        fn into_tick(self) -> Tick {
+            self
+        }
+        fn with_tick(self, tick: Tick) -> Self {
+            tick
+        }
+    }
+
+    /// Layer-axis anchor: reads and rebuilds its layer coordinate.
+    pub trait LayerAnchor: Sized + Copy {
+        fn into_layer(self) -> Index;
+        fn with_layer(self, layer: Index) -> Self;
+    }
+
+    impl LayerAnchor for Position {
+        fn into_layer(self) -> Index {
+            self.layer
+        }
+        fn with_layer(self, layer: Index) -> Self {
+            Self { layer, ..self }
+        }
+    }
+
+    impl LayerAnchor for Index {
+        fn into_layer(self) -> Index {
+            self
+        }
+        fn with_layer(self, layer: Index) -> Self {
+            layer
         }
     }
 
@@ -233,28 +285,9 @@ pub mod types {
         }
     }
 
-    /// conversion into a tick value.
-    pub trait IntoTick {
-        fn into_tick(self) -> Tick;
-    }
-
-    impl<T: Into<Tick>> IntoTick for T {
-        fn into_tick(self) -> Tick {
-            self.into()
-        }
-    }
-
-    impl IntoTick for Position {
-        fn into_tick(self) -> Tick {
-            self.tick
-        }
-    }
-
-    impl IntoTick for &Position {
-        fn into_tick(self) -> Tick {
-            self.tick
-        }
-    }
+    // basic
+    //
+    // ++++++++++++============++++++++++++============++++++++++++============
 
     /// represents volume value in range 0-100
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

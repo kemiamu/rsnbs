@@ -5,7 +5,7 @@
 
 use rsnbs::note::Instrument;
 use rsnbs::song::Song;
-use rsnbs::types::{IntoTick, Version};
+use rsnbs::types::{TickAnchor, Version};
 use std::io::Cursor;
 
 fn write_str(buf: &mut Vec<u8>, s: &str) {

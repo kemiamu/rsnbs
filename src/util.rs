@@ -1,5 +1,5 @@
 use crate::note::{Note, Notes, Tone};
-use crate::types::{Index, IntoTick, Position, Tick};
+use crate::types::{Index, LayerAnchor, Position, Tick, TickAnchor};
 use counter::Counter;
 use itertools::{Itertools, iproduct};
 use std::collections::{BTreeMap, BTreeSet};
@@ -28,7 +28,7 @@ impl TpPlane {
     }
 }
 
-impl<K: IntoTick, V: Into<Tone>> FromIterator<(K, V)> for TpPlane {
+impl<K: TickAnchor, V: Into<Tone>> FromIterator<(K, V)> for TpPlane {
     fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
         let inner = iter
             .into_iter()
@@ -125,14 +125,14 @@ impl<const N: usize> From<([NonZero<Tick>; N], TpPlane)> for TransEqClass {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-impl Notes<Position, Note> {
+impl<A: TickAnchor, E> Notes<A, E> {
     /// Rescales ticks from arbitrary tempo (tick/s) to standard game tick (20 t/s).
-    pub fn rescale_to_game_tick(self, tempo: f32) -> impl Iterator<Item = (Position, Note)> {
+    pub fn rescale_to_game_tick(self, tempo: f32) -> impl Iterator<Item = (A, E)> {
         self.rescale_to_tick_rate(tempo, 20)
     }
 
     /// Rescales ticks from arbitrary tempo (tick/s) to redstone tick (10 t/s).
-    pub fn rescale_to_redstone_tick(self, tempo: f32) -> impl Iterator<Item = (Position, Note)> {
+    pub fn rescale_to_redstone_tick(self, tempo: f32) -> impl Iterator<Item = (A, E)> {
         self.rescale_to_tick_rate(tempo, 10)
     }
 
@@ -141,7 +141,7 @@ impl Notes<Position, Note> {
         self,
         tempo: f32,
         target_rate: u32,
-    ) -> impl Iterator<Item = (Position, Note)> {
+    ) -> impl Iterator<Item = (A, E)> {
         // tempo outside (0, 30): assume NBS tick ≡ game tick, fold by target/20
         let scale = match (0.0..30.0).contains(&tempo) {
             true => target_rate as f32 / tempo,
@@ -152,15 +152,17 @@ impl Notes<Position, Note> {
             true => (scale.round() as u32, 1),
             false => (1, (1.0 / scale).round() as u32),
         };
-        self.into_iter().map(move |(pos, note)| {
-            let tick = pos.into_tick() * num / den;
-            (Position::new(tick, pos.layer()), note)
+        self.into_iter().map(move |(anchor, event)| {
+            let tick = anchor.into_tick() * num / den;
+            (anchor.with_tick(tick), event)
         })
     }
+}
 
+impl<A: LayerAnchor + Ord, E> Notes<A, E> {
     /// Groups notes into contiguous blocks separated by empty layers.
-    pub fn split_by_layer_gaps(self) -> Vec<Notes> {
-        let layers: BTreeSet<Index> = self.keys().map(|pos| pos.layer()).collect();
+    pub fn split_by_layer_gaps(self) -> Vec<Notes<A, E>> {
+        let layers: BTreeSet<Index> = self.keys().map(|pos| pos.into_layer()).collect();
         let block_start = |prev: &mut Option<Index>, curr: Index| {
             let keep = prev.map_or(true, |p| p + 1 != curr);
             *prev = Some(curr);
@@ -172,52 +174,49 @@ impl Notes<Position, Note> {
             .flatten()
             .collect();
 
-        let mut groups: Vec<Notes> = vec![Default::default(); starts.len()];
+        let mut groups: Vec<Notes<A, E>> = Vec::new();
+        groups.resize_with(starts.len(), Notes::default);
         for (pos, note) in self {
-            let idx = starts.partition_point(|&s| s <= pos.layer()) - 1;
-            let pos = Position::new(pos.into_tick(), pos.layer() - starts[idx]);
+            let idx = starts.partition_point(|&s| s <= pos.into_layer()) - 1;
+            let pos = pos.with_layer(pos.into_layer() - starts[idx]);
             groups[idx].insert(pos, note);
         }
         groups
     }
 
     /// Splits notes into groups of `size` layers each.
-    pub fn split_by_layer_count(self, size: Option<NonZero<usize>>) -> Vec<Notes> {
+    pub fn split_by_layer_count(self, size: Option<NonZero<usize>>) -> Vec<Notes<A, E>> {
         let Some(size) = size else {
             return vec![self];
         };
         let size = size.get();
-        let mut groups: BTreeMap<Index, BTreeMap<Position, Note>> = BTreeMap::new();
+        let mut groups: BTreeMap<Index, BTreeMap<A, E>> = BTreeMap::new();
         for (pos, note) in self {
-            let group = pos.layer() / size as Index;
-            let new_layer = pos.layer() % size as Index;
+            let group = pos.into_layer() / size as Index;
+            let new_layer = pos.into_layer() % size as Index;
             let entry = groups.entry(group).or_default();
-            entry.insert(Position::new(pos.into_tick(), new_layer), note);
+            entry.insert(pos.with_layer(new_layer), note);
         }
         groups.into_values().map(Notes::from).collect()
     }
 
-    /// Concatenate multiple note groups with blank layer separators.
-    pub fn concat<'a, I: IntoIterator<Item = &'a Notes>>(notes: I) -> Self {
-        let shift = |(pos, note): (&Position, &Note), base: Index| {
-            (
-                Position::new(pos.into_tick(), pos.layer() + base),
-                note.clone(),
-            )
-        };
-        let mut offset = 0;
-        let stacked = notes.into_iter().flat_map(|n| {
-            let base = offset.clone();
-            offset += n.keys().map(|p| p.layer()).max().map_or(0, |m| m + 2);
-            n.iter().map(move |pair| shift(pair, base))
+    /// Stacks note groups vertically with 2 blank layers between, consuming them by value.
+    pub fn concat<I: IntoIterator<Item = Notes<A, E>>>(notes: I) -> impl Iterator<Item = (A, E)> {
+        let stacked = notes.into_iter().scan(0, |offset, n| {
+            let base = *offset;
+            let f = move |(pos, note): (A, E)| (pos.with_layer(pos.into_layer() + base), note);
+            *offset += n.keys().map(|p| p.into_layer()).max().map_or(0, |m| m + 2);
+            Some(n.into_iter().map(f))
         });
-        stacked.collect()
+        stacked.flatten()
     }
+}
 
-    // Experimental
-    //
-    // ++++++++++++============++++++++++++============++++++++++++============
+// Experimental
+//
+// ++++++++++++============++++++++++++============++++++++++++============
 
+impl Notes<Position, Note> {
     /// separates notes into matched and unmatched groups via pattern matching.
     pub fn matches_by<F: Fn(&Note, &Note) -> bool>(
         self,
