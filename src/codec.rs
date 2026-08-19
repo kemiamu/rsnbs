@@ -3,7 +3,8 @@
 use crate::nbs_ext::{NbsReadExt, NbsWriteExt};
 use crate::note::{Instrument, Key, Note, Notes, Tone};
 use crate::song::{CustomInstrument, Header, Layer, Song};
-use crate::types::{Index, Panning, Position, Result, Tick, TickAnchor, Version, Volume};
+use crate::types::{Index, LayerAnchor, Panning, Position};
+use crate::types::{Result, Tick, TickAnchor, Version, Volume};
 use std::collections::BTreeMap;
 use std::io;
 use std::num::NonZeroU32;
@@ -360,12 +361,12 @@ impl Codec for Notes<Position, Note> {
                 writer.write_jump(NonZeroU32::new(tick_jump))?;
             }
             // layer 上升沿
-            let layer_jump = pos.layer().wrapping_sub(prev_layer);
+            let layer_jump = pos.into_layer().wrapping_sub(prev_layer);
             writer.write_jump(NonZeroU32::new(layer_jump))?;
 
             note.write(writer, context)?;
             prev_tick = pos.into_tick();
-            prev_layer = pos.layer();
+            prev_layer = pos.into_layer();
             // layer 下降沿
             let next_tick = iter.peek().map(|(pos, _)| pos.into_tick());
             if next_tick.is_none() || next_tick.unwrap() != pos.into_tick() {

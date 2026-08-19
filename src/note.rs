@@ -29,23 +29,6 @@ impl<Anchor: Ord, Event> FromIterator<(Anchor, Event)> for Notes<Anchor, Event> 
     }
 }
 
-// TODO 泛型转换
-
-// impl<C, T> FromIterator<(Tick, C)> for Notes<Position, Note>
-// where
-//     C: IntoIterator<Item = T>,
-//     T: Into<Tone>,
-// {
-//     fn from_iter<I: IntoIterator<Item = (Tick, C)>>(iter: I) -> Self {
-//         let ticked = iter.into_iter().sorted_by_key(|(tick, _)| *tick);
-//         let notes = ticked.flat_map(|(tick, tones)| {
-//             let indexed = tones.into_iter().enumerate();
-//             indexed.map(move |(idx, t)| (Position::new(tick, idx as Index), Note::from(t.into())))
-//         });
-//         notes.collect()
-//     }
-// }
-
 impl<Anchor, Event> Deref for Notes<Anchor, Event> {
     type Target = BTreeMap<Anchor, Event>;
     fn deref(&self) -> &Self::Target {

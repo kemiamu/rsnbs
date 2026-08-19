@@ -2,7 +2,7 @@ use crate::note::{Note, Notes, Tone};
 use crate::schematic::MultiCompactLayout;
 use crate::schematic::{SchematicBuilder, TappedLayout};
 use crate::song::Song;
-use crate::types::{GameTick, Index, Position, Tick, TickAnchor, Version};
+use crate::types::{GameTick, Index, LayerAnchor, Position, Tick, TickAnchor, Version};
 use crate::util::MatchedGroups;
 use counter::Counter;
 use ordered_float::OrderedFloat;
@@ -74,7 +74,7 @@ fn test_scale_ticks() {
         .into_iter()
         .map(|(pos, note)| {
             let new_tick = pos.into_tick() * NUM / DEN;
-            let new_pos = Position::new(new_tick, pos.layer());
+            let new_pos = Position::new(new_tick, pos.into_layer());
             (new_pos, note)
         })
         .collect();
@@ -794,7 +794,7 @@ fn test_linear_layout() {
                 true => pos.into_tick() * scale,
                 false => pos.into_tick(),
             };
-            (Position::new(tick, pos.layer()), note)
+            (Position::new(tick, pos.into_layer()), note)
         })
         .collect();
     let n: Vec<Notes> = notes.split_by_layer_gaps();

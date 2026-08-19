@@ -279,10 +279,6 @@ pub mod types {
         pub fn new(tick: Tick, layer: Index) -> Self {
             Self { tick, layer }
         }
-
-        pub fn layer(self) -> Index {
-            self.layer
-        }
     }
 
     // basic
@@ -340,9 +336,7 @@ pub mod types {
     /// Represents the time step
     pub type Tick = u32;
 
-    #[allow(dead_code)]
     pub(crate) type RedStoneTick = Tick;
-    #[allow(dead_code)]
     pub(crate) type GameTick = Tick;
 
     // error
