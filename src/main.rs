@@ -1,13 +1,15 @@
 use clap::Parser;
 use rsnbs::note::{Note, Notes};
 use rsnbs::reuse::{plan_to_tecs, reuse_flow};
-use rsnbs::schematic::{MultiCompactLayout, MultiLinearLayout, StackedLinearLayout};
-use rsnbs::schematic::{SchematicBuilder, TappedLayout, WithFloor};
+use rsnbs::schematic::{Layout, MultiCompactLayout, MultiLinearLayout, SchematicBuilder};
+use rsnbs::schematic::{StackedLinearLayout, TappedLayout, WithFloor};
 use rsnbs::song::Song;
 use rsnbs::types::{IntoTick, Tick};
 use rsnbs::util::TpPlane;
+use rustmatica::Litematic;
 use std::collections::BTreeMap;
 use std::num::NonZero;
+use std::path::Path;
 
 // Cli
 //
@@ -42,7 +44,7 @@ struct Compact {
     /// Path to input NBS file
     input: String,
     /// Path to output litematic file
-    #[arg(default_value = "generated_compact.litematic")]
+    #[arg(default_value = "out/generated_compact.litematic")]
     output: String,
     /// Max tiles per row before wrapping (0 = no wrap)
     #[arg(short, long, default_value_t = 16)]
@@ -63,8 +65,7 @@ struct Compact {
 
 impl Compact {
     fn run(self) {
-        let song = Song::open_nbs(&self.input).unwrap();
-        let name = self.input.clone();
+        let song = open_song(&self.input);
         let notes = song.notes.rescale_to_game_tick(song.header.tempo);
 
         let mut by_tick: BTreeMap<Tick, Vec<Note>> = Default::default();
@@ -73,16 +74,10 @@ impl Compact {
         }
 
         let tracks = std::iter::once((by_tick, NonZero::new(self.coarse)));
-        let wrap = NonZero::new(self.wrap);
-        let layout = MultiCompactLayout::new(tracks, wrap, self.gap);
-        let description = format!("Sectional from {}", name);
-        let litematic = match self.floor || self.sparse_floor {
-            true => SchematicBuilder(WithFloor::new(layout, !self.sparse_floor))
-                .build(description, "rsnbs"),
-            false => SchematicBuilder(layout).build(description, "rsnbs"),
-        };
-        litematic.write_file(&self.output).unwrap();
-        eprintln!("Wrote {}", self.output);
+        let layout = MultiCompactLayout::new(tracks, NonZero::new(self.wrap), self.gap);
+        let description = format!("Sectional from {}", self.input);
+        let litematic = build_schematic(layout, self.floor, self.sparse_floor, description);
+        write_output(&self.output, litematic);
     }
 }
 
@@ -96,7 +91,7 @@ struct Linear {
     /// Path to input NBS file
     input: String,
     /// Path to output litematic file
-    #[arg(default_value = "generated_linear.litematic")]
+    #[arg(default_value = "out/generated_linear.litematic")]
     output: String,
     /// Block spacing between adjacent tracks
     #[arg(short, long, default_value_t = 0)]
@@ -114,8 +109,7 @@ struct Linear {
 
 impl Linear {
     fn run(self) {
-        let song = Song::open_nbs(&self.input).unwrap();
-        let name = self.input.clone();
+        let song = open_song(&self.input);
         let tracks: Vec<Notes> = song
             .notes
             .rescale_to_game_tick(song.header.tempo)
@@ -124,22 +118,16 @@ impl Linear {
             .into_iter()
             .flat_map(|notes| notes.split_by_layer_count(NonZero::new(3)))
             .collect();
-        let description = format!("Sectional from {}", name);
-        let author = "rsnbs";
+        let description = format!("Sectional from {}", self.input);
 
         let litematic = if let Some(wrap) = NonZero::new(self.wrap) {
             let layout = StackedLinearLayout::new(tracks, Some(wrap), self.gap, !self.sparse_floor);
-            SchematicBuilder(layout).build(description, author)
-        } else if self.floor || self.sparse_floor {
-            let layout = MultiLinearLayout::new(tracks, self.gap);
-            SchematicBuilder(WithFloor::new(layout, !self.sparse_floor)).build(description, author)
+            build_schematic(layout, false, false, description)
         } else {
             let layout = MultiLinearLayout::new(tracks, self.gap);
-            SchematicBuilder(layout).build(description, author)
+            build_schematic(layout, self.floor, self.sparse_floor, description)
         };
-
-        litematic.write_file(&self.output).unwrap();
-        eprintln!("Wrote {output}", output = self.output);
+        write_output(&self.output, litematic);
     }
 }
 
@@ -155,7 +143,7 @@ struct Decompose {
     /// Path to input NBS file
     input: String,
     /// Path to output litematic file
-    #[arg(default_value = "generated_tapped.litematic")]
+    #[arg(default_value = "out/generated_tapped.litematic")]
     output: String,
     /// Max number of layers (TECs) to generate; 0 = no budget
     #[arg(short, long, default_value_t = 3)]
@@ -170,8 +158,7 @@ struct Decompose {
 
 impl Decompose {
     fn run(self) {
-        // 复用流：族深先分层 + 族仲裁（wf_0813_reuse 移植）
-        let song = Song::open_nbs(&self.input).unwrap();
+        let song = open_song(&self.input);
         // 统一 tempo 到红石刻 (10tps)
         let all_plane = TpPlane::from_iter(song.notes.rescale_to_redstone_tick(song.header.tempo));
 
@@ -193,8 +180,43 @@ impl Decompose {
         }
 
         let layout = TappedLayout::new(tecs, NonZero::new(self.wrap), self.floor);
-        let litematic = SchematicBuilder(layout).build("Tapped from source.nbs", "rsnbs");
-        litematic.write_file(&self.output).unwrap();
-        eprintln!("Wrote {output}", output = self.output);
+        let description = format!("Tapped from {}", self.input);
+        let litematic = build_schematic(layout, false, false, description);
+        write_output(&self.output, litematic);
     }
+}
+
+// Utils
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// Builds the schematic, wrapping the layout in a floor platform when requested.
+fn build_schematic<L: Layout>(
+    layout: L,
+    floor: bool,
+    sparse_floor: bool,
+    description: String,
+) -> Litematic {
+    const AUTHOR: &str = "rsnbs";
+    match floor || sparse_floor {
+        true => SchematicBuilder(WithFloor::new(layout, !sparse_floor)).build(description, AUTHOR),
+        false => SchematicBuilder(layout).build(description, AUTHOR),
+    }
+}
+
+/// Loads the input song.
+fn open_song(input: &str) -> Song {
+    Song::open_nbs(input).unwrap()
+}
+
+/// Ensures the parent directory exists, writes the litematic, and reports it.
+fn write_output(output: &str, litematic: Litematic) {
+    let parent = Path::new(output)
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty());
+    if let Some(dir) = parent {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    litematic.write_file(output).unwrap();
+    eprintln!("Wrote {output}");
 }
