@@ -1,6 +1,6 @@
 //! NBS (Note Block Studio) file format parser and writer.
 
-use crate::nbs_ext::{NbsReadExt, NbsWriteExt};
+use self::nbs_ext::{NbsReadExt, NbsWriteExt};
 use crate::note::{Instrument, Key, Note, Notes, Tone};
 use crate::song::{CustomInstrument, Header, Layer, Song};
 use crate::types::{Index, LayerAnchor, Panning, Position};
@@ -9,6 +9,8 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::io;
 use std::num::NonZeroU32;
+
+mod nbs_ext;
 
 type CowHeader<'a> = Cow<'a, Header>;
 type CowNotes<'a> = Cow<'a, Notes<Position, Note>>;

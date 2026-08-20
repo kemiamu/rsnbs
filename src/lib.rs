@@ -1,7 +1,6 @@
 //! NBS (Note Block Studio) file format library for Rust.
 
 mod codec;
-mod nbs_ext;
 #[cfg(test)]
 mod tests;
 
