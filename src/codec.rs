@@ -2,7 +2,7 @@
 
 use crate::note::{Instrument, Key, Note, Notes};
 use crate::song::{CustomInstrument, Header, Layer, Song};
-use crate::types::{Panning, Position, Result, Version, Volume};
+use crate::types::{Index, Panning, Position, Result, Tick, TickAnchor, Version, Volume};
 use std::borrow::Cow;
 use std::io;
 
@@ -199,13 +199,13 @@ impl<A: Middleware, B: Middleware> Middleware for (A, B) {
 impl Song {
     /// parses a complete Song from a reader
     pub fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
-        let mut middlewares = InstrumentTranslate::new();
+        let mut middlewares = (InstrumentTranslate::new(), HeaderStats::new());
         Self::parse_with(reader, &mut middlewares)
     }
 
     /// writes the song to a writer.
     pub fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
-        let mut middlewares = InstrumentTranslate::new();
+        let mut middlewares = (InstrumentTranslate::new(), HeaderStats::new());
         self.write_with(writer, &mut middlewares)
     }
 }
@@ -337,5 +337,40 @@ impl Middleware for InstrumentTranslate {
             // Instrument::Imitate(_) => unimplemented!(),
             inst => remap(inst),
         }
+    }
+}
+
+// HeaderStats
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// Derives song statistics into the header on write.
+pub(super) struct HeaderStats {
+    song_length: Option<Tick>,
+    song_layers: Option<Index>,
+}
+
+impl HeaderStats {
+    pub(super) fn new() -> Self {
+        HeaderStats {
+            song_length: None,
+            song_layers: None,
+        }
+    }
+}
+
+impl Middleware for HeaderStats {
+    fn encode_song<'a>(&mut self, song: CowSong<'a>) -> CowSong<'a> {
+        let last = song.notes.last_key_value();
+        self.song_length = Some(last.map(|(p, _)| p.into_tick()).unwrap_or(1));
+        self.song_layers = Some(song.layers.len() as _);
+        song
+    }
+    fn encode_header<'a>(&mut self, header: CowHeader<'a>) -> CowHeader<'a> {
+        let mut header = header.into_owned();
+        header.song_length = self.song_length.unwrap();
+        header.song_layers = self.song_layers.unwrap();
+        header.default_instruments = header.version.vanilla_instruments();
+        Cow::Owned(header)
     }
 }

@@ -22,7 +22,7 @@ impl Song {
         middlewares: &mut M,
     ) -> Result<Self> {
         // 头部分
-        let header = Self::parse_header(reader, middlewares)?;
+        let header = Header::parse(reader, (), middlewares)?;
         let context = (header.version, header.default_instruments);
 
         // 音符部分
@@ -62,7 +62,7 @@ impl Song {
         let context = (version, fci);
 
         // 头部分
-        Self::write_header(&song, writer, middlewares)?;
+        Header::write(&song.header, writer, (), middlewares)?;
 
         // 音符部分
         song.notes.write(writer, context, middlewares)?;
@@ -81,13 +81,18 @@ impl Song {
 
         Ok(())
     }
+}
 
-    /// parses the header section from a reader.
-    fn parse_header<R: io::Read, M: Middleware + ?Sized>(
+impl Codec for Header {
+    type Context = ();
+    type Target = Self;
+
+    fn parse<R: io::Read, M: Middleware + ?Sized>(
         reader: &mut R,
+        _: Self::Context,
         middlewares: &mut M,
-    ) -> Result<Header> {
-        let mut header = Header::default();
+    ) -> Result<Self> {
+        let mut header = Self::default();
 
         // 版本
         let song_length = reader.read_u16()?;
@@ -130,42 +135,32 @@ impl Song {
             header.loop_start = reader.read_u16()? as _;
         }
 
-        let header = middlewares.decode_header(header);
-        Ok(header)
+        Ok(middlewares.decode_header(header))
     }
 
-    /// writes the header section with fields derived from the song state.
-    fn write_header<W: io::Write, M: Middleware + ?Sized>(
-        song: &Song,
+    fn write<W: io::Write, M: Middleware + ?Sized>(
+        &self,
         writer: &mut W,
+        _: Self::Context,
         middlewares: &mut M,
     ) -> Result<()> {
-        let header = middlewares.encode_header(Cow::Borrowed(&song.header));
-
-        // 派生字段：歌曲长度、层数、默认乐器数
-        let song_length = song
-            .notes
-            .last_key_value()
-            .map(|(p, _)| p.into_tick())
-            .unwrap_or(1);
-        let song_layers = song.layers.len() as u32;
-        let default_instruments = header.version.vanilla_instruments();
+        let header = middlewares.encode_header(Cow::Borrowed(self));
 
         // 版本
         if header.version.get() > 0 {
             writer.write_u16(0)?;
             header.version.write(writer, (), middlewares)?;
-            writer.write_u8(default_instruments)?;
+            writer.write_u8(header.default_instruments)?;
         } else {
-            writer.write_u16(song_length.max(1).try_into().unwrap_or(u16::MAX))?;
+            writer.write_u16(header.song_length.max(1).try_into().unwrap_or(u16::MAX))?;
         }
 
         if header.version.get() >= 3 {
-            writer.write_u16(song_length.try_into().unwrap_or(u16::MAX))?;
+            writer.write_u16(header.song_length.try_into().unwrap_or(u16::MAX))?;
         }
 
         // 头部分
-        writer.write_u16(song_layers.try_into().unwrap_or(u16::MAX))?;
+        writer.write_u16(header.song_layers.try_into().unwrap_or(u16::MAX))?;
         writer.write_string(&header.song_name)?;
         writer.write_string(&header.song_author)?;
         writer.write_string(&header.original_author)?;
