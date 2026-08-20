@@ -12,8 +12,8 @@ mod nbs_ext;
 type CowHeader<'a> = Cow<'a, Header>;
 type CowNote<'a> = Cow<'a, Note>;
 type CowLayer<'a> = Cow<'a, Layer>;
-type CowCustomInst<'a> = Cow<'a, CustomInstrument>;
 type CowCustomInsts<'a> = Cow<'a, [CustomInstrument]>;
+type CowCustomInst<'a> = Cow<'a, CustomInstrument>;
 type CowSong<'a> = Cow<'a, Song>;
 
 // Parse/Write
@@ -61,13 +61,6 @@ pub(super) trait Middleware {
         song
     }
 
-    fn decode_custom_insts(&mut self, customs: Vec<CustomInstrument>) -> Vec<CustomInstrument> {
-        customs
-    }
-    fn encode_custom_insts<'a>(&mut self, customs: CowCustomInsts<'a>) -> CowCustomInsts<'a> {
-        customs
-    }
-
     fn decode_note(&mut self, note: Note) -> Note {
         note
     }
@@ -80,6 +73,13 @@ pub(super) trait Middleware {
     }
     fn encode_layer<'a>(&mut self, layer: CowLayer<'a>) -> CowLayer<'a> {
         layer
+    }
+
+    fn decode_custom_insts(&mut self, customs: Vec<CustomInstrument>) -> Vec<CustomInstrument> {
+        customs
+    }
+    fn encode_custom_insts<'a>(&mut self, customs: CowCustomInsts<'a>) -> CowCustomInsts<'a> {
+        customs
     }
 
     fn decode_custom_inst(&mut self, instrument: CustomInstrument) -> CustomInstrument {
