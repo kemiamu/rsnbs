@@ -2,9 +2,8 @@
 
 use super::air;
 use super::{Arranged, Axis, CompactLayout, EdgeArranged, Layout, WithFloor};
+use super::{chain_block, observer, redstone_torch, redstone_wire, repeater, wire_state};
 use crate::note::{Instrument, Key, Notes, Tone};
-use crate::schematic::{chain_block, observer, redstone_torch};
-use crate::schematic::{redstone_wire, repeater, wire_state};
 use crate::types::{RedStoneTick, Tick};
 use crate::util::TransEqClass;
 use mcdata::{GenericBlockState, util::BlockPos};

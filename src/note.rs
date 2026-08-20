@@ -8,8 +8,14 @@ use std::ops::{Deref, DerefMut};
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// ordered note set, guarantees position order for nbs serialization.
-#[derive(Debug, Default, Clone, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct Notes<Anchor = Position, Event = Note>(BTreeMap<Anchor, Event>);
+
+impl<Anchor, Event> Default for Notes<Anchor, Event> {
+    fn default() -> Self {
+        Notes(Default::default())
+    }
+}
 
 impl<Anchor, Event> From<BTreeMap<Anchor, Event>> for Notes<Anchor, Event> {
     fn from(map: BTreeMap<Anchor, Event>) -> Self {
@@ -22,23 +28,6 @@ impl<Anchor: Ord, Event> FromIterator<(Anchor, Event)> for Notes<Anchor, Event> 
         Notes(BTreeMap::from_iter(iter))
     }
 }
-
-// TODO 泛型转换
-
-// impl<C, T> FromIterator<(Tick, C)> for Notes<Position, Note>
-// where
-//     C: IntoIterator<Item = T>,
-//     T: Into<Tone>,
-// {
-//     fn from_iter<I: IntoIterator<Item = (Tick, C)>>(iter: I) -> Self {
-//         let ticked = iter.into_iter().sorted_by_key(|(tick, _)| *tick);
-//         let notes = ticked.flat_map(|(tick, tones)| {
-//             let indexed = tones.into_iter().enumerate();
-//             indexed.map(move |(idx, t)| (Position::new(tick, idx as Index), Note::from(t.into())))
-//         });
-//         notes.collect()
-//     }
-// }
 
 impl<Anchor, Event> Deref for Notes<Anchor, Event> {
     type Target = BTreeMap<Anchor, Event>;

@@ -2,12 +2,14 @@
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
+// WARNING: 该示例作为 README.md 中的示例代码，任何改动都必须同步到 README.md
+
 /// Corresponds to the two code blocks in README.md.
 #[test]
 fn test_readme_example() {
     use rsnbs::note::{Instrument, Key, Note, Tone};
     use rsnbs::song::Song;
-    use rsnbs::types::{IntoTick, Position, Tick};
+    use rsnbs::types::{Position, Tick, TickAnchor};
 
     // example 1: iterating over a song's notes
     let song: Song = Song::open_nbs("fixtures/source.nbs").unwrap();

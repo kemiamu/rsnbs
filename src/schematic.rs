@@ -1,5 +1,9 @@
 //! Generate Minecraft litematic projections from NBS songs.
 
+pub use self::blocks::*;
+pub use self::compact::*;
+pub use self::linear::*;
+pub use self::tapped::*;
 use itertools::iproduct;
 use mcdata::{BlockState, GenericBlockState, util::BlockPos};
 use rustmatica::{Litematic, Region};
@@ -9,10 +13,6 @@ mod blocks;
 mod compact;
 mod linear;
 mod tapped;
-pub use blocks::*;
-pub use compact::*;
-pub use linear::*;
-pub use tapped::*;
 
 // SchematicBuilder
 //
