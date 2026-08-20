@@ -146,124 +146,50 @@ pub(super) trait Middleware {
 /// Identity chain tail.
 impl Middleware for () {}
 
+/// Chains a hook across (A, B): .0 runs first.
+macro_rules! chain {
+    ($hook:ident, $ty:ty) => {
+        fn $hook(&mut self, value: $ty) -> $ty {
+            let value = self.0.$hook(value);
+            self.1.$hook(value)
+        }
+    };
+    ($hook:ident, cow $ty:ident) => {
+        fn $hook<'a>(&mut self, value: $ty<'a>) -> $ty<'a> {
+            let value = self.0.$hook(value);
+            self.1.$hook(value)
+        }
+    };
+}
+
 /// Tuple combinator: chains two middlewares, .0 runs first.
 impl<A: Middleware, B: Middleware> Middleware for (A, B) {
-    fn decode_header(&mut self, header: Header) -> Header {
-        let header = self.0.decode_header(header);
-        self.1.decode_header(header)
-    }
-    fn encode_header<'a>(&mut self, header: CowHeader<'a>) -> CowHeader<'a> {
-        let header = self.0.encode_header(header);
-        self.1.encode_header(header)
-    }
-
-    fn decode_song(&mut self, song: Song) -> Song {
-        let song = self.0.decode_song(song);
-        self.1.decode_song(song)
-    }
-    fn encode_song<'a>(&mut self, song: CowSong<'a>) -> CowSong<'a> {
-        let song = self.0.encode_song(song);
-        self.1.encode_song(song)
-    }
-
-    fn decode_custom_insts(&mut self, customs: Vec<CustomInstrument>) -> Vec<CustomInstrument> {
-        let customs = self.0.decode_custom_insts(customs);
-        self.1.decode_custom_insts(customs)
-    }
-    fn encode_custom_insts<'a>(&mut self, customs: CowCustomInsts<'a>) -> CowCustomInsts<'a> {
-        let table = self.0.encode_custom_insts(customs);
-        self.1.encode_custom_insts(table)
-    }
-
-    fn decode_notes(&mut self, notes: Notes<Position, Note>) -> Notes<Position, Note> {
-        let notes = self.0.decode_notes(notes);
-        self.1.decode_notes(notes)
-    }
-    fn encode_notes<'a>(&mut self, notes: CowNotes<'a>) -> CowNotes<'a> {
-        let notes = self.0.encode_notes(notes);
-        self.1.encode_notes(notes)
-    }
-
-    fn decode_note(&mut self, note: Note) -> Note {
-        let note = self.0.decode_note(note);
-        self.1.decode_note(note)
-    }
-    fn encode_note<'a>(&mut self, note: CowNote<'a>) -> CowNote<'a> {
-        let note = self.0.encode_note(note);
-        self.1.encode_note(note)
-    }
-
-    fn decode_layer(&mut self, layer: Layer) -> Layer {
-        let layer = self.0.decode_layer(layer);
-        self.1.decode_layer(layer)
-    }
-    fn encode_layer<'a>(&mut self, layer: CowLayer<'a>) -> CowLayer<'a> {
-        let layer = self.0.encode_layer(layer);
-        self.1.encode_layer(layer)
-    }
-
-    fn decode_custom_inst(&mut self, instrument: CustomInstrument) -> CustomInstrument {
-        let instrument = self.0.decode_custom_inst(instrument);
-        self.1.decode_custom_inst(instrument)
-    }
-    fn encode_custom_inst<'a>(&mut self, instrument: CowCustomInst<'a>) -> CowCustomInst<'a> {
-        let instrument = self.0.encode_custom_inst(instrument);
-        self.1.encode_custom_inst(instrument)
-    }
-
-    fn decode_version(&mut self, version: Version) -> Version {
-        let version = self.0.decode_version(version);
-        self.1.decode_version(version)
-    }
-    fn encode_version(&mut self, version: Version) -> Version {
-        let version = self.0.encode_version(version);
-        self.1.encode_version(version)
-    }
-
-    fn decode_instrument(&mut self, instrument: Instrument) -> Instrument {
-        let instrument = self.0.decode_instrument(instrument);
-        self.1.decode_instrument(instrument)
-    }
-    fn encode_instrument(&mut self, instrument: Instrument) -> Instrument {
-        let instrument = self.0.encode_instrument(instrument);
-        self.1.encode_instrument(instrument)
-    }
-
-    fn decode_volume(&mut self, volume: Volume) -> Volume {
-        let volume = self.0.decode_volume(volume);
-        self.1.decode_volume(volume)
-    }
-    fn encode_volume(&mut self, volume: Volume) -> Volume {
-        let volume = self.0.encode_volume(volume);
-        self.1.encode_volume(volume)
-    }
-
-    fn decode_key(&mut self, key: Key) -> Key {
-        let key = self.0.decode_key(key);
-        self.1.decode_key(key)
-    }
-    fn encode_key(&mut self, key: Key) -> Key {
-        let key = self.0.encode_key(key);
-        self.1.encode_key(key)
-    }
-
-    fn decode_panning(&mut self, panning: Panning) -> Panning {
-        let panning = self.0.decode_panning(panning);
-        self.1.decode_panning(panning)
-    }
-    fn encode_panning(&mut self, panning: Panning) -> Panning {
-        let panning = self.0.encode_panning(panning);
-        self.1.encode_panning(panning)
-    }
-
-    fn decode_f32(&mut self, value: f32) -> f32 {
-        let value = self.0.decode_f32(value);
-        self.1.decode_f32(value)
-    }
-    fn encode_f32(&mut self, value: f32) -> f32 {
-        let value = self.0.encode_f32(value);
-        self.1.encode_f32(value)
-    }
+    chain!(decode_header, Header);
+    chain!(encode_header, cow CowHeader);
+    chain!(decode_song, Song);
+    chain!(encode_song, cow CowSong);
+    chain!(decode_custom_insts, Vec<CustomInstrument>);
+    chain!(encode_custom_insts, cow CowCustomInsts);
+    chain!(decode_notes, Notes<Position, Note>);
+    chain!(encode_notes, cow CowNotes);
+    chain!(decode_note, Note);
+    chain!(encode_note, cow CowNote);
+    chain!(decode_layer, Layer);
+    chain!(encode_layer, cow CowLayer);
+    chain!(decode_custom_inst, CustomInstrument);
+    chain!(encode_custom_inst, cow CowCustomInst);
+    chain!(decode_version, Version);
+    chain!(encode_version, Version);
+    chain!(decode_instrument, Instrument);
+    chain!(encode_instrument, Instrument);
+    chain!(decode_volume, Volume);
+    chain!(encode_volume, Volume);
+    chain!(decode_key, Key);
+    chain!(encode_key, Key);
+    chain!(decode_panning, Panning);
+    chain!(encode_panning, Panning);
+    chain!(decode_f32, f32);
+    chain!(encode_f32, f32);
 }
 
 // Song
