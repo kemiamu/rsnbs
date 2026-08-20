@@ -463,14 +463,17 @@ impl Codec for Instrument {
     fn write<W: io::Write, M: Middleware + ?Sized>(
         &self,
         writer: &mut W,
-        _: Self::Context,
+        first_custom_index: Self::Context,
         middlewares: &mut M,
     ) -> Result<()> {
-        // 写端字节与版本无关（读端按 FCI 分界还原）：原生写索引，自定义写 20 + 槽位
         let instrument = middlewares.encode_instrument(*self);
         let byte = match instrument {
-            Instrument::Custom(slot) => Instrument::vanilla_count().saturating_add(slot),
-            _ => instrument.vanilla_index().unwrap_or(0),
+            Instrument::Custom(slot) => first_custom_index.saturating_add(slot),
+            Instrument::Imitate(_) => unimplemented!(),
+            inst => inst
+                .vanilla_index()
+                .filter(|index| *index < first_custom_index)
+                .unwrap_or(0),
         };
         writer.write_u8(byte)?;
         Ok(())

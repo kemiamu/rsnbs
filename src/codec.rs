@@ -309,6 +309,7 @@ impl Middleware for InstrumentTranslate {
         header
     }
 
+    /// Folds preset instruments into the song.
     fn decode_song(&mut self, mut song: Song) -> Song {
         let version = self.version.unwrap();
         (song.notes, song.custom_instruments) =
@@ -316,12 +317,30 @@ impl Middleware for InstrumentTranslate {
         song
     }
 
+    /// Prepends the preset definitions to the custom table.
     fn encode_custom_insts<'a>(&mut self, customs: CowCustomInsts<'a>) -> CowCustomInsts<'a> {
         let version = self.version.unwrap();
         let mut presets = preset_definitions(version).peekable();
         match presets.peek() {
             None => customs,
             Some(_) => Cow::Owned(presets.chain(customs.iter().cloned()).collect()),
+        }
+    }
+
+    /// Maps vanilla indices above the FCI into compatible custom slots.
+    fn encode_instrument(&mut self, instrument: Instrument) -> Instrument {
+        let version = self.version.unwrap();
+        let fci = version.vanilla_instruments();
+        debug_assert!(fci <= Instrument::vanilla_count());
+        let offset = || Instrument::vanilla_count() - fci;
+        let remap = |inst: Instrument| match inst.vanilla_index() {
+            Some(i) if i >= fci => Instrument::Custom(i - fci),
+            _ => inst,
+        };
+        match instrument {
+            Instrument::Custom(slot) => Instrument::Custom(slot.saturating_add(offset())),
+            Instrument::Imitate(_) => unimplemented!(),
+            inst => remap(inst),
         }
     }
 }
