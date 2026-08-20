@@ -1,8 +1,8 @@
 //! NBS (Note Block Studio) file format parser and writer.
 
-use crate::note::{Instrument, Key, Note, Notes};
+use crate::note::{Instrument, Note, Notes};
 use crate::song::{CustomInstrument, Header, Layer, Song};
-use crate::types::{Index, Panning, Position, Result, Tick, TickAnchor, Version, Volume};
+use crate::types::{Index, Position, Result, Tick, TickAnchor, Version};
 use std::borrow::Cow;
 use std::io;
 
@@ -10,7 +10,6 @@ mod impls;
 mod nbs_ext;
 
 type CowHeader<'a> = Cow<'a, Header>;
-type CowNotes<'a> = Cow<'a, Notes<Position, Note>>;
 type CowNote<'a> = Cow<'a, Note>;
 type CowLayer<'a> = Cow<'a, Layer>;
 type CowCustomInst<'a> = Cow<'a, CustomInstrument>;
@@ -22,23 +21,20 @@ type CowSong<'a> = Cow<'a, Song>;
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// unified trait for both parsing and writing data, optionally with context
-pub(super) trait Codec {
+pub(super) trait Codec: Clone {
     /// context type shared for both parsing and writing (use () when no context is needed)
     type Context: Copy;
-
-    /// the type parse produces; usually Self, encoding wrappers override it with the wrapped type
-    type Target;
 
     /// parse data from a reader with context
     fn parse<R: io::Read, M: Middleware + ?Sized>(
         reader: &mut R,
         context: Self::Context,
         middlewares: &mut M,
-    ) -> Result<Self::Target>;
+    ) -> Result<Self>;
 
     /// write data to a writer with context
     fn write<W: io::Write, M: Middleware + ?Sized>(
-        &self,
+        value: Cow<'_, Self>,
         writer: &mut W,
         context: Self::Context,
         middlewares: &mut M,
@@ -72,13 +68,6 @@ pub(super) trait Middleware {
         customs
     }
 
-    fn decode_notes(&mut self, notes: Notes<Position, Note>) -> Notes<Position, Note> {
-        notes
-    }
-    fn encode_notes<'a>(&mut self, notes: CowNotes<'a>) -> CowNotes<'a> {
-        notes
-    }
-
     fn decode_note(&mut self, note: Note) -> Note {
         note
     }
@@ -100,46 +89,11 @@ pub(super) trait Middleware {
         instrument
     }
 
-    fn decode_version(&mut self, version: Version) -> Version {
-        version
-    }
-    fn encode_version(&mut self, version: Version) -> Version {
-        version
-    }
-
     fn decode_instrument(&mut self, instrument: Instrument) -> Instrument {
         instrument
     }
     fn encode_instrument(&mut self, instrument: Instrument) -> Instrument {
         instrument
-    }
-
-    fn decode_volume(&mut self, volume: Volume) -> Volume {
-        volume
-    }
-    fn encode_volume(&mut self, volume: Volume) -> Volume {
-        volume
-    }
-
-    fn decode_key(&mut self, key: Key) -> Key {
-        key
-    }
-    fn encode_key(&mut self, key: Key) -> Key {
-        key
-    }
-
-    fn decode_panning(&mut self, panning: Panning) -> Panning {
-        panning
-    }
-    fn encode_panning(&mut self, panning: Panning) -> Panning {
-        panning
-    }
-
-    fn decode_f32(&mut self, value: f32) -> f32 {
-        value
-    }
-    fn encode_f32(&mut self, value: f32) -> f32 {
-        value
     }
 }
 
@@ -170,26 +124,14 @@ impl<A: Middleware, B: Middleware> Middleware for (A, B) {
     chain!(encode_song, cow CowSong);
     chain!(decode_custom_insts, Vec<CustomInstrument>);
     chain!(encode_custom_insts, cow CowCustomInsts);
-    chain!(decode_notes, Notes<Position, Note>);
-    chain!(encode_notes, cow CowNotes);
     chain!(decode_note, Note);
     chain!(encode_note, cow CowNote);
     chain!(decode_layer, Layer);
     chain!(encode_layer, cow CowLayer);
     chain!(decode_custom_inst, CustomInstrument);
     chain!(encode_custom_inst, cow CowCustomInst);
-    chain!(decode_version, Version);
-    chain!(encode_version, Version);
     chain!(decode_instrument, Instrument);
     chain!(encode_instrument, Instrument);
-    chain!(decode_volume, Volume);
-    chain!(encode_volume, Volume);
-    chain!(decode_key, Key);
-    chain!(encode_key, Key);
-    chain!(decode_panning, Panning);
-    chain!(encode_panning, Panning);
-    chain!(decode_f32, f32);
-    chain!(encode_f32, f32);
 }
 
 // Song
@@ -200,13 +142,13 @@ impl Song {
     /// parses a complete Song from a reader
     pub fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
         let mut middlewares = (InstrumentTranslate::new(), HeaderStats::new());
-        Self::parse_with(reader, &mut middlewares)
+        Codec::parse(reader, (), &mut middlewares)
     }
 
     /// writes the song to a writer.
     pub fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
         let mut middlewares = (InstrumentTranslate::new(), HeaderStats::new());
-        self.write_with(writer, &mut middlewares)
+        Codec::write(Cow::Borrowed(self), writer, (), &mut middlewares)
     }
 }
 
