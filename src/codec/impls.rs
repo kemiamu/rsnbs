@@ -40,16 +40,14 @@ impl Song {
         for _ in 0..instr_count {
             custom_instruments.push(CustomInstrument::parse(reader, (), middlewares)?);
         }
+        let custom_instruments = middlewares.decode_custom_insts(custom_instruments);
 
-        let (notes, custom_instruments) =
-            middlewares.map_custom_insts(header.version, notes, custom_instruments);
-
-        Ok(Song {
+        Ok(middlewares.decode_song(Song {
             header,
             notes,
             layers,
             custom_instruments,
-        })
+        }))
     }
 
     /// writes the song with a middleware chain.
@@ -58,25 +56,26 @@ impl Song {
         writer: &mut W,
         middlewares: &mut M,
     ) -> Result<()> {
-        let version = self.header.version;
+        let song = middlewares.encode_song(Cow::Borrowed(self));
+        let version = song.header.version;
         let fci = version.vanilla_instruments();
         let context = (version, fci);
 
         // 头部分
-        self.write_header(writer, middlewares)?;
+        Self::write_header(&song, writer, middlewares)?;
 
         // 音符部分
-        self.notes.write(writer, context, middlewares)?;
+        song.notes.write(writer, context, middlewares)?;
 
         // 层部分
-        for layer in &self.layers {
+        for layer in &song.layers {
             layer.write(writer, version, middlewares)?;
         }
 
-        let table = middlewares.unmap_custom_insts(version, &self.custom_instruments);
+        let table = middlewares.encode_custom_insts(Cow::Borrowed(&song.custom_instruments));
         let count = table.len().min(255) as u8;
         writer.write_u8(count)?;
-        for instr in table.into_iter().take(count as usize) {
+        for instr in table.iter().take(count as usize) {
             instr.write(writer, (), middlewares)?;
         }
 
@@ -131,25 +130,25 @@ impl Song {
             header.loop_start = reader.read_u16()? as _;
         }
 
-        let header = middlewares.map_header(header);
+        let header = middlewares.decode_header(header);
         Ok(header)
     }
 
     /// writes the header section with fields derived from the song state.
     fn write_header<W: io::Write, M: Middleware + ?Sized>(
-        &self,
+        song: &Song,
         writer: &mut W,
         middlewares: &mut M,
     ) -> Result<()> {
-        let header = middlewares.unmap_header(Cow::Borrowed(&self.header));
+        let header = middlewares.encode_header(Cow::Borrowed(&song.header));
 
         // 派生字段：歌曲长度、层数、默认乐器数
-        let song_length = self
+        let song_length = song
             .notes
             .last_key_value()
             .map(|(p, _)| p.into_tick())
             .unwrap_or(1);
-        let song_layers = self.layers.len() as u32;
+        let song_layers = song.layers.len() as u32;
         let default_instruments = header.version.vanilla_instruments();
 
         // 版本
@@ -223,7 +222,7 @@ impl Codec for Notes<Position, Note> {
             }
         }
 
-        let notes = middlewares.map_notes(notes.into());
+        let notes = middlewares.decode_notes(notes.into());
         Ok(notes)
     }
 
@@ -233,7 +232,7 @@ impl Codec for Notes<Position, Note> {
         context: Self::Context,
         middlewares: &mut M,
     ) -> Result<()> {
-        let notes = middlewares.unmap_notes(Cow::Borrowed(self));
+        let notes = middlewares.encode_notes(Cow::Borrowed(self));
         let mut iter = notes.iter().peekable();
         let mut prev_tick = Tick::MAX;
         let mut prev_layer = Index::MAX;
@@ -290,7 +289,7 @@ impl Codec for Note {
             note.pitch = reader.read_i16()?;
         }
 
-        let note = middlewares.map_note(note);
+        let note = middlewares.decode_note(note);
         Ok(note)
     }
 
@@ -301,7 +300,7 @@ impl Codec for Note {
         middlewares: &mut M,
     ) -> Result<()> {
         let (version, first_custom_index) = context;
-        let note = middlewares.unmap_note(Cow::Borrowed(self));
+        let note = middlewares.encode_note(Cow::Borrowed(self));
         note.tone
             .instrument()
             .write(writer, first_custom_index, middlewares)?;
@@ -344,7 +343,7 @@ impl Codec for Layer {
             layer.panning = Panning::parse(reader, (), middlewares)?;
         }
 
-        let layer = middlewares.map_layer(layer);
+        let layer = middlewares.decode_layer(layer);
         Ok(layer)
     }
 
@@ -355,7 +354,7 @@ impl Codec for Layer {
         version: Self::Context,
         middlewares: &mut M,
     ) -> Result<()> {
-        let layer = middlewares.unmap_layer(Cow::Borrowed(self));
+        let layer = middlewares.encode_layer(Cow::Borrowed(self));
 
         writer.write_string(&layer.name)?;
 
@@ -392,7 +391,7 @@ impl Codec for CustomInstrument {
         instrument.file = reader.read_string()?;
         instrument.pitch = reader.read_u8()?;
         instrument.press_key = reader.read_bool()?;
-        let instrument = middlewares.map_custom_inst(instrument);
+        let instrument = middlewares.decode_custom_inst(instrument);
         Ok(instrument)
     }
 
@@ -403,7 +402,7 @@ impl Codec for CustomInstrument {
         _: Self::Context,
         middlewares: &mut M,
     ) -> Result<()> {
-        let instrument = middlewares.unmap_custom_inst(Cow::Borrowed(self));
+        let instrument = middlewares.encode_custom_inst(Cow::Borrowed(self));
         writer.write_string(&instrument.name)?;
         writer.write_string(&instrument.file)?;
         writer.write_u8(instrument.pitch)?;
@@ -426,7 +425,7 @@ impl Codec for Version {
         middlewares: &mut M,
     ) -> Result<Self> {
         let version = Version::new(reader.read_u8()?)?;
-        let version = middlewares.map_version(version);
+        let version = middlewares.decode_version(version);
         Ok(version)
     }
 
@@ -436,7 +435,7 @@ impl Codec for Version {
         _: Self::Context,
         middlewares: &mut M,
     ) -> Result<()> {
-        let version = middlewares.unmap_version(*self);
+        let version = middlewares.encode_version(*self);
         Ok(writer.write_u8(version.get())?)
     }
 }
@@ -455,9 +454,9 @@ impl Codec for Instrument {
         let byte = reader.read_u8()?;
         let instrument = match byte < first_custom_index {
             true => Instrument::NBS_INDEX[byte as usize],
-            false => Instrument::Custom(byte.saturating_sub(first_custom_index)),
+            false => Instrument::Custom(byte - first_custom_index),
         };
-        let instrument = middlewares.map_instrument(instrument);
+        let instrument = middlewares.decode_instrument(instrument);
         Ok(instrument)
     }
 
@@ -468,7 +467,7 @@ impl Codec for Instrument {
         middlewares: &mut M,
     ) -> Result<()> {
         // 写端字节与版本无关（读端按 FCI 分界还原）：原生写索引，自定义写 20 + 槽位
-        let instrument = middlewares.unmap_instrument(*self);
+        let instrument = middlewares.encode_instrument(*self);
         let byte = match instrument {
             Instrument::Custom(slot) => Instrument::vanilla_count().saturating_add(slot),
             _ => instrument.vanilla_index().unwrap_or(0),
@@ -488,7 +487,7 @@ impl Codec for Volume {
         middlewares: &mut M,
     ) -> Result<Self> {
         let volume = Volume::new(reader.read_u8()?)?;
-        let volume = middlewares.map_volume(volume);
+        let volume = middlewares.decode_volume(volume);
         Ok(volume)
     }
 
@@ -498,7 +497,7 @@ impl Codec for Volume {
         _: Self::Context,
         middlewares: &mut M,
     ) -> Result<()> {
-        let volume = middlewares.unmap_volume(*self);
+        let volume = middlewares.encode_volume(*self);
         Ok(writer.write_u8(volume.get())?)
     }
 }
@@ -513,7 +512,7 @@ impl Codec for Key {
         middlewares: &mut M,
     ) -> Result<Self> {
         let key: Key = reader.read_u8()?.into();
-        let key = middlewares.map_key(key);
+        let key = middlewares.decode_key(key);
         Ok(key)
     }
 
@@ -523,7 +522,7 @@ impl Codec for Key {
         _: Self::Context,
         middlewares: &mut M,
     ) -> Result<()> {
-        let key = middlewares.unmap_key(*self);
+        let key = middlewares.encode_key(*self);
         Ok(writer.write_u8(key.into())?)
     }
 }
@@ -540,7 +539,7 @@ impl Codec for Panning {
         let raw = reader.read_u8()?;
         // Convert from file representation (0-200) to internal (-100..100)
         let panning = Panning::new(raw.wrapping_sub(100) as i8)?;
-        let panning = middlewares.map_panning(panning);
+        let panning = middlewares.decode_panning(panning);
         Ok(panning)
     }
 
@@ -551,7 +550,7 @@ impl Codec for Panning {
         middlewares: &mut M,
     ) -> Result<()> {
         // Convert from internal (-100..100) to file representation (0-200)
-        let panning = middlewares.unmap_panning(*self);
+        let panning = middlewares.encode_panning(*self);
         Ok(writer.write_u8((panning.get() as u8).wrapping_add(100))?)
     }
 }
@@ -567,7 +566,7 @@ impl Codec for f32 {
     ) -> Result<Self> {
         // Convert from u16 to f32 and divide by 100.0
         let value = reader.read_u16()? as f32 / 100.0;
-        let value = middlewares.map_f32(value);
+        let value = middlewares.decode_f32(value);
         Ok(value)
     }
 
@@ -578,7 +577,7 @@ impl Codec for f32 {
         middlewares: &mut M,
     ) -> Result<()> {
         // Convert f32 to u16 by multiplying by 100.0
-        let value = middlewares.unmap_f32(*self);
+        let value = middlewares.encode_f32(*self);
         Ok(writer.write_u16((value * 100.0) as u16)?)
     }
 }
