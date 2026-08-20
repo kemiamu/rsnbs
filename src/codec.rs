@@ -56,6 +56,24 @@ pub(super) trait Middleware {
         header
     }
 
+    fn map_custom_insts(
+        &mut self,
+        version: Version,
+        notes: Notes<Position, Note>,
+        customs: Vec<CustomInstrument>,
+    ) -> (Notes<Position, Note>, Vec<CustomInstrument>) {
+        let _ = version;
+        (notes, customs)
+    }
+    fn unmap_custom_insts(
+        &mut self,
+        version: Version,
+        customs: &[CustomInstrument],
+    ) -> Vec<CustomInstrument> {
+        let _ = version;
+        customs.to_vec()
+    }
+
     fn map_notes(&mut self, notes: Notes<Position, Note>) -> Notes<Position, Note> {
         notes
     }
@@ -130,46 +148,124 @@ pub(super) trait Middleware {
 /// Identity chain tail.
 impl Middleware for () {}
 
-/// (A, B) pass-through; value for by-value hooks, cow for borrowed ones.
-macro_rules! middleware_chain {
-    ($method:ident, $ty:ty, value) => {
-        fn $method(&mut self, value: $ty) -> $ty {
-            let value = self.0.$method(value);
-            self.1.$method(value)
-        }
-    };
-    ($method:ident, $ty:ty, cow) => {
-        fn $method<'a>(&mut self, value: Cow<'a, $ty>) -> Cow<'a, $ty> {
-            let value = self.0.$method(value);
-            self.1.$method(value)
-        }
-    };
-}
-
 /// Tuple combinator: chains two middlewares, .0 runs first.
 impl<A: Middleware, B: Middleware> Middleware for (A, B) {
-    middleware_chain!(map_header, Header, value);
-    middleware_chain!(unmap_header, Header, cow);
-    middleware_chain!(map_notes, Notes<Position, Note>, value);
-    middleware_chain!(unmap_notes, Notes<Position, Note>, cow);
-    middleware_chain!(map_note, Note, value);
-    middleware_chain!(unmap_note, Note, cow);
-    middleware_chain!(map_layer, Layer, value);
-    middleware_chain!(unmap_layer, Layer, cow);
-    middleware_chain!(map_custom_inst, CustomInstrument, value);
-    middleware_chain!(unmap_custom_inst, CustomInstrument, cow);
-    middleware_chain!(map_version, Version, value);
-    middleware_chain!(unmap_version, Version, value);
-    middleware_chain!(map_instrument, Instrument, value);
-    middleware_chain!(unmap_instrument, Instrument, value);
-    middleware_chain!(map_volume, Volume, value);
-    middleware_chain!(unmap_volume, Volume, value);
-    middleware_chain!(map_key, Key, value);
-    middleware_chain!(unmap_key, Key, value);
-    middleware_chain!(map_panning, Panning, value);
-    middleware_chain!(unmap_panning, Panning, value);
-    middleware_chain!(map_f32, f32, value);
-    middleware_chain!(unmap_f32, f32, value);
+    fn map_header(&mut self, header: Header) -> Header {
+        let header = self.0.map_header(header);
+        self.1.map_header(header)
+    }
+    fn unmap_header<'a>(&mut self, header: CowHeader<'a>) -> CowHeader<'a> {
+        let header = self.0.unmap_header(header);
+        self.1.unmap_header(header)
+    }
+
+    fn map_custom_insts(
+        &mut self,
+        version: Version,
+        notes: Notes<Position, Note>,
+        customs: Vec<CustomInstrument>,
+    ) -> (Notes<Position, Note>, Vec<CustomInstrument>) {
+        let (notes, customs) = self.0.map_custom_insts(version, notes, customs);
+        self.1.map_custom_insts(version, notes, customs)
+    }
+    fn unmap_custom_insts(
+        &mut self,
+        version: Version,
+        customs: &[CustomInstrument],
+    ) -> Vec<CustomInstrument> {
+        let table = self.0.unmap_custom_insts(version, customs);
+        self.1.unmap_custom_insts(version, &table)
+    }
+
+    fn map_notes(&mut self, notes: Notes<Position, Note>) -> Notes<Position, Note> {
+        let notes = self.0.map_notes(notes);
+        self.1.map_notes(notes)
+    }
+    fn unmap_notes<'a>(&mut self, notes: CowNotes<'a>) -> CowNotes<'a> {
+        let notes = self.0.unmap_notes(notes);
+        self.1.unmap_notes(notes)
+    }
+
+    fn map_note(&mut self, note: Note) -> Note {
+        let note = self.0.map_note(note);
+        self.1.map_note(note)
+    }
+    fn unmap_note<'a>(&mut self, note: CowNote<'a>) -> CowNote<'a> {
+        let note = self.0.unmap_note(note);
+        self.1.unmap_note(note)
+    }
+
+    fn map_layer(&mut self, layer: Layer) -> Layer {
+        let layer = self.0.map_layer(layer);
+        self.1.map_layer(layer)
+    }
+    fn unmap_layer<'a>(&mut self, layer: CowLayer<'a>) -> CowLayer<'a> {
+        let layer = self.0.unmap_layer(layer);
+        self.1.unmap_layer(layer)
+    }
+
+    fn map_custom_inst(&mut self, instrument: CustomInstrument) -> CustomInstrument {
+        let instrument = self.0.map_custom_inst(instrument);
+        self.1.map_custom_inst(instrument)
+    }
+    fn unmap_custom_inst<'a>(&mut self, instrument: CowCustomInst<'a>) -> CowCustomInst<'a> {
+        let instrument = self.0.unmap_custom_inst(instrument);
+        self.1.unmap_custom_inst(instrument)
+    }
+
+    fn map_version(&mut self, version: Version) -> Version {
+        let version = self.0.map_version(version);
+        self.1.map_version(version)
+    }
+    fn unmap_version(&mut self, version: Version) -> Version {
+        let version = self.0.unmap_version(version);
+        self.1.unmap_version(version)
+    }
+
+    fn map_instrument(&mut self, instrument: Instrument) -> Instrument {
+        let instrument = self.0.map_instrument(instrument);
+        self.1.map_instrument(instrument)
+    }
+    fn unmap_instrument(&mut self, instrument: Instrument) -> Instrument {
+        let instrument = self.0.unmap_instrument(instrument);
+        self.1.unmap_instrument(instrument)
+    }
+
+    fn map_volume(&mut self, volume: Volume) -> Volume {
+        let volume = self.0.map_volume(volume);
+        self.1.map_volume(volume)
+    }
+    fn unmap_volume(&mut self, volume: Volume) -> Volume {
+        let volume = self.0.unmap_volume(volume);
+        self.1.unmap_volume(volume)
+    }
+
+    fn map_key(&mut self, key: Key) -> Key {
+        let key = self.0.map_key(key);
+        self.1.map_key(key)
+    }
+    fn unmap_key(&mut self, key: Key) -> Key {
+        let key = self.0.unmap_key(key);
+        self.1.unmap_key(key)
+    }
+
+    fn map_panning(&mut self, panning: Panning) -> Panning {
+        let panning = self.0.map_panning(panning);
+        self.1.map_panning(panning)
+    }
+    fn unmap_panning(&mut self, panning: Panning) -> Panning {
+        let panning = self.0.unmap_panning(panning);
+        self.1.unmap_panning(panning)
+    }
+
+    fn map_f32(&mut self, value: f32) -> f32 {
+        let value = self.0.map_f32(value);
+        self.1.map_f32(value)
+    }
+    fn unmap_f32(&mut self, value: f32) -> f32 {
+        let value = self.0.unmap_f32(value);
+        self.1.unmap_f32(value)
+    }
 }
 
 // Song
@@ -179,13 +275,112 @@ impl<A: Middleware, B: Middleware> Middleware for (A, B) {
 impl Song {
     /// parses a complete Song from a reader
     pub fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
-        let mut middlewares = ();
+        let mut middlewares = InstrumentTranslate;
         Self::parse_with(reader, &mut middlewares)
     }
 
     /// writes the song to a writer.
     pub fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
-        let mut middlewares = ();
+        let mut middlewares = InstrumentTranslate;
         self.write_with(writer, &mut middlewares)
     }
+}
+
+// InstrumentTranslate
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// Folds preset instruments on parse, injects them on write.
+pub(super) struct InstrumentTranslate;
+
+impl Middleware for InstrumentTranslate {
+    fn map_custom_insts(
+        &mut self,
+        version: Version,
+        notes: Notes<Position, Note>,
+        custom_instruments: Vec<CustomInstrument>,
+    ) -> (Notes<Position, Note>, Vec<CustomInstrument>) {
+        fold_preset_instruments(version, notes, custom_instruments)
+    }
+
+    fn unmap_custom_insts(
+        &mut self,
+        version: Version,
+        customs: &[CustomInstrument],
+    ) -> Vec<CustomInstrument> {
+        let mut table = preset_definitions(version).collect::<Vec<_>>();
+        table.extend_from_slice(customs);
+        table
+    }
+}
+
+/// All preset instruments the target version requires, written at the head
+/// of the custom instrument table with fixed playback parameters.
+fn preset_definitions(version: Version) -> impl Iterator<Item = CustomInstrument> {
+    let fci = version.vanilla_instruments() as usize;
+    let presets = Instrument::NBS_INDEX.into_iter().skip(fci);
+    presets.map(|instrument| {
+        let (name, file) = instrument.nbs_definition().unwrap();
+        CustomInstrument {
+            name: name.into(),
+            file: file.into(),
+            pitch: 45,
+            press_key: true,
+        }
+    })
+}
+
+/// The vanilla instrument whose preset definition matches the custom entry,
+/// if the target version actually presets it; such entries fold on read.
+fn fold_instrument(version: Version, custom: &CustomInstrument) -> Option<Instrument> {
+    let fci = version.vanilla_instruments() as usize;
+    let mut presets = Instrument::NBS_INDEX.into_iter().skip(fci);
+    presets.find(|instrument| {
+        instrument.nbs_definition() == Some((custom.name.as_str(), custom.file.as_str()))
+    })
+}
+
+/// Folds preset entries back into vanilla instruments, compressing the
+/// remaining custom entries in order; returns unchanged when nothing matches.
+fn fold_preset_instruments(
+    version: Version,
+    mut notes: Notes<Position, Note>,
+    custom_instruments: Vec<CustomInstrument>,
+) -> (Notes<Position, Note>, Vec<CustomInstrument>) {
+    let fold_entry = |(slot, custom): (usize, &CustomInstrument)| {
+        fold_instrument(version, custom).map(|vanilla| (slot as u8, vanilla))
+    };
+    let folded: Vec<(u8, Instrument)> = custom_instruments
+        .iter()
+        .enumerate()
+        .filter_map(fold_entry)
+        .collect();
+    if folded.is_empty() {
+        return (notes, custom_instruments);
+    }
+
+    let keep_entry = |(slot, custom): (usize, CustomInstrument)| {
+        let keep = folded
+            .binary_search_by_key(&(slot as u8), |&(s, _)| s)
+            .is_err();
+        keep.then_some(custom)
+    };
+    let kept: Vec<CustomInstrument> = custom_instruments
+        .into_iter()
+        .enumerate()
+        .filter_map(keep_entry)
+        .collect();
+
+    for (_, note) in notes.iter_mut() {
+        let Instrument::Custom(slot) = note.tone().instrument() else {
+            continue;
+        };
+        let instrument = folded
+            .binary_search_by_key(&slot, |&(s, _)| s)
+            .map(|index| folded[index].1)
+            .unwrap_or_else(|insert| Instrument::Custom(slot - insert as u8));
+        note.set_instrument(instrument);
+    }
+
+    (notes, kept)
 }
