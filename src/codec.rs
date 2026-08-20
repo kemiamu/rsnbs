@@ -297,6 +297,77 @@ impl InstrumentTranslate {
     pub(super) fn new() -> Self {
         InstrumentTranslate { version: None }
     }
+
+    /// Vanilla instruments beyond the target version's FCI.
+    fn presets(&self) -> impl Iterator<Item = Instrument> {
+        let fci = self.version.unwrap().vanilla_instruments() as usize;
+        Instrument::NBS_INDEX.into_iter().skip(fci)
+    }
+
+    /// Preset definitions written at the head of the custom table.
+    fn preset_definitions(&self) -> impl Iterator<Item = CustomInstrument> {
+        self.presets().map(|instrument| {
+            let (name, file) = instrument.nbs_definition().unwrap();
+            CustomInstrument {
+                name: name.into(),
+                file: file.into(),
+                pitch: 45,
+                press_key: true,
+            }
+        })
+    }
+
+    /// The vanilla instrument matching a preset custom entry, if any.
+    fn fold_instrument(&self, custom: &CustomInstrument) -> Option<Instrument> {
+        self.presets().find(|instrument| {
+            instrument.nbs_definition() == Some((custom.name.as_str(), custom.file.as_str()))
+        })
+    }
+
+    /// Folds preset entries back into vanilla instruments, compressing the rest.
+    fn fold_preset_instruments(
+        &self,
+        mut notes: Notes<Position, Note>,
+        custom_instruments: Vec<CustomInstrument>,
+    ) -> (Notes<Position, Note>, Vec<CustomInstrument>) {
+        let fold_entry = |(slot, custom): (usize, &CustomInstrument)| {
+            self.fold_instrument(custom)
+                .map(|vanilla| (slot as u8, vanilla))
+        };
+        let folded: Vec<(u8, Instrument)> = custom_instruments
+            .iter()
+            .enumerate()
+            .filter_map(fold_entry)
+            .collect();
+        if folded.is_empty() {
+            return (notes, custom_instruments);
+        }
+
+        let keep_entry = |(slot, custom): (usize, CustomInstrument)| {
+            let keep = folded
+                .binary_search_by_key(&(slot as u8), |&(s, _)| s)
+                .is_err();
+            keep.then_some(custom)
+        };
+        let kept: Vec<CustomInstrument> = custom_instruments
+            .into_iter()
+            .enumerate()
+            .filter_map(keep_entry)
+            .collect();
+
+        for (_, note) in notes.iter_mut() {
+            let Instrument::Custom(slot) = note.tone().instrument() else {
+                continue;
+            };
+            let instrument = folded
+                .binary_search_by_key(&slot, |&(s, _)| s)
+                .map(|index| folded[index].1)
+                .unwrap_or_else(|insert| Instrument::Custom(slot - insert as u8));
+            note.set_instrument(instrument);
+        }
+
+        (notes, kept)
+    }
 }
 
 impl Middleware for InstrumentTranslate {
@@ -311,16 +382,14 @@ impl Middleware for InstrumentTranslate {
 
     /// Folds preset instruments into the song.
     fn decode_song(&mut self, mut song: Song) -> Song {
-        let version = self.version.unwrap();
         (song.notes, song.custom_instruments) =
-            fold_preset_instruments(version, song.notes, song.custom_instruments);
+            self.fold_preset_instruments(song.notes, song.custom_instruments);
         song
     }
 
     /// Prepends the preset definitions to the custom table.
     fn encode_custom_insts<'a>(&mut self, customs: CowCustomInsts<'a>) -> CowCustomInsts<'a> {
-        let version = self.version.unwrap();
-        let mut presets = preset_definitions(version).peekable();
+        let mut presets = self.preset_definitions().peekable();
         match presets.peek() {
             None => customs,
             Some(_) => Cow::Owned(presets.chain(customs.iter().cloned()).collect()),
@@ -339,79 +408,8 @@ impl Middleware for InstrumentTranslate {
         };
         match instrument {
             Instrument::Custom(slot) => Instrument::Custom(slot.saturating_add(offset())),
-            Instrument::Imitate(_) => unimplemented!(),
+            // Instrument::Imitate(_) => unimplemented!(),
             inst => remap(inst),
         }
     }
-}
-
-/// All preset instruments the target version requires, written at the head
-/// of the custom instrument table with fixed playback parameters.
-fn preset_definitions(version: Version) -> impl Iterator<Item = CustomInstrument> {
-    let fci = version.vanilla_instruments() as usize;
-    let presets = Instrument::NBS_INDEX.into_iter().skip(fci);
-    presets.map(|instrument| {
-        let (name, file) = instrument.nbs_definition().unwrap();
-        CustomInstrument {
-            name: name.into(),
-            file: file.into(),
-            pitch: 45,
-            press_key: true,
-        }
-    })
-}
-
-/// The vanilla instrument whose preset definition matches the custom entry,
-/// if the target version actually presets it; such entries fold on read.
-fn fold_instrument(version: Version, custom: &CustomInstrument) -> Option<Instrument> {
-    let fci = version.vanilla_instruments() as usize;
-    let mut presets = Instrument::NBS_INDEX.into_iter().skip(fci);
-    presets.find(|instrument| {
-        instrument.nbs_definition() == Some((custom.name.as_str(), custom.file.as_str()))
-    })
-}
-
-/// Folds preset entries back into vanilla instruments, compressing the
-/// remaining custom entries in order; returns unchanged when nothing matches.
-fn fold_preset_instruments(
-    version: Version,
-    mut notes: Notes<Position, Note>,
-    custom_instruments: Vec<CustomInstrument>,
-) -> (Notes<Position, Note>, Vec<CustomInstrument>) {
-    let fold_entry = |(slot, custom): (usize, &CustomInstrument)| {
-        fold_instrument(version, custom).map(|vanilla| (slot as u8, vanilla))
-    };
-    let folded: Vec<(u8, Instrument)> = custom_instruments
-        .iter()
-        .enumerate()
-        .filter_map(fold_entry)
-        .collect();
-    if folded.is_empty() {
-        return (notes, custom_instruments);
-    }
-
-    let keep_entry = |(slot, custom): (usize, CustomInstrument)| {
-        let keep = folded
-            .binary_search_by_key(&(slot as u8), |&(s, _)| s)
-            .is_err();
-        keep.then_some(custom)
-    };
-    let kept: Vec<CustomInstrument> = custom_instruments
-        .into_iter()
-        .enumerate()
-        .filter_map(keep_entry)
-        .collect();
-
-    for (_, note) in notes.iter_mut() {
-        let Instrument::Custom(slot) = note.tone().instrument() else {
-            continue;
-        };
-        let instrument = folded
-            .binary_search_by_key(&slot, |&(s, _)| s)
-            .map(|index| folded[index].1)
-            .unwrap_or_else(|insert| Instrument::Custom(slot - insert as u8));
-        note.set_instrument(instrument);
-    }
-
-    (notes, kept)
 }

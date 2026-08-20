@@ -469,7 +469,7 @@ impl Codec for Instrument {
         let instrument = middlewares.encode_instrument(*self);
         let byte = match instrument {
             Instrument::Custom(slot) => first_custom_index.saturating_add(slot),
-            Instrument::Imitate(_) => unimplemented!(),
+            // Instrument::Imitate(_) => unimplemented!(),
             inst => inst
                 .vanilla_index()
                 .filter(|index| *index < first_custom_index)
