@@ -62,35 +62,22 @@ impl Codec for Song {
         let version = song.header.version;
         let fci = version.vanilla_instruments();
         let context = (version, fci);
-
-        let (header, notes, layers, customs) = match song {
-            Cow::Owned(song) => (
-                Cow::Owned(song.header),
-                Cow::Owned(song.notes),
-                Cow::Owned(song.layers),
-                Cow::Owned(song.custom_instruments.into()),
-            ),
-            Cow::Borrowed(song) => (
-                Cow::Borrowed(&song.header),
-                Cow::Borrowed(&song.notes),
-                Cow::Borrowed(&song.layers),
-                Cow::Borrowed(song.custom_instruments.as_slice()),
-            ),
-        };
+        let song = song.as_ref();
 
         // 头部分
-        Header::write(header, writer, (), middlewares)?;
+        Header::write(Cow::Borrowed(&song.header), writer, (), middlewares)?;
 
         // 音符部分
-        Notes::write(notes, writer, context, middlewares)?;
+        Notes::write(Cow::Borrowed(&song.notes), writer, context, middlewares)?;
 
         // 层部分
-        for layer in layers.iter() {
+        for layer in &song.layers {
             Layer::write(Cow::Borrowed(layer), writer, version, middlewares)?;
         }
 
         // 自定义乐器部分
-        let table = middlewares.encode_custom_insts(customs);
+        let table =
+            middlewares.encode_custom_insts(Cow::Borrowed(song.custom_instruments.as_slice()));
         let count = table.len().min(255) as u8;
         writer.write_u8(count)?;
         for instr in table.iter().take(count as usize) {
@@ -166,7 +153,7 @@ impl Codec for Header {
         // 版本
         if header.version.get() > 0 {
             writer.write_u16(0)?;
-            Version::write(Cow::Borrowed(&header.version), writer, (), middlewares)?;
+            Version::write(Cow::Owned(header.version), writer, (), middlewares)?;
             writer.write_u8(header.default_instruments)?;
         } else {
             writer.write_u16(header.song_length.max(1).try_into().unwrap_or(u16::MAX))?;
@@ -182,7 +169,7 @@ impl Codec for Header {
         writer.write_string(&header.song_author)?;
         writer.write_string(&header.original_author)?;
         writer.write_string(&header.description)?;
-        f32::write(Cow::Borrowed(&header.tempo), writer, (), middlewares)?;
+        f32::write(Cow::Owned(header.tempo), writer, (), middlewares)?;
         writer.write_bool(header.auto_save)?;
         writer.write_u8(header.auto_save_duration.try_into().unwrap_or(u8::MAX))?;
         writer.write_u8(header.time_signature)?;
@@ -311,7 +298,7 @@ impl Codec for Note {
         let note = middlewares.encode_note(value);
         let instrument = note.tone.instrument();
         Instrument::write(
-            Cow::Borrowed(&instrument),
+            Cow::Owned(instrument),
             writer,
             first_custom_index,
             middlewares,
@@ -319,8 +306,8 @@ impl Codec for Note {
         writer.write_u8(note.tone.key().into())?;
 
         if version.get() >= 4 {
-            Volume::write(Cow::Borrowed(&note.velocity), writer, (), middlewares)?;
-            Panning::write(Cow::Borrowed(&note.panning), writer, (), middlewares)?;
+            Volume::write(Cow::Owned(note.velocity), writer, (), middlewares)?;
+            Panning::write(Cow::Owned(note.panning), writer, (), middlewares)?;
             writer.write_i16(note.pitch)?;
         }
 
@@ -373,10 +360,10 @@ impl Codec for Layer {
             writer.write_bool(layer.lock)?;
         }
 
-        Volume::write(Cow::Borrowed(&layer.volume), writer, (), middlewares)?;
+        Volume::write(Cow::Owned(layer.volume), writer, (), middlewares)?;
 
         if version.get() >= 2 {
-            Panning::write(Cow::Borrowed(&layer.panning), writer, (), middlewares)?;
+            Panning::write(Cow::Owned(layer.panning), writer, (), middlewares)?;
         }
 
         Ok(())
