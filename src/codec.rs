@@ -159,36 +159,64 @@ impl Song {
 /// Folds preset instruments on parse, injects them on write.
 pub(super) struct InstrumentTranslate {
     version: Option<Version>,
+    /// Vanilla instruments needing presets, collected lazily on write.
+    used: Vec<Instrument>,
+    /// Custom-table entries matching built-in definitions: instrument -> slot.
+    reuse: Vec<(Instrument, u8)>,
+    /// Custom table length; preset slots follow it.
+    customs_len: usize,
 }
 
 impl InstrumentTranslate {
     pub(super) fn new() -> Self {
-        InstrumentTranslate { version: None }
+        InstrumentTranslate {
+            version: None,
+            used: Vec::new(),
+            reuse: Vec::new(),
+            customs_len: 0,
+        }
     }
 
-    /// Vanilla instruments beyond the target version's FCI.
-    fn presets(&self) -> impl Iterator<Item = Instrument> {
-        let fci = self.version.unwrap().vanilla_instruments() as usize;
-        Instrument::NBS_INDEX.into_iter().skip(fci)
-    }
-
-    /// Preset definitions written at the head of the custom table.
-    fn preset_definitions(&self) -> impl Iterator<Item = CustomInstrument> {
-        self.presets().map(|instrument| {
-            let (name, file) = instrument.nbs_definition().unwrap();
-            CustomInstrument {
-                name: name.into(),
-                file: file.into(),
-                pitch: 45,
-                press_key: true,
-            }
+    /// The built-in instrument matching a custom entry beyond the FCI, if any.
+    fn match_builtin(fci: usize, custom: &CustomInstrument) -> Option<Instrument> {
+        Instrument::NBS_INDEX.into_iter().skip(fci).find(|inst| {
+            inst.nbs_definition() == Some((custom.name.as_str(), custom.file.as_str()))
         })
     }
 
-    /// The vanilla instrument matching a preset custom entry, if any.
-    fn fold_instrument(&self, custom: &CustomInstrument) -> Option<Instrument> {
-        self.presets().find(|instrument| {
-            instrument.nbs_definition() == Some((custom.name.as_str(), custom.file.as_str()))
+    /// (built-in, slot) for a custom entry matching a built-in, if any.
+    fn reusable_slot(
+        fci: usize,
+        slot: usize,
+        custom: &CustomInstrument,
+    ) -> Option<(Instrument, u8)> {
+        Self::match_builtin(fci, custom).map(|inst| (inst, slot as u8))
+    }
+
+    /// Reuses a matching custom entry, else lazily assigns a preset slot.
+    fn slot_for(&mut self, inst: Instrument) -> u8 {
+        let mut reuse = self.reuse.iter();
+        if let Some(slot) = reuse.find_map(|&(i, s)| (i == inst).then_some(s)) {
+            return slot;
+        }
+        if let Some(rank) = self.used.iter().position(|&u| u == inst) {
+            return self.customs_len as u8 + rank as u8;
+        }
+        self.used.push(inst);
+        self.customs_len as u8 + (self.used.len() - 1) as u8
+    }
+
+    /// Preset definitions for the collected vanilla instruments.
+    fn preset_definitions(&self) -> impl Iterator<Item = CustomInstrument> {
+        let custom = |name: &str, file: &str| CustomInstrument {
+            name: name.into(),
+            file: file.into(),
+            pitch: 45,
+            press_key: true,
+        };
+        self.used.iter().map(move |&instrument| {
+            let (name, file) = instrument.nbs_definition().unwrap();
+            custom(name, file)
         })
     }
 
@@ -198,9 +226,9 @@ impl InstrumentTranslate {
         mut notes: Notes<Position, Note>,
         custom_instruments: Vec<CustomInstrument>,
     ) -> (Notes<Position, Note>, Vec<CustomInstrument>) {
+        let fci = self.version.unwrap().vanilla_instruments() as usize;
         let fold_entry = |(slot, custom): (usize, &CustomInstrument)| {
-            self.fold_instrument(custom)
-                .map(|vanilla| (slot as u8, vanilla))
+            Self::match_builtin(fci, custom).map(|vanilla| (slot as u8, vanilla))
         };
         let folded: Vec<(u8, Instrument)> = custom_instruments
             .iter()
@@ -243,10 +271,6 @@ impl Transformer for InstrumentTranslate {
         self.version = Some(header.version);
         header
     }
-    fn encode_header<'a>(&mut self, header: CowHeader<'a>) -> CowHeader<'a> {
-        self.version = Some(header.version);
-        header
-    }
 
     /// Folds preset instruments into the song.
     fn decode_song(&mut self, mut song: Song) -> Song {
@@ -255,29 +279,35 @@ impl Transformer for InstrumentTranslate {
         song
     }
 
-    /// Prepends the preset definitions to the custom table.
-    fn encode_custom_insts<'a>(&mut self, customs: CowCustomInsts<'a>) -> CowCustomInsts<'a> {
-        let mut presets = self.preset_definitions().peekable();
-        match presets.peek() {
-            None => customs,
-            Some(_) => Cow::Owned(presets.chain(customs.iter().cloned()).collect()),
-        }
+    /// Records the custom table length and built-in entries reusable on write.
+    fn encode_song<'a>(&mut self, song: CowSong<'a>) -> CowSong<'a> {
+        let version = song.header.version;
+        self.version = Some(version);
+        self.customs_len = song.custom_instruments.len();
+        let fci = version.vanilla_instruments() as usize;
+        let customs = song.custom_instruments.iter().enumerate();
+        let reuse = customs.filter_map(|(slot, custom)| Self::reusable_slot(fci, slot, custom));
+        self.reuse = reuse.collect();
+        song
     }
 
-    /// Maps vanilla indices above the FCI into compatible custom slots.
+    /// Appends the collected presets after the custom table.
+    fn encode_custom_insts<'a>(&mut self, customs: CowCustomInsts<'a>) -> CowCustomInsts<'a> {
+        if self.used.is_empty() {
+            return customs;
+        }
+        let mut customs = customs.into_owned();
+        customs.extend(self.preset_definitions());
+        Cow::Owned(customs)
+    }
+
+    /// Maps vanilla instruments above the FCI onto the custom table.
     fn encode_instrument(&mut self, instrument: Instrument) -> Instrument {
-        let version = self.version.unwrap();
-        let fci = version.vanilla_instruments();
-        debug_assert!(fci <= Instrument::vanilla_count());
-        let offset = || Instrument::vanilla_count() - fci;
-        let remap = |inst: Instrument| match inst.vanilla_index() {
-            Some(i) if i >= fci => Instrument::Custom(i - fci),
-            _ => inst,
-        };
+        let fci = self.version.unwrap().vanilla_instruments();
         match instrument {
-            Instrument::Custom(slot) => Instrument::Custom(slot.saturating_add(offset())),
-            // Instrument::Imitate(_) => unimplemented!(),
-            inst => remap(inst),
+            Instrument::Custom(slot) => Instrument::Custom(slot),
+            inst if inst.vanilla_index().map_or(true, |i| i < fci) => inst,
+            inst => Instrument::Custom(self.slot_for(inst)),
         }
     }
 }
