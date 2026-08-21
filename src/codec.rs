@@ -34,7 +34,7 @@ pub(super) trait Codec: Clone {
 
     /// write data to a writer with context
     fn write<W: io::Write, M: Middleware + ?Sized>(
-        value: Cow<'_, Self>,
+        &self,
         writer: &mut W,
         context: Self::Context,
         middlewares: &mut M,
@@ -148,7 +148,7 @@ impl Song {
     /// writes the song to a writer.
     pub fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
         let mut middlewares = (InstrumentTranslate::new(), HeaderStats::new());
-        Codec::write(Cow::Borrowed(self), writer, (), &mut middlewares)
+        Codec::write(self, writer, (), &mut middlewares)
     }
 }
 

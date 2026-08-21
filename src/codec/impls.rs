@@ -53,26 +53,26 @@ impl Codec for Song {
     }
 
     fn write<W: io::Write, M: Middleware + ?Sized>(
-        value: Cow<'_, Self>,
+        &self,
         writer: &mut W,
         _: Self::Context,
         middlewares: &mut M,
     ) -> Result<()> {
-        let song = middlewares.encode_song(value);
+        let song = middlewares.encode_song(Cow::Borrowed(self));
         let version = song.header.version;
         let fci = version.vanilla_instruments();
         let context = (version, fci);
         let song = song.as_ref();
 
         // 头部分
-        Header::write(Cow::Borrowed(&song.header), writer, (), middlewares)?;
+        song.header.write(writer, (), middlewares)?;
 
         // 音符部分
-        Notes::write(Cow::Borrowed(&song.notes), writer, context, middlewares)?;
+        song.notes.write(writer, context, middlewares)?;
 
         // 层部分
         for layer in &song.layers {
-            Layer::write(Cow::Borrowed(layer), writer, version, middlewares)?;
+            layer.write(writer, version, middlewares)?;
         }
 
         // 自定义乐器部分
@@ -81,7 +81,7 @@ impl Codec for Song {
         let count = table.len().min(255) as u8;
         writer.write_u8(count)?;
         for instr in table.iter().take(count as usize) {
-            CustomInstrument::write(Cow::Borrowed(instr), writer, (), middlewares)?;
+            instr.write(writer, (), middlewares)?;
         }
 
         Ok(())
@@ -143,17 +143,17 @@ impl Codec for Header {
     }
 
     fn write<W: io::Write, M: Middleware + ?Sized>(
-        value: Cow<'_, Self>,
+        &self,
         writer: &mut W,
         _: Self::Context,
         middlewares: &mut M,
     ) -> Result<()> {
-        let header = middlewares.encode_header(value);
+        let header = middlewares.encode_header(Cow::Borrowed(self));
 
         // 版本
         if header.version.get() > 0 {
             writer.write_u16(0)?;
-            Version::write(Cow::Owned(header.version), writer, (), middlewares)?;
+            header.version.write(writer, (), middlewares)?;
             writer.write_u8(header.default_instruments)?;
         } else {
             writer.write_u16(header.song_length.max(1).try_into().unwrap_or(u16::MAX))?;
@@ -169,7 +169,7 @@ impl Codec for Header {
         writer.write_string(&header.song_author)?;
         writer.write_string(&header.original_author)?;
         writer.write_string(&header.description)?;
-        f32::write(Cow::Owned(header.tempo), writer, (), middlewares)?;
+        header.tempo.write(writer, (), middlewares)?;
         writer.write_bool(header.auto_save)?;
         writer.write_u8(header.auto_save_duration.try_into().unwrap_or(u8::MAX))?;
         writer.write_u8(header.time_signature)?;
@@ -224,12 +224,12 @@ impl Codec for Notes<Position, Note> {
     }
 
     fn write<W: io::Write, M: Middleware + ?Sized>(
-        value: Cow<'_, Self>,
+        &self,
         writer: &mut W,
         context: Self::Context,
         middlewares: &mut M,
     ) -> Result<()> {
-        let mut iter = value.iter().peekable();
+        let mut iter = self.iter().peekable();
         let mut prev_tick = Tick::MAX;
         let mut prev_layer = Index::MAX;
 
@@ -243,7 +243,7 @@ impl Codec for Notes<Position, Note> {
             let layer_jump = pos.into_layer().wrapping_sub(prev_layer);
             writer.write_jump(NonZeroU32::new(layer_jump))?;
 
-            Note::write(Cow::Borrowed(note), writer, context, middlewares)?;
+            note.write(writer, context, middlewares)?;
             prev_tick = pos.into_tick();
             prev_layer = pos.into_layer();
             // layer 下降沿
@@ -289,25 +289,20 @@ impl Codec for Note {
     }
 
     fn write<W: io::Write, M: Middleware + ?Sized>(
-        value: Cow<'_, Self>,
+        &self,
         writer: &mut W,
         context: Self::Context,
         middlewares: &mut M,
     ) -> Result<()> {
         let (version, first_custom_index) = context;
-        let note = middlewares.encode_note(value);
+        let note = middlewares.encode_note(Cow::Borrowed(self));
         let instrument = note.tone.instrument();
-        Instrument::write(
-            Cow::Owned(instrument),
-            writer,
-            first_custom_index,
-            middlewares,
-        )?;
+        instrument.write(writer, first_custom_index, middlewares)?;
         writer.write_u8(note.tone.key().into())?;
 
         if version.get() >= 4 {
-            Volume::write(Cow::Owned(note.velocity), writer, (), middlewares)?;
-            Panning::write(Cow::Owned(note.panning), writer, (), middlewares)?;
+            note.velocity.write(writer, (), middlewares)?;
+            note.panning.write(writer, (), middlewares)?;
             writer.write_i16(note.pitch)?;
         }
 
@@ -347,12 +342,12 @@ impl Codec for Layer {
 
     /// writes a Layer to a writer with version context
     fn write<W: io::Write, M: Middleware + ?Sized>(
-        value: Cow<'_, Self>,
+        &self,
         writer: &mut W,
         version: Self::Context,
         middlewares: &mut M,
     ) -> Result<()> {
-        let layer = middlewares.encode_layer(value);
+        let layer = middlewares.encode_layer(Cow::Borrowed(self));
 
         writer.write_string(&layer.name)?;
 
@@ -360,10 +355,10 @@ impl Codec for Layer {
             writer.write_bool(layer.lock)?;
         }
 
-        Volume::write(Cow::Owned(layer.volume), writer, (), middlewares)?;
+        layer.volume.write(writer, (), middlewares)?;
 
         if version.get() >= 2 {
-            Panning::write(Cow::Owned(layer.panning), writer, (), middlewares)?;
+            layer.panning.write(writer, (), middlewares)?;
         }
 
         Ok(())
@@ -394,12 +389,12 @@ impl Codec for CustomInstrument {
 
     /// writes an Instrument to a writer
     fn write<W: io::Write, M: Middleware + ?Sized>(
-        value: Cow<'_, Self>,
+        &self,
         writer: &mut W,
         _: Self::Context,
         middlewares: &mut M,
     ) -> Result<()> {
-        let instrument = middlewares.encode_custom_inst(value);
+        let instrument = middlewares.encode_custom_inst(Cow::Borrowed(self));
         writer.write_string(&instrument.name)?;
         writer.write_string(&instrument.file)?;
         writer.write_u8(instrument.pitch)?;
@@ -425,12 +420,12 @@ impl Codec for Version {
     }
 
     fn write<W: io::Write, M: Middleware + ?Sized>(
-        value: Cow<'_, Self>,
+        &self,
         writer: &mut W,
         _: Self::Context,
         _: &mut M,
     ) -> Result<()> {
-        Ok(writer.write_u8(value.get())?)
+        Ok(writer.write_u8(self.get())?)
     }
 }
 
@@ -454,12 +449,12 @@ impl Codec for Instrument {
     }
 
     fn write<W: io::Write, M: Middleware + ?Sized>(
-        value: Cow<'_, Self>,
+        &self,
         writer: &mut W,
         first_custom_index: Self::Context,
         middlewares: &mut M,
     ) -> Result<()> {
-        let instrument = middlewares.encode_instrument(*value);
+        let instrument = middlewares.encode_instrument(*self);
         let byte = match instrument {
             Instrument::Custom(slot) => first_custom_index.saturating_add(slot),
             // Instrument::Imitate(_) => unimplemented!(),
@@ -486,12 +481,12 @@ impl Codec for Volume {
     }
 
     fn write<W: io::Write, M: Middleware + ?Sized>(
-        value: Cow<'_, Self>,
+        &self,
         writer: &mut W,
         _: Self::Context,
         _: &mut M,
     ) -> Result<()> {
-        Ok(writer.write_u8(value.get())?)
+        Ok(writer.write_u8(self.get())?)
     }
 }
 
@@ -508,12 +503,12 @@ impl Codec for Key {
     }
 
     fn write<W: io::Write, M: Middleware + ?Sized>(
-        value: Cow<'_, Self>,
+        &self,
         writer: &mut W,
         _: Self::Context,
         _: &mut M,
     ) -> Result<()> {
-        Ok(writer.write_u8((*value).into())?)
+        Ok(writer.write_u8((*self).into())?)
     }
 }
 
@@ -532,13 +527,13 @@ impl Codec for Panning {
     }
 
     fn write<W: io::Write, M: Middleware + ?Sized>(
-        value: Cow<'_, Self>,
+        &self,
         writer: &mut W,
         _: Self::Context,
         _: &mut M,
     ) -> Result<()> {
         // Convert from internal (-100..100) to file representation (0-200)
-        Ok(writer.write_u8((value.get() as u8).wrapping_add(100))?)
+        Ok(writer.write_u8((self.get() as u8).wrapping_add(100))?)
     }
 }
 
@@ -556,12 +551,12 @@ impl Codec for f32 {
     }
 
     fn write<W: io::Write, M: Middleware + ?Sized>(
-        value: Cow<'_, Self>,
+        &self,
         writer: &mut W,
         _: Self::Context,
         _: &mut M,
     ) -> Result<()> {
         // Convert f32 to u16 by multiplying by 100.0
-        Ok(writer.write_u16((*value * 100.0) as u16)?)
+        Ok(writer.write_u16((*self * 100.0) as u16)?)
     }
 }
