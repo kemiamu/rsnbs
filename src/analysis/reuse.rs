@@ -19,9 +19,9 @@
 //!   packing), so the greedy (97%) + short augmenting (98.8%) is the natural
 //!   approximation at the hardness boundary.
 
+use crate::analysis::{Point, TpPlane, TransEqClass};
 use crate::note::Tone;
 use crate::types::Tick;
-use crate::util::{Point, TpPlane, TransEqClass};
 use itertools::Itertools;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
@@ -506,6 +506,30 @@ pub fn reuse_flow_beam(
             residual = subtract_exact(&residual, &expand(&kernel, &scatter));
             plan.push(Layer { scatter, kernel });
         }
+    }
+
+    (plan, total_reuse, residual)
+}
+
+/// Apply scatter rules in order, extracting a kernel per rule and subtracting
+/// its expansion from the working set. Returns `(plan, total_reuse, residual)`.
+pub fn manual_flow(source: &TpPlane, rules: &[Vec<Tick>]) -> (Vec<Layer>, usize, TpPlane) {
+    let mut residual = source.clone();
+    let mut plan: Vec<Layer> = Vec::new();
+    let mut total_reuse = 0;
+
+    for scatter in rules {
+        let kernel = feasible_kernel(&residual, scatter);
+        let gain = kernel.values().sum::<usize>() * (scatter.len() - 1);
+        if gain == 0 {
+            continue;
+        }
+        total_reuse += gain;
+        residual = subtract_exact(&residual, &expand(&kernel, scatter));
+        plan.push(Layer {
+            scatter: scatter.clone(),
+            kernel,
+        });
     }
 
     (plan, total_reuse, residual)

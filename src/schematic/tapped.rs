@@ -3,9 +3,9 @@
 use super::air;
 use super::{Arranged, Axis, CompactLayout, EdgeArranged, Layout, WithFloor};
 use super::{chain_block, observer, redstone_torch, redstone_wire, repeater, wire_state};
+use crate::analysis::TransEqClass;
 use crate::note::{Instrument, Key, Notes, Tone};
 use crate::types::{RedStoneTick, Tick};
-use crate::util::TransEqClass;
 use mcdata::{GenericBlockState, util::BlockPos};
 use std::num::NonZero;
 

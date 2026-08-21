@@ -4,8 +4,8 @@ mod codec;
 #[cfg(test)]
 mod tests;
 
+pub mod analysis;
 pub mod note;
-pub mod reuse;
 pub mod schematic;
 pub mod util;
 

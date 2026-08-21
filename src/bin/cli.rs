@@ -1,11 +1,11 @@
 use clap::Parser;
+use rsnbs::analysis::TpPlane;
+use rsnbs::analysis::reuse::{manual_flow, plan_to_tecs, reuse_flow};
 use rsnbs::note::{Note, Notes};
-use rsnbs::reuse::{manual_flow, plan_to_tecs, reuse_flow};
 use rsnbs::schematic::{Layout, MultiCompactLayout, MultiLinearLayout, SchematicBuilder};
 use rsnbs::schematic::{StackedLinearLayout, TappedLayout, WithFloor};
 use rsnbs::song::Song;
 use rsnbs::types::{Tick, TickAnchor};
-use rsnbs::util::TpPlane;
 use rustmatica::Litematic;
 use std::collections::BTreeMap;
 use std::num::NonZero;
