@@ -26,27 +26,27 @@ pub(super) trait Codec: Clone {
     type Context: Copy;
 
     /// parse data from a reader with context
-    fn parse<R: io::Read, M: Middleware + ?Sized>(
+    fn parse<R: io::Read, M: Transformer + ?Sized>(
         reader: &mut R,
         context: Self::Context,
-        middlewares: &mut M,
+        hooks: &mut M,
     ) -> Result<Self>;
 
     /// write data to a writer with context
-    fn write<W: io::Write, M: Middleware + ?Sized>(
+    fn write<W: io::Write, M: Transformer + ?Sized>(
         &self,
         writer: &mut W,
         context: Self::Context,
-        middlewares: &mut M,
+        hooks: &mut M,
     ) -> Result<()>;
 }
 
-// Middleware
+// Transformer
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// Per-level transform hooks; parse calls decode_*, write calls encode_*.
-pub(super) trait Middleware {
+pub(super) trait Transformer {
     fn decode_header(&mut self, header: Header) -> Header {
         header
     }
@@ -98,7 +98,7 @@ pub(super) trait Middleware {
 }
 
 /// Identity chain tail.
-impl Middleware for () {}
+impl Transformer for () {}
 
 /// Chains a hook across (A, B): .0 runs first.
 macro_rules! chain {
@@ -116,8 +116,8 @@ macro_rules! chain {
     };
 }
 
-/// Tuple combinator: chains two middlewares, .0 runs first.
-impl<A: Middleware, B: Middleware> Middleware for (A, B) {
+/// Tuple combinator: chains two hooks, .0 runs first.
+impl<A: Transformer, B: Transformer> Transformer for (A, B) {
     chain!(decode_header, Header);
     chain!(encode_header, cow CowHeader);
     chain!(decode_song, Song);
@@ -141,14 +141,14 @@ impl<A: Middleware, B: Middleware> Middleware for (A, B) {
 impl Song {
     /// parses a complete Song from a reader
     pub fn parse<R: io::Read>(reader: &mut R) -> Result<Self> {
-        let mut middlewares = (InstrumentTranslate::new(), HeaderStats::new());
-        Codec::parse(reader, (), &mut middlewares)
+        let mut hooks = (InstrumentTranslate::new(), HeaderStats::new());
+        Codec::parse(reader, (), &mut hooks)
     }
 
     /// writes the song to a writer.
     pub fn write<W: io::Write>(&self, writer: &mut W) -> Result<()> {
-        let mut middlewares = (InstrumentTranslate::new(), HeaderStats::new());
-        Codec::write(self, writer, (), &mut middlewares)
+        let mut hooks = (InstrumentTranslate::new(), HeaderStats::new());
+        Codec::write(self, writer, (), &mut hooks)
     }
 }
 
@@ -238,7 +238,7 @@ impl InstrumentTranslate {
     }
 }
 
-impl Middleware for InstrumentTranslate {
+impl Transformer for InstrumentTranslate {
     fn decode_header(&mut self, header: Header) -> Header {
         self.version = Some(header.version);
         header
@@ -301,7 +301,7 @@ impl HeaderStats {
     }
 }
 
-impl Middleware for HeaderStats {
+impl Transformer for HeaderStats {
     fn encode_song<'a>(&mut self, song: CowSong<'a>) -> CowSong<'a> {
         let last = song.notes.last_key_value();
         self.song_length = Some(last.map(|(p, _)| p.into_tick()).unwrap_or(1));

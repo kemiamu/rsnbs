@@ -1,7 +1,7 @@
 //! Concrete read/write logic: song skeleton, preset folding, per-type codecs.
 
 use super::nbs_ext::{NbsReadExt, NbsWriteExt};
-use super::{Codec, Middleware};
+use super::{Codec, Transformer};
 use crate::note::{Instrument, Key, Note, Notes, Tone};
 use crate::song::{CustomInstrument, Header, Layer, Song};
 use crate::types::{Index, LayerAnchor, Panning, Position, Result};
@@ -18,33 +18,33 @@ use std::num::NonZeroU32;
 impl Codec for Song {
     type Context = ();
 
-    fn parse<R: io::Read, M: Middleware + ?Sized>(
+    fn parse<R: io::Read, M: Transformer + ?Sized>(
         reader: &mut R,
         _: Self::Context,
-        middlewares: &mut M,
+        hooks: &mut M,
     ) -> Result<Self> {
         // 头部分
-        let header = Header::parse(reader, (), middlewares)?;
+        let header = Header::parse(reader, (), hooks)?;
         let context = (header.version, header.default_instruments);
 
         // 音符部分
-        let notes = Notes::parse(reader, context, middlewares)?;
+        let notes = Notes::parse(reader, context, hooks)?;
 
         // 层部分
         let mut layers = Vec::new();
         for _ in 0..header.song_layers {
-            layers.push(Layer::parse(reader, header.version, middlewares)?);
+            layers.push(Layer::parse(reader, header.version, hooks)?);
         }
 
         // 自定义乐器部分
         let instr_count = reader.read_u8()?;
         let mut custom_instruments = Vec::new();
         for _ in 0..instr_count {
-            custom_instruments.push(CustomInstrument::parse(reader, (), middlewares)?);
+            custom_instruments.push(CustomInstrument::parse(reader, (), hooks)?);
         }
-        let custom_instruments = middlewares.decode_custom_insts(custom_instruments);
+        let custom_instruments = hooks.decode_custom_insts(custom_instruments);
 
-        Ok(middlewares.decode_song(Song {
+        Ok(hooks.decode_song(Song {
             header,
             notes,
             layers,
@@ -52,36 +52,35 @@ impl Codec for Song {
         }))
     }
 
-    fn write<W: io::Write, M: Middleware + ?Sized>(
+    fn write<W: io::Write, M: Transformer + ?Sized>(
         &self,
         writer: &mut W,
         _: Self::Context,
-        middlewares: &mut M,
+        hooks: &mut M,
     ) -> Result<()> {
-        let song = middlewares.encode_song(Cow::Borrowed(self));
+        let song = hooks.encode_song(Cow::Borrowed(self));
         let version = song.header.version;
         let fci = version.vanilla_instruments();
         let context = (version, fci);
         let song = song.as_ref();
 
         // 头部分
-        song.header.write(writer, (), middlewares)?;
+        song.header.write(writer, (), hooks)?;
 
         // 音符部分
-        song.notes.write(writer, context, middlewares)?;
+        song.notes.write(writer, context, hooks)?;
 
         // 层部分
         for layer in &song.layers {
-            layer.write(writer, version, middlewares)?;
+            layer.write(writer, version, hooks)?;
         }
 
         // 自定义乐器部分
-        let table =
-            middlewares.encode_custom_insts(Cow::Borrowed(song.custom_instruments.as_slice()));
+        let table = hooks.encode_custom_insts(Cow::Borrowed(song.custom_instruments.as_slice()));
         let count = table.len().min(255) as u8;
         writer.write_u8(count)?;
         for instr in table.iter().take(count as usize) {
-            instr.write(writer, (), middlewares)?;
+            instr.write(writer, (), hooks)?;
         }
 
         Ok(())
@@ -91,10 +90,10 @@ impl Codec for Song {
 impl Codec for Header {
     type Context = ();
 
-    fn parse<R: io::Read, M: Middleware + ?Sized>(
+    fn parse<R: io::Read, M: Transformer + ?Sized>(
         reader: &mut R,
         _: Self::Context,
-        middlewares: &mut M,
+        hooks: &mut M,
     ) -> Result<Self> {
         let mut header = Self::default();
 
@@ -121,7 +120,7 @@ impl Codec for Header {
         header.song_author = reader.read_string()?;
         header.original_author = reader.read_string()?;
         header.description = reader.read_string()?;
-        header.tempo = f32::parse(reader, (), middlewares)?;
+        header.tempo = f32::parse(reader, (), hooks)?;
         header.auto_save = reader.read_bool()?;
         header.auto_save_duration = reader.read_u8()? as _;
         header.time_signature = reader.read_u8()?;
@@ -139,21 +138,21 @@ impl Codec for Header {
             header.loop_start = reader.read_u16()? as _;
         }
 
-        Ok(middlewares.decode_header(header))
+        Ok(hooks.decode_header(header))
     }
 
-    fn write<W: io::Write, M: Middleware + ?Sized>(
+    fn write<W: io::Write, M: Transformer + ?Sized>(
         &self,
         writer: &mut W,
         _: Self::Context,
-        middlewares: &mut M,
+        hooks: &mut M,
     ) -> Result<()> {
-        let header = middlewares.encode_header(Cow::Borrowed(self));
+        let header = hooks.encode_header(Cow::Borrowed(self));
 
         // 版本
         if header.version.get() > 0 {
             writer.write_u16(0)?;
-            header.version.write(writer, (), middlewares)?;
+            header.version.write(writer, (), hooks)?;
             writer.write_u8(header.default_instruments)?;
         } else {
             writer.write_u16(header.song_length.max(1).try_into().unwrap_or(u16::MAX))?;
@@ -169,7 +168,7 @@ impl Codec for Header {
         writer.write_string(&header.song_author)?;
         writer.write_string(&header.original_author)?;
         writer.write_string(&header.description)?;
-        header.tempo.write(writer, (), middlewares)?;
+        header.tempo.write(writer, (), hooks)?;
         writer.write_bool(header.auto_save)?;
         writer.write_u8(header.auto_save_duration.try_into().unwrap_or(u8::MAX))?;
         writer.write_u8(header.time_signature)?;
@@ -198,10 +197,10 @@ impl Codec for Header {
 impl Codec for Notes<Position, Note> {
     type Context = (Version, u8);
 
-    fn parse<R: io::Read, M: Middleware + ?Sized>(
+    fn parse<R: io::Read, M: Transformer + ?Sized>(
         reader: &mut R,
         context: Self::Context,
-        middlewares: &mut M,
+        hooks: &mut M,
     ) -> Result<Self> {
         let mut notes = BTreeMap::new();
 
@@ -215,7 +214,7 @@ impl Codec for Notes<Position, Note> {
             while let Some(layer_jump) = reader.read_jump()? {
                 layer_cursor = layer_cursor.wrapping_add(layer_jump.get());
 
-                let note = Note::parse(reader, context, middlewares)?;
+                let note = Note::parse(reader, context, hooks)?;
                 notes.insert(Position::new(tick_cursor, layer_cursor), note);
             }
         }
@@ -223,11 +222,11 @@ impl Codec for Notes<Position, Note> {
         Ok(notes.into())
     }
 
-    fn write<W: io::Write, M: Middleware + ?Sized>(
+    fn write<W: io::Write, M: Transformer + ?Sized>(
         &self,
         writer: &mut W,
         context: Self::Context,
-        middlewares: &mut M,
+        hooks: &mut M,
     ) -> Result<()> {
         let mut iter = self.iter().peekable();
         let mut prev_tick = Tick::MAX;
@@ -243,7 +242,7 @@ impl Codec for Notes<Position, Note> {
             let layer_jump = pos.into_layer().wrapping_sub(prev_layer);
             writer.write_jump(NonZeroU32::new(layer_jump))?;
 
-            note.write(writer, context, middlewares)?;
+            note.write(writer, context, hooks)?;
             prev_tick = pos.into_tick();
             prev_layer = pos.into_layer();
             // layer 下降沿
@@ -267,42 +266,42 @@ impl Codec for Notes<Position, Note> {
 impl Codec for Note {
     type Context = (Version, u8);
 
-    fn parse<R: io::Read, M: Middleware + ?Sized>(
+    fn parse<R: io::Read, M: Transformer + ?Sized>(
         reader: &mut R,
         context: Self::Context,
-        middlewares: &mut M,
+        hooks: &mut M,
     ) -> Result<Self> {
         let (version, first_custom_index) = context;
         let mut note = Self::default();
-        let instrument = Instrument::parse(reader, first_custom_index, middlewares)?;
-        let key = Key::parse(reader, (), middlewares)?;
+        let instrument = Instrument::parse(reader, first_custom_index, hooks)?;
+        let key = Key::parse(reader, (), hooks)?;
         note.tone = Tone::new(instrument, key);
 
         if version.get() >= 4 {
-            note.velocity = Volume::parse(reader, (), middlewares)?;
-            note.panning = Panning::parse(reader, (), middlewares)?;
+            note.velocity = Volume::parse(reader, (), hooks)?;
+            note.panning = Panning::parse(reader, (), hooks)?;
             note.pitch = reader.read_i16()?;
         }
 
-        let note = middlewares.decode_note(note);
+        let note = hooks.decode_note(note);
         Ok(note)
     }
 
-    fn write<W: io::Write, M: Middleware + ?Sized>(
+    fn write<W: io::Write, M: Transformer + ?Sized>(
         &self,
         writer: &mut W,
         context: Self::Context,
-        middlewares: &mut M,
+        hooks: &mut M,
     ) -> Result<()> {
         let (version, first_custom_index) = context;
-        let note = middlewares.encode_note(Cow::Borrowed(self));
+        let note = hooks.encode_note(Cow::Borrowed(self));
         let instrument = note.tone.instrument();
-        instrument.write(writer, first_custom_index, middlewares)?;
+        instrument.write(writer, first_custom_index, hooks)?;
         writer.write_u8(note.tone.key().into())?;
 
         if version.get() >= 4 {
-            note.velocity.write(writer, (), middlewares)?;
-            note.panning.write(writer, (), middlewares)?;
+            note.velocity.write(writer, (), hooks)?;
+            note.panning.write(writer, (), hooks)?;
             writer.write_i16(note.pitch)?;
         }
 
@@ -318,10 +317,10 @@ impl Codec for Layer {
     type Context = Version;
 
     /// parses a Layer from a reader with version context
-    fn parse<R: io::Read, M: Middleware + ?Sized>(
+    fn parse<R: io::Read, M: Transformer + ?Sized>(
         reader: &mut R,
         version: Self::Context,
-        middlewares: &mut M,
+        hooks: &mut M,
     ) -> Result<Self> {
         let mut layer = Self::default();
         layer.name = reader.read_string()?;
@@ -330,24 +329,24 @@ impl Codec for Layer {
             layer.lock = reader.read_bool()?;
         }
 
-        layer.volume = Volume::parse(reader, (), middlewares)?;
+        layer.volume = Volume::parse(reader, (), hooks)?;
 
         if version.get() >= 2 {
-            layer.panning = Panning::parse(reader, (), middlewares)?;
+            layer.panning = Panning::parse(reader, (), hooks)?;
         }
 
-        let layer = middlewares.decode_layer(layer);
+        let layer = hooks.decode_layer(layer);
         Ok(layer)
     }
 
     /// writes a Layer to a writer with version context
-    fn write<W: io::Write, M: Middleware + ?Sized>(
+    fn write<W: io::Write, M: Transformer + ?Sized>(
         &self,
         writer: &mut W,
         version: Self::Context,
-        middlewares: &mut M,
+        hooks: &mut M,
     ) -> Result<()> {
-        let layer = middlewares.encode_layer(Cow::Borrowed(self));
+        let layer = hooks.encode_layer(Cow::Borrowed(self));
 
         writer.write_string(&layer.name)?;
 
@@ -355,10 +354,10 @@ impl Codec for Layer {
             writer.write_bool(layer.lock)?;
         }
 
-        layer.volume.write(writer, (), middlewares)?;
+        layer.volume.write(writer, (), hooks)?;
 
         if version.get() >= 2 {
-            layer.panning.write(writer, (), middlewares)?;
+            layer.panning.write(writer, (), hooks)?;
         }
 
         Ok(())
@@ -373,28 +372,28 @@ impl Codec for CustomInstrument {
     type Context = ();
 
     /// parses an Instrument from a reader
-    fn parse<R: io::Read, M: Middleware + ?Sized>(
+    fn parse<R: io::Read, M: Transformer + ?Sized>(
         reader: &mut R,
         _: Self::Context,
-        middlewares: &mut M,
+        hooks: &mut M,
     ) -> Result<Self> {
         let mut instrument = Self::default();
         instrument.name = reader.read_string()?;
         instrument.file = reader.read_string()?;
         instrument.pitch = reader.read_u8()?;
         instrument.press_key = reader.read_bool()?;
-        let instrument = middlewares.decode_custom_inst(instrument);
+        let instrument = hooks.decode_custom_inst(instrument);
         Ok(instrument)
     }
 
     /// writes an Instrument to a writer
-    fn write<W: io::Write, M: Middleware + ?Sized>(
+    fn write<W: io::Write, M: Transformer + ?Sized>(
         &self,
         writer: &mut W,
         _: Self::Context,
-        middlewares: &mut M,
+        hooks: &mut M,
     ) -> Result<()> {
-        let instrument = middlewares.encode_custom_inst(Cow::Borrowed(self));
+        let instrument = hooks.encode_custom_inst(Cow::Borrowed(self));
         writer.write_string(&instrument.name)?;
         writer.write_string(&instrument.file)?;
         writer.write_u8(instrument.pitch)?;
@@ -410,7 +409,7 @@ impl Codec for CustomInstrument {
 impl Codec for Version {
     type Context = ();
 
-    fn parse<R: io::Read, M: Middleware + ?Sized>(
+    fn parse<R: io::Read, M: Transformer + ?Sized>(
         reader: &mut R,
         _: Self::Context,
         _: &mut M,
@@ -419,7 +418,7 @@ impl Codec for Version {
         Ok(version)
     }
 
-    fn write<W: io::Write, M: Middleware + ?Sized>(
+    fn write<W: io::Write, M: Transformer + ?Sized>(
         &self,
         writer: &mut W,
         _: Self::Context,
@@ -433,10 +432,10 @@ impl Codec for Instrument {
     /// Byte index where custom instruments start.
     type Context = u8;
 
-    fn parse<R: io::Read, M: Middleware + ?Sized>(
+    fn parse<R: io::Read, M: Transformer + ?Sized>(
         reader: &mut R,
         first_custom_index: Self::Context,
-        middlewares: &mut M,
+        hooks: &mut M,
     ) -> Result<Self> {
         debug_assert!(first_custom_index <= Instrument::vanilla_count());
         let byte = reader.read_u8()?;
@@ -444,17 +443,17 @@ impl Codec for Instrument {
             true => Instrument::NBS_INDEX[byte as usize],
             false => Instrument::Custom(byte - first_custom_index),
         };
-        let instrument = middlewares.decode_instrument(instrument);
+        let instrument = hooks.decode_instrument(instrument);
         Ok(instrument)
     }
 
-    fn write<W: io::Write, M: Middleware + ?Sized>(
+    fn write<W: io::Write, M: Transformer + ?Sized>(
         &self,
         writer: &mut W,
         first_custom_index: Self::Context,
-        middlewares: &mut M,
+        hooks: &mut M,
     ) -> Result<()> {
-        let instrument = middlewares.encode_instrument(*self);
+        let instrument = hooks.encode_instrument(*self);
         let byte = match instrument {
             Instrument::Custom(slot) => first_custom_index.saturating_add(slot),
             // Instrument::Imitate(_) => unimplemented!(),
@@ -471,7 +470,7 @@ impl Codec for Instrument {
 impl Codec for Volume {
     type Context = ();
 
-    fn parse<R: io::Read, M: Middleware + ?Sized>(
+    fn parse<R: io::Read, M: Transformer + ?Sized>(
         reader: &mut R,
         _: Self::Context,
         _: &mut M,
@@ -480,7 +479,7 @@ impl Codec for Volume {
         Ok(volume)
     }
 
-    fn write<W: io::Write, M: Middleware + ?Sized>(
+    fn write<W: io::Write, M: Transformer + ?Sized>(
         &self,
         writer: &mut W,
         _: Self::Context,
@@ -493,7 +492,7 @@ impl Codec for Volume {
 impl Codec for Key {
     type Context = ();
 
-    fn parse<R: io::Read, M: Middleware + ?Sized>(
+    fn parse<R: io::Read, M: Transformer + ?Sized>(
         reader: &mut R,
         _: Self::Context,
         _: &mut M,
@@ -502,7 +501,7 @@ impl Codec for Key {
         Ok(key)
     }
 
-    fn write<W: io::Write, M: Middleware + ?Sized>(
+    fn write<W: io::Write, M: Transformer + ?Sized>(
         &self,
         writer: &mut W,
         _: Self::Context,
@@ -515,7 +514,7 @@ impl Codec for Key {
 impl Codec for Panning {
     type Context = ();
 
-    fn parse<R: io::Read, M: Middleware + ?Sized>(
+    fn parse<R: io::Read, M: Transformer + ?Sized>(
         reader: &mut R,
         _: Self::Context,
         _: &mut M,
@@ -526,7 +525,7 @@ impl Codec for Panning {
         Ok(panning)
     }
 
-    fn write<W: io::Write, M: Middleware + ?Sized>(
+    fn write<W: io::Write, M: Transformer + ?Sized>(
         &self,
         writer: &mut W,
         _: Self::Context,
@@ -540,7 +539,7 @@ impl Codec for Panning {
 impl Codec for f32 {
     type Context = ();
 
-    fn parse<R: io::Read, M: Middleware + ?Sized>(
+    fn parse<R: io::Read, M: Transformer + ?Sized>(
         reader: &mut R,
         _: Self::Context,
         _: &mut M,
@@ -550,7 +549,7 @@ impl Codec for f32 {
         Ok(value)
     }
 
-    fn write<W: io::Write, M: Middleware + ?Sized>(
+    fn write<W: io::Write, M: Transformer + ?Sized>(
         &self,
         writer: &mut W,
         _: Self::Context,
