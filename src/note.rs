@@ -157,35 +157,16 @@ impl<A: LayerAnchor + Ord, E> Notes<A, E> {
 /// a single note with timing, instrument, and modulation data.
 #[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Note {
-    pub(super) tone: Tone,
-    pub(super) velocity: Volume,
-    pub(super) panning: Panning,
-    pub(super) pitch: i16,
+    pub tone: Tone,
+    pub velocity: Volume,
+    pub panning: Panning,
+    pub pitch: i16,
 }
 
 impl Note {
     /// creates a note from any value that can convert into one.
     pub fn new<T: Into<Self>>(value: T) -> Self {
         value.into()
-    }
-
-    /// returns the tone as a pair of instrument and key.
-    pub fn tone(&self) -> Tone {
-        self.tone
-    }
-
-    /// returns the modulation parameters of the note.
-    pub fn modulation(&self) -> Modulation {
-        Modulation {
-            velocity: self.velocity,
-            panning: self.panning,
-            pitch: self.pitch,
-        }
-    }
-
-    /// replaces the note's instrument, keeping its key and modulation.
-    pub(crate) fn set_instrument(&mut self, instrument: Instrument) {
-        self.tone.instrument = instrument;
     }
 }
 
@@ -213,21 +194,13 @@ impl From<&Tone> for Note {
 /// a tone is a pair of an instrument and a key.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Tone {
-    instrument: Instrument,
-    key: Key,
+    pub instrument: Instrument,
+    pub key: Key,
 }
 
 impl Tone {
     pub fn new(instrument: Instrument, key: Key) -> Self {
         Self { instrument, key }
-    }
-
-    pub fn instrument(&self) -> Instrument {
-        self.instrument
-    }
-
-    pub fn key(&self) -> Key {
-        self.key
     }
 
     /// whether this tone is renderable: built-in instrument with a minecraft note.
@@ -246,14 +219,6 @@ impl AsRef<Tone> for Tone {
     fn as_ref(&self) -> &Tone {
         self
     }
-}
-
-/// velocity, panning, and pitch of a note.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Modulation {
-    pub velocity: Volume,
-    pub panning: Panning,
-    pub pitch: i16,
 }
 
 // instrument

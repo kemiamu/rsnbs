@@ -15,7 +15,7 @@ fn test_readme_example() {
     let song: Song = Song::open_nbs("fixtures/source.nbs").unwrap();
     for (pos, note) in &song.notes {
         let tick: Tick = pos.into_tick();
-        let key: Key = note.tone().key();
+        let key: Key = note.tone.key;
         println!("tick: {tick}, key: {key}");
     }
 

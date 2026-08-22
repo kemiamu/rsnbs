@@ -295,9 +295,9 @@ impl Codec for Note {
     ) -> Result<()> {
         let (version, first_custom_index) = context;
         let note = hooks.encode_note(Cow::Borrowed(self));
-        let instrument = note.tone.instrument();
+        let instrument = note.tone.instrument;
         instrument.write(writer, first_custom_index, hooks)?;
-        writer.write_u8(note.tone.key().into())?;
+        writer.write_u8(note.tone.key.into())?;
 
         if version.get() >= 4 {
             note.velocity.write(writer, (), hooks)?;

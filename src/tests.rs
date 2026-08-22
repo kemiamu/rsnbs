@@ -27,11 +27,7 @@ fn test_v6_to_v5_preset_instruments() {
     let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
 
     // 注入一个 v6 独有的原生乐器（Trumpet，索引 16），v5 无法表示
-    song.notes
-        .values_mut()
-        .next()
-        .unwrap()
-        .set_instrument(Instrument::Trumpet);
+    song.notes.values_mut().next().unwrap().tone.instrument = Instrument::Trumpet;
 
     song.header.version = Version::new(5).unwrap();
     let path = std::env::temp_dir().join("rsnbs_exp_out_v5.nbs");
@@ -41,7 +37,7 @@ fn test_v6_to_v5_preset_instruments() {
     assert!(
         song.notes
             .values()
-            .any(|n| n.tone().instrument() == Instrument::Trumpet)
+            .any(|n| n.tone.instrument == Instrument::Trumpet)
     );
 
     // 回读：v5 文件、16 个原生乐器、音符数不变
@@ -52,7 +48,7 @@ fn test_v6_to_v5_preset_instruments() {
 
     // 折叠：预设条目还原为原生乐器，不入内存表
     let (_, first_note) = back.notes.iter().next().unwrap();
-    assert_eq!(first_note.tone().instrument(), Instrument::Trumpet);
+    assert_eq!(first_note.tone.instrument, Instrument::Trumpet);
     assert!(back.custom_instruments.is_empty());
 
     // roundtrip 字节稳定：再写一次应与首次写入一致
@@ -119,8 +115,7 @@ fn test_sectional_matching() {
     // 匹配+回退包装：匹配音符数不足时回退所有匹配
     let try_match = |notes: Notes, pattern: &[Tick]| -> (MatchedGroups, Notes) {
         let saved = notes.clone();
-        let (matched, unmatched) =
-            notes.group_match(pattern, song_length, |a, b| a.tone() == b.tone());
+        let (matched, unmatched) = notes.group_match(pattern, song_length, |a, b| a.tone == b.tone);
         if matched.matched_len() >= min_notes || pattern.len() == 1 {
             (matched, unmatched)
         } else {
@@ -258,7 +253,7 @@ fn analyze_tones() {
 
     let mut by_tone: BTreeMap<Tone, Vec<(Position, Note)>> = Default::default();
     for (pos, note) in song.notes {
-        by_tone.entry(note.tone()).or_default().push((pos, note));
+        by_tone.entry(note.tone).or_default().push((pos, note));
     }
     let slices: Vec<Notes> = by_tone.into_values().map(|v| Notes::from_iter(v)).collect();
 
@@ -286,7 +281,7 @@ fn test_deconvolve_m1() {
     let points: Vec<Point> = song
         .notes
         .iter()
-        .map(|(pos, note)| (pos.into_tick(), note.tone()))
+        .map(|(pos, note)| (pos.into_tick(), note.tone))
         .collect();
 
     let pairs = points
@@ -351,7 +346,7 @@ fn test_analyze_transposition_equivalence() {
     let mut notes_multiset: Vec<Point> = song
         .notes
         .into_iter()
-        .map(|(p, n)| (p.into_tick(), n.tone()))
+        .map(|(p, n)| (p.into_tick(), n.tone))
         .collect();
     notes_multiset.sort_unstable();
 
@@ -589,7 +584,7 @@ pub fn test_deconvolve_d1() {
     let points_mset: Vec<Point> = song
         .notes
         .iter()
-        .map(|(pos, note)| (pos.into_tick(), (note.tone())))
+        .map(|(pos, note)| (pos.into_tick(), note.tone))
         .collect();
 
     // 找到最大重复模式
@@ -601,7 +596,7 @@ pub fn test_deconvolve_d1() {
     let mut remaining: Vec<(Tick, Note)> = Vec::new();
 
     for (pos, note) in &song.notes {
-        let p = (pos.into_tick(), note.tone());
+        let p = (pos.into_tick(), note.tone);
         if pattern_counter.get(&p).copied().unwrap_or(0) > 0 {
             *pattern_counter.get_mut(&p).unwrap() -= 1;
             matched.push((pos.into_tick(), note.clone()));
@@ -721,7 +716,7 @@ pub fn test_deconvolve() {
     let points_mset: Vec<Point> = song
         .notes
         .iter()
-        .map(|(pos, note)| (pos.into_tick(), note.tone()))
+        .map(|(pos, note)| (pos.into_tick(), note.tone))
         .collect();
 
     // 找到最大重复模式
@@ -733,7 +728,7 @@ pub fn test_deconvolve() {
     let mut remaining: Vec<(Tick, Note)> = Vec::new();
 
     for (pos, note) in &song.notes {
-        let p = (pos.into_tick(), note.tone());
+        let p = (pos.into_tick(), note.tone);
         if pattern_counter.get(&p).copied().unwrap_or(0) > 0 {
             *pattern_counter.get_mut(&p).unwrap() -= 1;
             matched.push((pos.into_tick(), note.clone()));

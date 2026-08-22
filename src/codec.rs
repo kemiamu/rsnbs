@@ -252,14 +252,14 @@ impl InstrumentTranslate {
             .collect();
 
         for (_, note) in notes.iter_mut() {
-            let Instrument::Custom(slot) = note.tone().instrument() else {
+            let Instrument::Custom(slot) = note.tone.instrument else {
                 continue;
             };
             let instrument = folded
                 .binary_search_by_key(&slot, |&(s, _)| s)
                 .map(|index| folded[index].1)
                 .unwrap_or_else(|insert| Instrument::Custom(slot - insert as u8));
-            note.set_instrument(instrument);
+            note.tone.instrument = instrument;
         }
 
         (notes, kept)
