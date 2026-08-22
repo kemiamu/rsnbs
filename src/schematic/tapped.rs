@@ -3,7 +3,7 @@
 use super::air;
 use super::{Arranged, Axis, CompactLayout, EdgeArranged, Layout, WithFloor};
 use super::{chain_block, observer, redstone_torch, redstone_wire, repeater, wire_state};
-use crate::analysis::TransEqClass;
+use crate::analysis::BoundedTec;
 use crate::note::{Instrument, Key, Notes, Tone};
 use crate::types::{RedStoneTick, Tick};
 use mcdata::{GenericBlockState, util::BlockPos};
@@ -21,11 +21,11 @@ pub struct TappedLayout {
 }
 
 impl TappedLayout {
-    /// Build the composite layout from TEC data.
+    /// Build the composite layout from bounded TEC data.
     ///
     /// Each TEC's offsets drive the tapped delay line (control unit);
-    /// its arithmetic kernel (`tec.into_pruned()`) drives the playing unit.
-    pub fn new<I: IntoIterator<Item = TransEqClass<Tone>>>(
+    /// its bounded kernel drives the playing unit.
+    pub fn new<I: IntoIterator<Item = BoundedTec<Tone>>>(
         tecs: I,
         wrap_length: Option<NonZero<usize>>,
         full: bool,
@@ -35,20 +35,20 @@ impl TappedLayout {
 
         // kernel -> compact layout
         for (lyr, tec) in tecs.into_iter().enumerate() {
-            let (offsets, kernel) = tec.into_pruned();
-            let notes = Notes::<RedStoneTick, Vec<Tone>>::from(kernel)
+            let tec = tec.into_inner();
+            let notes = Notes::<RedStoneTick, Vec<Tone>>::from(tec.kernel)
                 .into_iter()
                 .map(|(tick, tones)| (tick + 2 * lyr as u32, tones))
                 .collect::<Notes<RedStoneTick, Vec<Tone>>>();
             let repeater_coarse = std::iter::once(0)
-                .chain(offsets.iter().map(|o| o.get()))
-                .zip(offsets.iter().map(|o| o.get()))
+                .chain(tec.scatter.iter().map(|o| o.get()))
+                .zip(tec.scatter.iter().map(|o| o.get()))
                 .map(|(prev, next)| next - prev)
                 .min()
                 .and_then(|gap| NonZero::new(gap / 2));
             let layout = CompactLayout::new(notes, repeater_coarse, wrap_length);
 
-            tap_lines.push(TapLine::new(offsets, repeater_coarse));
+            tap_lines.push(TapLine::new(tec.scatter, repeater_coarse));
             layouts.push(WithFloor::new(layout, full));
         }
 

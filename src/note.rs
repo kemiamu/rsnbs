@@ -80,7 +80,7 @@ impl<A: TimeAnchor, E> Notes<A, E> {
         tempo: f32,
         target_rate: u32,
     ) -> impl Iterator<Item = (A, E)> {
-        // tempo outside (0, 30): assume NBS tick ≡ game tick, fold by target/20
+        // tempo outside (0, 30): assume NBS tick == game tick, fold by target/20
         let scale = match (0.0..30.0).contains(&tempo) {
             true => target_rate as f32 / tempo,
             false => target_rate as f32 / 20.0,

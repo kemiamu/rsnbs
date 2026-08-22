@@ -3,18 +3,18 @@
 //! **Experimental**: the decomposition algorithm and its layout adaptation
 //! are still under development; the output may change.
 //!
-//! Scientific basis (KNOWLEDGE.md §3.30-3.36):
+//! Scientific basis (KNOWLEDGE.md 3.30-3.36):
 //!
-//! - §3.30 anchor-chain law: for AP scatter `{0,d,...,(n-1)d}` the conflict
+//! - 3.30 anchor-chain law: for AP scatter `{0,d,...,(n-1)d}` the conflict
 //!   graph decomposes into disjoint anchor chains; the greedy kernel takes
 //!   `ceil(L/n)` anchors per chain (L = chain length in len-2 anchors).
-//! - §3.31 per-chain closed form: a chain covering T ticks yields
+//! - 3.31 per-chain closed form: a chain covering T ticks yields
 //!   `f(T) = 3*floor(T/4) + [0,0,1,2][T mod 4]` reuse under deep-first order
 //!   (len 4 -> 3 -> 2); deep-first is the unique optimal order within a family.
-//! - §3.33 nested penalty: a len-2 pair nested inside a finer family's block
-//!   forfeits (k-1) fine gain — used only for family ranking.
-//! - §3.34 density arbitration: ranking key = (score, deepest len used, -d).
-//! - §3.36 optimality: cross-free (chain-structured) inputs are solved exactly
+//! - 3.33 nested penalty: a len-2 pair nested inside a finer family's block
+//!   forfeits (k-1) fine gain (used only for family ranking).
+//! - 3.34 density arbitration: ranking key = (score, deepest len used, -d).
+//! - 3.36 optimality: cross-free (chain-structured) inputs are solved exactly
 //!   by the chain decomposition + f(T); general inputs are NP-hard (3-AP
 //!   packing), so the greedy (97%) + short augmenting (98.8%) is the natural
 //!   approximation at the hardness boundary.
@@ -325,8 +325,7 @@ pub fn family_deep_first<E: Event>(
     let mut work = source.clone();
     let mut penalty = 0;
 
-    // 预算感知：len 上限受剩余层预算约束（层序律的预算边界）——
-    // 预算紧张时收缩到浅层，预算充足时才允许深层块占满预算
+    // 预算感知：len 上限受剩余层预算约束（层序律的预算边界）：预算紧张时收缩到浅层，预算充足时才允许深层块占满预算
     let len_cap = max_len.min(budget.saturating_add(1));
     for n in (2..=len_cap).rev() {
         if layers.len() >= budget {

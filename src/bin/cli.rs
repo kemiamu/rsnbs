@@ -1,6 +1,6 @@
 use clap::Parser;
-use rsnbs::analysis::TpPlane;
 use rsnbs::analysis::reuse::{manual_flow, plan_to_tecs, reuse_flow};
+use rsnbs::analysis::{BoundedTec, TpPlane};
 use rsnbs::note::{Note, Notes, Tone};
 use rsnbs::schematic::{Layout, MultiCompactLayout, MultiLinearLayout, SchematicBuilder};
 use rsnbs::schematic::{StackedLinearLayout, TappedLayout, WithFloor};
@@ -177,7 +177,11 @@ impl Decompose {
             eprintln!("  {skipped} layer(s) skipped: min gap < 8");
         }
 
-        let layout = TappedLayout::new(tecs, NonZero::new(self.wrap), self.floor);
+        let layout = TappedLayout::new(
+            tecs.into_iter().map(BoundedTec::new),
+            NonZero::new(self.wrap),
+            self.floor,
+        );
         let description = format!("Tapped from {}", self.input);
         let litematic = build_schematic(layout, Floor::None, description);
         write_output(&self.output, litematic);
@@ -230,7 +234,11 @@ impl Match {
             eprintln!("  {skipped} layer(s) skipped: min gap < 8");
         }
 
-        let layout = TappedLayout::new(tecs, NonZero::new(self.wrap), self.floor);
+        let layout = TappedLayout::new(
+            tecs.into_iter().map(BoundedTec::new),
+            NonZero::new(self.wrap),
+            self.floor,
+        );
         let description = format!("Match from {}", self.input);
         let litematic = build_schematic(layout, Floor::None, description);
         write_output(&self.output, litematic);

@@ -1,4 +1,4 @@
-//! Translation analysis of the tick–tone plane.
+//! Translation analysis of the tick-tone plane.
 //!
 //! The theoretical core of the formal reduction `M = K (+) S + R`: base
 //! types and abstractions live here, while decomposition algorithms live
@@ -95,40 +95,14 @@ impl<E: Event> DerefMut for TpPlane<E> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransEqClass<E: Event> {
     /// Translation offsets (scatter, ascending, excluding 0: zero is implied).
-    scatter: BTreeSet<NonZero<Tick>>,
+    pub scatter: BTreeSet<NonZero<Tick>>,
     /// Points (multiset) that this TEC operates on.
-    kernel: TpPlane<E>,
+    pub kernel: TpPlane<E>,
 }
 
 impl<E: Event> TransEqClass<E> {
     pub fn new(scatter: BTreeSet<NonZero<Tick>>, kernel: TpPlane<E>) -> Self {
         Self { scatter, kernel }
-    }
-
-    /// The offsets that define this translation pattern.
-    pub fn scatter(&self) -> &BTreeSet<NonZero<Tick>> {
-        &self.scatter
-    }
-
-    /// The anchor points common to all offsets.
-    pub fn kernel(&self) -> &TpPlane<E> {
-        &self.kernel
-    }
-
-    /// Consume the TEC and return `(scatter, pruned_kernel)`.
-    pub fn into_pruned(self) -> (BTreeSet<NonZero<Tick>>, TpPlane<E>) {
-        let scatter = self.scatter;
-        let mut kernel = self.kernel;
-        let indexes: Vec<Point<E>> = kernel.keys().cloned().sorted().collect();
-
-        for (point, scatter_offset) in iproduct!(indexes, scatter.iter()) {
-            let anchor_mult = kernel[&point];
-            let (tick, tone) = point;
-            let shifted = (tick + scatter_offset.get(), tone);
-            let entry = kernel.entry(shifted);
-            entry.and_modify(|mult| *mult -= anchor_mult.min(*mult));
-        }
-        (scatter, kernel)
     }
 }
 
@@ -141,9 +115,39 @@ impl<E: Event> BitAnd for TransEqClass<E> {
     type Output = Self;
 }
 
-impl<const N: usize, E: Event> From<([NonZero<Tick>; N], TpPlane<E>)> for TransEqClass<E> {
-    fn from((scatter, kernel): ([NonZero<Tick>; N], TpPlane<E>)) -> Self {
-        let scatter = BTreeSet::from(scatter);
-        Self { scatter, kernel }
+// Bounded TEC
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// A TEC whose kernel expansion stays within its points:
+/// `kernel (+) scatter <= points`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundedTec<E: Event>(TransEqClass<E>);
+
+impl<E: Event> BoundedTec<E> {
+    /// Deducts each point's covered multiplicity from its shifted copies,
+    /// keeping the kernel expansion within the TEC's points.
+    pub fn new(mut tec: TransEqClass<E>) -> Self {
+        let indexes: Vec<Point<E>> = tec.kernel.keys().cloned().sorted().collect();
+        for (point, scatter_offset) in iproduct!(indexes, tec.scatter.iter()) {
+            let anchor_mult = tec.kernel[&point];
+            let (tick, tone) = point;
+            let shifted = (tick + scatter_offset.get(), tone);
+            let entry = tec.kernel.entry(shifted);
+            entry.and_modify(|mult| *mult -= anchor_mult.min(*mult));
+        }
+        BoundedTec(tec)
+    }
+
+    /// Unwrap into the underlying (already bounded) TEC.
+    pub fn into_inner(self) -> TransEqClass<E> {
+        self.0
+    }
+}
+
+impl<E: Event> Deref for BoundedTec<E> {
+    type Target = TransEqClass<E>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
