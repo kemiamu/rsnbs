@@ -1,6 +1,7 @@
-use crate::types::{Panning, Position, Volume};
-use std::collections::BTreeMap;
+use crate::types::{Index, LayerAnchor, Panning, Position, TimeAnchor, Volume};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Display, Formatter};
+use std::num::NonZero;
 use std::ops::{Deref, DerefMut};
 
 // notes collection
@@ -55,6 +56,97 @@ impl<'a, A, E> IntoIterator for &'a Notes<A, E> {
     type IntoIter = std::collections::btree_map::Iter<'a, A, E>;
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter()
+    }
+}
+
+// notes util
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+impl<A: TimeAnchor, E> Notes<A, E> {
+    /// Rescales ticks from arbitrary tempo (tick/s) to standard game tick (20 t/s).
+    pub fn rescale_to_game_tick(self, tempo: f32) -> impl Iterator<Item = (A, E)> {
+        self.rescale_to_tick_rate(tempo, 20)
+    }
+
+    /// Rescales ticks from arbitrary tempo (tick/s) to redstone tick (10 t/s).
+    pub fn rescale_to_redstone_tick(self, tempo: f32) -> impl Iterator<Item = (A, E)> {
+        self.rescale_to_tick_rate(tempo, 10)
+    }
+
+    /// Rescales ticks from arbitrary tempo (tick/s) to the given target tick rate (t/s).
+    pub fn rescale_to_tick_rate(
+        self,
+        tempo: f32,
+        target_rate: u32,
+    ) -> impl Iterator<Item = (A, E)> {
+        // tempo outside (0, 30): assume NBS tick ≡ game tick, fold by target/20
+        let scale = match (0.0..30.0).contains(&tempo) {
+            true => target_rate as f32 / tempo,
+            false => target_rate as f32 / 20.0,
+        };
+        // approximate scale to {z, 1/z} as (num, den), keeping tick transforms integral
+        let (num, den) = match scale >= 1.0 {
+            true => (scale.round() as u32, 1),
+            false => (1, (1.0 / scale).round() as u32),
+        };
+        self.into_iter().map(move |(anchor, event)| {
+            let tick = anchor.into_tick() * num / den;
+            (anchor.with_tick(tick), event)
+        })
+    }
+}
+
+impl<A: LayerAnchor + Ord, E> Notes<A, E> {
+    /// Groups notes into contiguous blocks separated by empty layers.
+    pub fn split_by_layer_gaps(self) -> Vec<Notes<A, E>> {
+        let layers: BTreeSet<Index> = self.keys().map(|pos| pos.into_layer()).collect();
+        let block_start = |prev: &mut Option<Index>, curr: Index| {
+            let keep = prev.map_or(true, |p| p + 1 != curr);
+            *prev = Some(curr);
+            Some(keep.then_some(curr))
+        };
+        let starts: Vec<Index> = layers
+            .into_iter()
+            .scan(None, block_start)
+            .flatten()
+            .collect();
+
+        let mut groups: Vec<Notes<A, E>> = Vec::new();
+        groups.resize_with(starts.len(), Notes::default);
+        for (pos, note) in self {
+            let idx = starts.partition_point(|&s| s <= pos.into_layer()) - 1;
+            let pos = pos.with_layer(pos.into_layer() - starts[idx]);
+            groups[idx].insert(pos, note);
+        }
+        groups
+    }
+
+    /// Splits notes into groups of `size` layers each.
+    pub fn split_by_layer_count(self, size: Option<NonZero<usize>>) -> Vec<Notes<A, E>> {
+        let Some(size) = size else {
+            return vec![self];
+        };
+        let size = size.get();
+        let mut groups: BTreeMap<Index, BTreeMap<A, E>> = BTreeMap::new();
+        for (pos, note) in self {
+            let group = pos.into_layer() / size as Index;
+            let new_layer = pos.into_layer() % size as Index;
+            let entry = groups.entry(group).or_default();
+            entry.insert(pos.with_layer(new_layer), note);
+        }
+        groups.into_values().map(Notes::from).collect()
+    }
+
+    /// Stacks note groups vertically with 2 blank layers between, consuming them by value.
+    pub fn concat<I: IntoIterator<Item = Notes<A, E>>>(notes: I) -> impl Iterator<Item = (A, E)> {
+        let stacked = notes.into_iter().scan(0, |offset, n| {
+            let base = *offset;
+            let f = move |(pos, note): (A, E)| (pos.with_layer(pos.into_layer() + base), note);
+            *offset += n.keys().map(|p| p.into_layer()).max().map_or(0, |m| m + 2);
+            Some(n.into_iter().map(f))
+        });
+        stacked.flatten()
     }
 }
 
