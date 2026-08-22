@@ -25,7 +25,7 @@ impl TappedLayout {
     ///
     /// Each TEC's offsets drive the tapped delay line (control unit);
     /// its arithmetic kernel (`tec.into_pruned()`) drives the playing unit.
-    pub fn new<I: IntoIterator<Item = TransEqClass>>(
+    pub fn new<I: IntoIterator<Item = TransEqClass<Tone>>>(
         tecs: I,
         wrap_length: Option<NonZero<usize>>,
         full: bool,

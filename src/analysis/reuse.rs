@@ -19,8 +19,7 @@
 //!   packing), so the greedy (97%) + short augmenting (98.8%) is the natural
 //!   approximation at the hardness boundary.
 
-use crate::analysis::{Point, TpPlane, TransEqClass};
-use crate::note::Tone;
+use crate::analysis::{Event, Point, TpPlane, TransEqClass};
 use crate::types::Tick;
 use itertools::Itertools;
 use std::cmp::Reverse;
@@ -33,14 +32,14 @@ use std::num::NonZero;
 
 /// A single reuse layer: an offset set paired with its capacity-safe kernel.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Layer {
+pub struct Layer<E: Event> {
     /// Translation offsets (scatter, ascending, always contains 0).
     pub scatter: Vec<Tick>,
     /// Capacity-safe arithmetic kernel (anchor point -> multiplicity).
-    pub kernel: TpPlane,
+    pub kernel: TpPlane<E>,
 }
 
-impl Layer {
+impl<E: Event> Layer<E> {
     /// Reuse of this layer: `sum(K) * (|S| - 1)`.
     pub fn reuse(&self) -> usize {
         self.kernel.values().sum::<usize>() * (self.scatter.len() - 1)
@@ -52,7 +51,7 @@ impl Layer {
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// Add `count` to the multiplicity of `event` in `plane`.
-fn add_to(plane: &mut TpPlane, event: Point, count: usize) {
+fn add_to<E: Event>(plane: &mut TpPlane<E>, event: Point<E>, count: usize) {
     plane
         .entry(event)
         .and_modify(|mult| *mult += count)
@@ -69,12 +68,12 @@ fn add_count(support: &mut BTreeMap<Tick, usize>, offset: Tick, count: usize) {
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// Expand `K (+) S`: kernel translated by every offset, multiplicities summed.
-pub fn expand(kernel: &TpPlane, scatter: &[Tick]) -> TpPlane {
+pub fn expand<E: Event>(kernel: &TpPlane<E>, scatter: &[Tick]) -> TpPlane<E> {
     let mut out = TpPlane::default();
     for &offset in scatter {
-        for (&(tick, tone), &count) in kernel.iter() {
+        for (&(tick, ref tone), &count) in kernel.iter() {
             if count > 0 {
-                add_to(&mut out, (tick + offset, tone), count);
+                add_to(&mut out, (tick + offset, tone.clone()), count);
             }
         }
     }
@@ -83,7 +82,7 @@ pub fn expand(kernel: &TpPlane, scatter: &[Tick]) -> TpPlane {
 
 /// Subtract `consumed` from `source`, panicking if coverage exceeds source
 /// multiplicity (mirrors `subtract_exact`'s `ValueError`).
-pub fn subtract_exact(source: &TpPlane, consumed: &TpPlane) -> TpPlane {
+pub fn subtract_exact<E: Event>(source: &TpPlane<E>, consumed: &TpPlane<E>) -> TpPlane<E> {
     let mut out = source.clone();
     for (event, count) in consumed.iter() {
         let have = out.get(event).copied().unwrap_or(0);
@@ -91,7 +90,7 @@ pub fn subtract_exact(source: &TpPlane, consumed: &TpPlane) -> TpPlane {
             have >= *count,
             "coverage exceeds source multiplicity at {event:?}"
         );
-        out.entry(*event).and_modify(|mult| *mult -= count);
+        out.entry(event.clone()).and_modify(|mult| *mult -= count);
     }
     out.retain(|_, mult| *mult > 0);
     out
@@ -104,11 +103,11 @@ pub fn subtract_exact(source: &TpPlane, consumed: &TpPlane) -> TpPlane {
 /// Multiset match upper bound for every positive time offset.
 ///
 /// Per-tone pair enumeration: `support[right - left] += min(lc, rc)`.
-pub fn autocorrelation(source: &TpPlane) -> BTreeMap<Tick, usize> {
-    let mut by_tone: BTreeMap<Tone, BTreeMap<Tick, usize>> = BTreeMap::new();
-    for (&(tick, tone), &count) in source.iter() {
+pub fn autocorrelation<E: Event>(source: &TpPlane<E>) -> BTreeMap<Tick, usize> {
+    let mut by_tone: BTreeMap<E, BTreeMap<Tick, usize>> = BTreeMap::new();
+    for (&(tick, ref tone), &count) in source.iter() {
         if count > 0 {
-            by_tone.entry(tone).or_default().insert(tick, count);
+            by_tone.entry(tone.clone()).or_default().insert(tick, count);
         }
     }
 
@@ -135,14 +134,14 @@ pub fn autocorrelation(source: &TpPlane) -> BTreeMap<Tick, usize> {
 /// independent set): commit the minimum multiplicity of the least-conflicting
 /// anchor, deduct it, and repeat. `expand(kernel, scatter)` is always within
 /// `source` (a heuristic can miss savings but never overdraws the source).
-pub fn feasible_kernel(source: &TpPlane, scatter: &[Tick]) -> TpPlane {
+pub fn feasible_kernel<E: Event>(source: &TpPlane<E>, scatter: &[Tick]) -> TpPlane<E> {
     let offsets: Vec<Tick> = scatter.iter().copied().sorted().dedup().collect();
     assert!(offsets.contains(&0), "scatter must contain zero");
 
-    let mut by_tone: BTreeMap<Tone, BTreeMap<Tick, usize>> = BTreeMap::new();
-    for (&(tick, tone), &count) in source.iter() {
+    let mut by_tone: BTreeMap<E, BTreeMap<Tick, usize>> = BTreeMap::new();
+    for (&(tick, ref tone), &count) in source.iter() {
         if count > 0 {
-            by_tone.entry(tone).or_default().insert(tick, count);
+            by_tone.entry(tone.clone()).or_default().insert(tick, count);
         }
     }
 
@@ -154,11 +153,11 @@ pub fn feasible_kernel(source: &TpPlane, scatter: &[Tick]) -> TpPlane {
 }
 
 /// Per-tone greedy independent set over the anchor conflict graph.
-fn kernel_for_tone(
-    tone: &Tone,
+fn kernel_for_tone<E: Event>(
+    tone: &E,
     capacities: &BTreeMap<Tick, usize>,
     offsets: &[Tick],
-    kernel: &mut TpPlane,
+    kernel: &mut TpPlane<E>,
 ) {
     let mut available = capacities.clone();
 
@@ -198,7 +197,7 @@ fn kernel_for_tone(
             continue;
         }
         let ticks = &covered[&anchor];
-        commit_anchor(kernel, *tone, anchor, ticks, &mut available);
+        commit_anchor(kernel, tone.clone(), anchor, ticks, &mut available);
         active.remove(&anchor);
         for &tick in ticks {
             expire_depleted(tick, &by_tick, &available, &mut active);
@@ -236,9 +235,9 @@ fn conflicting_anchors(by_tick: &BTreeMap<Tick, BTreeSet<Tick>>, ticks: &[Tick])
 
 /// Commit the least-conflicting anchor: write its minimum multiplicity into
 /// the kernel and deduct it from the available capacities.
-fn commit_anchor(
-    kernel: &mut TpPlane,
-    tone: Tone,
+fn commit_anchor<E: Event>(
+    kernel: &mut TpPlane<E>,
+    tone: E,
     anchor: Tick,
     ticks: &[Tick],
     available: &mut BTreeMap<Tick, usize>,
@@ -286,16 +285,20 @@ fn expire_depleted(
 /// yields k when the finer family takes it instead of 1 here, so committing
 /// the pair forfeits (k-1). Used only to rank families for arbitration;
 /// committed layers keep their full kernels.
-pub fn nested_penalty(kernel: &TpPlane, d: Tick, work: &TpPlane) -> usize {
+pub fn nested_penalty<E: Event>(kernel: &TpPlane<E>, d: Tick, work: &TpPlane<E>) -> usize {
     let mut penalty = 0;
-    for (&(anchor, tone), &count) in kernel.iter() {
+    for (&(anchor, ref tone), &count) in kernel.iter() {
         for k in [2u32, 3] {
             if d % k != 0 {
                 continue;
             }
             let step = d / k;
-            let nested =
-                (1..k).all(|i| work.get(&(anchor + i * step, tone)).copied().unwrap_or(0) > 0);
+            let nested = (1..k).all(|i| {
+                work.get(&(anchor + i * step, tone.clone()))
+                    .copied()
+                    .unwrap_or(0)
+                    > 0
+            });
             if nested {
                 penalty += (k as usize - 1) * count;
                 break;
@@ -311,12 +314,12 @@ pub fn nested_penalty(kernel: &TpPlane, d: Tick, work: &TpPlane) -> usize {
 /// 4, 3, 2 and each entry is a [`Layer`]. The penalty estimates forfeited
 /// fine-block gain on the family's len-2 pairs and is used only for family
 /// arbitration.
-pub fn family_deep_first(
-    source: &TpPlane,
+pub fn family_deep_first<E: Event>(
+    source: &TpPlane<E>,
     d: Tick,
     max_len: usize,
     budget: usize,
-) -> (usize, Vec<Layer>, usize) {
+) -> (usize, Vec<Layer<E>>, usize) {
     let mut total = 0;
     let mut layers = Vec::new();
     let mut work = source.clone();
@@ -355,13 +358,13 @@ pub fn family_deep_first(
 /// Returns `(plan, total_reuse, residual)`. Each round scores every surviving
 /// AP family with its complete deep-first flow, then commits the winner
 /// (`score = total - nested_penalty`, deepest len used, smallest d).
-pub fn reuse_flow(
-    source: &TpPlane,
+pub fn reuse_flow<E: Event>(
+    source: &TpPlane<E>,
     max_len: usize,
     max_layers: usize,
-) -> (Vec<Layer>, usize, TpPlane) {
+) -> (Vec<Layer<E>>, usize, TpPlane<E>) {
     let mut residual = source.clone();
-    let mut plan: Vec<Layer> = Vec::new();
+    let mut plan: Vec<Layer<E>> = Vec::new();
     let mut total_reuse = 0;
 
     while plan.len() < max_layers {
@@ -380,7 +383,7 @@ pub fn reuse_flow(
             break;
         }
 
-        let mut best: Option<((isize, usize, Reverse<Tick>), Vec<Layer>)> = None;
+        let mut best: Option<((isize, usize, Reverse<Tick>), Vec<Layer<E>>)> = None;
         for &d in &candidates {
             let budget = max_layers - plan.len();
             let (total, layers, penalty) = family_deep_first(&residual, d, max_len, budget);
@@ -420,21 +423,21 @@ pub fn reuse_flow(
 /// Unlike the family-complete commit of [`reuse_flow`], layers from different
 /// families compete freely at every step, so cross-family combinations emerge
 /// naturally (e.g. a deep AP block from one family plus a pair from another).
-pub fn reuse_flow_beam(
-    source: &TpPlane,
+pub fn reuse_flow_beam<E: Event>(
+    source: &TpPlane<E>,
     max_len: usize,
     max_layers: usize,
     beam: usize,
-) -> (Vec<Layer>, usize, TpPlane) {
+) -> (Vec<Layer<E>>, usize, TpPlane<E>) {
     #[derive(Clone)]
-    struct Path {
+    struct Path<E: Event> {
         layers: Vec<(Vec<Tick>, usize)>,
-        work: TpPlane,
+        work: TpPlane<E>,
         acc: usize,
     }
 
     let mut residual = source.clone();
-    let mut plan: Vec<Layer> = Vec::new();
+    let mut plan: Vec<Layer<E>> = Vec::new();
     let mut total_reuse = 0;
 
     while plan.len() < max_layers {
@@ -453,7 +456,7 @@ pub fn reuse_flow_beam(
             acc: 0,
         }];
         for _ in 0..budget {
-            let mut next: Vec<Path> = Vec::new();
+            let mut next: Vec<Path<E>> = Vec::new();
             for path in &paths {
                 // Enumerate candidate layers on this path's residual:
                 // family-deep-first within each d, competing across families.
@@ -513,9 +516,12 @@ pub fn reuse_flow_beam(
 
 /// Apply scatter rules in order, extracting a kernel per rule and subtracting
 /// its expansion from the working set. Returns `(plan, total_reuse, residual)`.
-pub fn manual_flow(source: &TpPlane, rules: &[Vec<Tick>]) -> (Vec<Layer>, usize, TpPlane) {
+pub fn manual_flow<E: Event>(
+    source: &TpPlane<E>,
+    rules: &[Vec<Tick>],
+) -> (Vec<Layer<E>>, usize, TpPlane<E>) {
     let mut residual = source.clone();
-    let mut plan: Vec<Layer> = Vec::new();
+    let mut plan: Vec<Layer<E>> = Vec::new();
     let mut total_reuse = 0;
 
     for scatter in rules {
@@ -547,7 +553,10 @@ pub fn manual_flow(source: &TpPlane, rules: &[Vec<Tick>]) -> (Vec<Layer>, usize,
 ///
 /// Returns `(tecs, skipped_layers)` where the residual is appended as a
 /// no-offset TEC when non-empty.
-pub fn plan_to_tecs(plan: Vec<Layer>, mut residual: TpPlane) -> (Vec<TransEqClass>, usize) {
+pub fn plan_to_tecs<E: Event>(
+    plan: Vec<Layer<E>>,
+    mut residual: TpPlane<E>,
+) -> (Vec<TransEqClass<E>>, usize) {
     let mut tecs = Vec::new();
     let mut skipped = 0;
     for layer in plan {
@@ -555,7 +564,7 @@ pub fn plan_to_tecs(plan: Vec<Layer>, mut residual: TpPlane) -> (Vec<TransEqClas
         if min_gap < Some(8) {
             let expansion = expand(&layer.kernel, &layer.scatter);
             for (event, count) in expansion.iter() {
-                add_to(&mut residual, *event, *count);
+                add_to(&mut residual, event.clone(), *count);
             }
             skipped += 1;
             continue;
@@ -587,7 +596,7 @@ mod tests {
         Tone::new(Instrument::Harp, Key::FS3)
     }
 
-    fn chain(n: usize, d: Tick, start: Tick) -> TpPlane {
+    fn chain(n: usize, d: Tick, start: Tick) -> TpPlane<Tone> {
         TpPlane::from_iter((0..n).map(|i| (start + (i as Tick) * d, tone())))
     }
 
@@ -597,12 +606,12 @@ mod tests {
     }
 
     /// Composition check: `expand(plan) + residual == source`.
-    fn verify_composition(source: &TpPlane, plan: &[Layer], residual: &TpPlane) {
+    fn verify_composition(source: &TpPlane<Tone>, plan: &[Layer<Tone>], residual: &TpPlane<Tone>) {
         let mut total = residual.clone();
         for layer in plan {
             let expanded = expand(&layer.kernel, &layer.scatter);
             for (event, count) in expanded.iter() {
-                add_to(&mut total, *event, *count);
+                add_to(&mut total, event.clone(), *count);
             }
         }
         assert_eq!(&total, source);
@@ -630,7 +639,7 @@ mod tests {
     #[test]
     fn non_ap_motif_deep_wins() {
         let t = tone();
-        let m = TpPlane::from_iter([
+        let m: TpPlane<Tone> = TpPlane::from_iter([
             (0u32, t),
             (100u32, t),
             (1000u32, t),
@@ -654,7 +663,8 @@ mod tests {
     #[test]
     fn isolated_chains_stay_single_offset() {
         let t = tone();
-        let m = TpPlane::from_iter([(0u32, t), (128u32, t), (4000u32, t), (4128u32, t)]);
+        let m: TpPlane<Tone> =
+            TpPlane::from_iter([(0u32, t), (128u32, t), (4000u32, t), (4128u32, t)]);
         let (_, total, _) = reuse_flow(&m, 4, 4);
         assert_eq!(total, 2); // two isolated pairs, no deep layer possible
     }
@@ -674,7 +684,7 @@ mod tests {
         ];
         for (ticks, expected) in cases {
             let t = tone();
-            let m = TpPlane::from_iter(ticks.iter().map(|&x| (x, t)));
+            let m: TpPlane<Tone> = TpPlane::from_iter(ticks.iter().map(|&x| (x, t)));
             let (_, total, _) = reuse_flow(&m, 4, 1000);
             assert_eq!(total, *expected, "ticks={ticks:?}");
         }
