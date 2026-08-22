@@ -1,5 +1,5 @@
 use crate::note::{Note, Notes};
-use crate::types::{Index, LayerAnchor, Position, Tick, TickAnchor};
+use crate::types::{Index, LayerAnchor, Position, Tick, TimeAnchor};
 use itertools::Itertools;
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZero;
@@ -8,7 +8,7 @@ use std::num::NonZero;
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-impl<A: TickAnchor, E> Notes<A, E> {
+impl<A: TimeAnchor, E> Notes<A, E> {
     /// Rescales ticks from arbitrary tempo (tick/s) to standard game tick (20 t/s).
     pub fn rescale_to_game_tick(self, tempo: f32) -> impl Iterator<Item = (A, E)> {
         self.rescale_to_tick_rate(tempo, 20)

@@ -5,7 +5,7 @@ use super::{Codec, Transformer};
 use crate::note::{Instrument, Key, Note, Notes, Tone};
 use crate::song::{CustomInstrument, Header, Layer, Song};
 use crate::types::{Index, LayerAnchor, Panning, Position, Result};
-use crate::types::{Tick, TickAnchor, Version, Volume};
+use crate::types::{Tick, TimeAnchor, Version, Volume};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::io;

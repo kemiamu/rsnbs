@@ -15,7 +15,7 @@ pub mod util;
 
 pub mod song {
     use crate::note::{Note, Notes};
-    use crate::types::{Index, Panning, Position, Result, Tick, TickAnchor, Version, Volume};
+    use crate::types::{Index, Panning, Position, Result, Tick, TimeAnchor, Version, Volume};
 
     /// represents a complete nbs song with header, notes, layers, and instruments.
     #[derive(Debug, Default, Clone, PartialEq, PartialOrd)]
@@ -220,12 +220,12 @@ pub mod types {
     // ++++++++++++============++++++++++++============++++++++++++============
 
     /// Time-axis anchor: reads and rebuilds its tick coordinate.
-    pub trait TickAnchor: Sized + Copy {
+    pub trait TimeAnchor: Sized + Copy {
         fn into_tick(self) -> Tick;
         fn with_tick(self, tick: Tick) -> Self;
     }
 
-    impl TickAnchor for Position {
+    impl TimeAnchor for Position {
         fn into_tick(self) -> Tick {
             self.tick
         }
@@ -234,7 +234,7 @@ pub mod types {
         }
     }
 
-    impl TickAnchor for Tick {
+    impl TimeAnchor for Tick {
         fn into_tick(self) -> Tick {
             self
         }

@@ -11,48 +11,48 @@ use std::ops::{Deref, DerefMut};
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct Notes<Anchor = Position, Event = Note>(BTreeMap<Anchor, Event>);
 
-impl<Anchor, Event> Default for Notes<Anchor, Event> {
+impl<A, E> Default for Notes<A, E> {
     fn default() -> Self {
         Notes(Default::default())
     }
 }
 
-impl<Anchor, Event> From<BTreeMap<Anchor, Event>> for Notes<Anchor, Event> {
-    fn from(map: BTreeMap<Anchor, Event>) -> Self {
+impl<A, E> From<BTreeMap<A, E>> for Notes<A, E> {
+    fn from(map: BTreeMap<A, E>) -> Self {
         Notes(map)
     }
 }
 
-impl<Anchor: Ord, Event> FromIterator<(Anchor, Event)> for Notes<Anchor, Event> {
-    fn from_iter<I: IntoIterator<Item = (Anchor, Event)>>(iter: I) -> Self {
+impl<A: Ord, E> FromIterator<(A, E)> for Notes<A, E> {
+    fn from_iter<I: IntoIterator<Item = (A, E)>>(iter: I) -> Self {
         Notes(BTreeMap::from_iter(iter))
     }
 }
 
-impl<Anchor, Event> Deref for Notes<Anchor, Event> {
-    type Target = BTreeMap<Anchor, Event>;
+impl<A, E> Deref for Notes<A, E> {
+    type Target = BTreeMap<A, E>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl<Anchor, Event> DerefMut for Notes<Anchor, Event> {
+impl<A, E> DerefMut for Notes<A, E> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
-impl<Anchor, Event> IntoIterator for Notes<Anchor, Event> {
-    type Item = (Anchor, Event);
-    type IntoIter = std::collections::btree_map::IntoIter<Anchor, Event>;
+impl<A, E> IntoIterator for Notes<A, E> {
+    type Item = (A, E);
+    type IntoIter = std::collections::btree_map::IntoIter<A, E>;
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
 }
 
-impl<'a, Anchor, Event> IntoIterator for &'a Notes<Anchor, Event> {
-    type Item = (&'a Anchor, &'a Event);
-    type IntoIter = std::collections::btree_map::Iter<'a, Anchor, Event>;
+impl<'a, A, E> IntoIterator for &'a Notes<A, E> {
+    type Item = (&'a A, &'a E);
+    type IntoIter = std::collections::btree_map::Iter<'a, A, E>;
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter()
     }

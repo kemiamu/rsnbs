@@ -5,7 +5,7 @@
 //! in the [`reuse`] submodule.
 
 use crate::note::{Notes, Tone};
-use crate::types::{Tick, TickAnchor};
+use crate::types::{Tick, TimeAnchor};
 use counter::Counter;
 use itertools::{Itertools, iproduct};
 use std::collections::BTreeSet;
@@ -36,7 +36,7 @@ impl TpPlane {
     }
 }
 
-impl<K: TickAnchor, V: Into<Tone>> FromIterator<(K, V)> for TpPlane {
+impl<K: TimeAnchor, V: Into<Tone>> FromIterator<(K, V)> for TpPlane {
     fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
         let inner = iter
             .into_iter()

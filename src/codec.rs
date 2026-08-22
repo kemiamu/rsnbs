@@ -2,7 +2,7 @@
 
 use crate::note::{Instrument, Note, Notes};
 use crate::song::{CustomInstrument, Header, Layer, Song};
-use crate::types::{Index, Position, Result, Tick, TickAnchor, Version};
+use crate::types::{Index, Position, Result, Tick, TimeAnchor, Version};
 use std::borrow::Cow;
 use std::io;
 

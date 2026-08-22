@@ -5,7 +5,7 @@ use rsnbs::note::{Note, Notes};
 use rsnbs::schematic::{Layout, MultiCompactLayout, MultiLinearLayout, SchematicBuilder};
 use rsnbs::schematic::{StackedLinearLayout, TappedLayout, WithFloor};
 use rsnbs::song::Song;
-use rsnbs::types::{Tick, TickAnchor};
+use rsnbs::types::{Tick, TimeAnchor};
 use rustmatica::Litematic;
 use std::collections::BTreeMap;
 use std::num::NonZero;
