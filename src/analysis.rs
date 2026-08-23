@@ -198,38 +198,32 @@ impl<E: Event> BoundedTec<E> {
     ///
     /// Precision is lower than conflict-based allocation: committing in
     /// ascending order lets early deductions shape later slots. It performs
-    /// well on hot paths.
+    /// well on hot paths. Assumes a linear time axis: offsets never shift
+    /// backward, so the frontier advances monotonically. Does not apply to
+    /// cyclic spaces where the axis wraps around.
     pub fn extract(source: &TePlane<E>, scatter: BTreeSet<NonZero<Tick>>) -> Self {
-        let offsets: Vec<Tick> = std::iter::once(0)
-            .chain(scatter.iter().map(|o| o.get()))
+        let offsets: Vec<Tick> = scatter.iter().map(|o| o.get()).collect();
+        let mut work: BTreeMap<(Tick, &E), usize> = source
+            .iter()
+            .map(|(&(tick, ref event), &count)| ((tick, event), count))
             .collect();
 
-        let mut by_event: BTreeMap<E, BTreeMap<Tick, usize>> = BTreeMap::new();
-        for (&(tick, ref event), &count) in source.iter() {
-            let event = by_event.entry(event.clone());
-            event.or_default().insert(tick, count);
-        }
-
         let mut kernel = TePlane::default();
-        let slots = by_event.iter().flat_map(|(event, capacities)| {
-            let slots = capacities.keys().copied();
-            slots.map(move |tick| (tick, event.clone()))
-        });
-        for (tick, event) in slots.collect::<Vec<Point<E>>>() {
-            let capacities = by_event.get_mut(&event).unwrap();
-            let base = offsets
-                .iter()
-                .map(|&offset| capacities.get(&(tick + offset)).copied().unwrap_or(0))
-                .min()
-                .unwrap_or(0);
+        while let Some((point, capacity)) = work.pop_first() {
+            let (tick, event) = point;
+            let slots = offsets.iter().map(|&offset| {
+                let cap = work.get(&(tick + offset, event));
+                cap.copied().unwrap_or(0)
+            });
+            let base = slots.fold(capacity, usize::min);
             if base == 0 {
                 continue;
             }
             for &offset in &offsets {
-                *capacities.get_mut(&(tick + offset)).unwrap() -= base;
+                *work.get_mut(&(tick + offset, event)).unwrap() -= base;
             }
-            let point = kernel.entry((tick, event));
-            point.and_modify(|mult| *mult += base).or_insert(base);
+            let anchor = kernel.entry((tick, event.clone()));
+            anchor.and_modify(|mult| *mult += base).or_insert(base);
         }
 
         Self(TransEqClass { scatter, kernel })
