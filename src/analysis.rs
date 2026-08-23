@@ -1,4 +1,4 @@
-//! Translation analysis of the tick-tone plane.
+//! Translation analysis of the time/event plane.
 //!
 //! The theoretical core of the formal reduction `M = K (+) S + R`: base
 //! types and abstractions live here, while decomposition algorithms live
@@ -29,42 +29,50 @@ pub mod reuse;
 pub trait Event: Hash + Eq + Ord + Clone + Debug {}
 impl<T: Hash + Eq + Ord + Clone + Debug> Event for T {}
 
-// TpPlane
+// TePlane
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// A point in the TP (tick-tone) plane.
+/// A point in the TE (time/event) plane.
 pub type Point<E> = (Tick, E);
 
-/// TP (tick-tone) plane multiset.
+/// TE (time/event) plane multiset.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TpPlane<E: Event>(Counter<Point<E>>);
+pub struct TePlane<E: Event>(Counter<Point<E>>);
 
-impl<E: Event> Default for TpPlane<E> {
+impl<E: Event> Default for TePlane<E> {
     fn default() -> Self {
-        TpPlane(Counter::new())
+        TePlane(Counter::new())
     }
 }
 
-impl<E: Event> TpPlane<E> {
+impl<E: Event> TePlane<E> {
     /// Expand into an iterator of individual `(Tick, Event)` points.
     pub fn into_points(self) -> impl Iterator<Item = Point<E>> {
-        let TpPlane(inner) = self;
+        let TePlane(inner) = self;
         inner
             .into_iter()
             .flat_map(|(point, count)| repeat(point).take(count))
     }
+
+    /// Shift every point by `offset`, expanding multiplicity.
+    pub fn translated(&self, offset: Tick) -> impl Iterator<Item = Point<E>> {
+        self.iter().flat_map(move |(&(tick, ref tone), &count)| {
+            repeat((tick + offset, tone.clone())).take(count)
+        })
+    }
 }
 
-impl<K: TimeAnchor, V: Into<E>, E: Event> FromIterator<(K, V)> for TpPlane<E> {
-    fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
-        let inner = iter.into_iter().map(|(k, v)| (k.into_tick(), v.into()));
+/// Collects `TE(time, event)` points into a plane.
+impl<T: TimeAnchor, E: Into<U>, U: Event> FromIterator<(T, E)> for TePlane<U> {
+    fn from_iter<I: IntoIterator<Item = (T, E)>>(iter: I) -> Self {
+        let inner = iter.into_iter().map(|(t, e)| (t.into_tick(), e.into()));
         Self(inner.collect())
     }
 }
 
-impl<E: Event> From<TpPlane<E>> for Notes<Tick, Vec<E>> {
-    fn from(plane: TpPlane<E>) -> Self {
+impl<E: Event> From<TePlane<E>> for Notes<Tick, Vec<E>> {
+    fn from(plane: TePlane<E>) -> Self {
         let by_tick = plane.into_points().into_group_map();
         let notes = by_tick.into_iter().map(|(tick, mut tones)| {
             tones.sort_unstable();
@@ -74,14 +82,14 @@ impl<E: Event> From<TpPlane<E>> for Notes<Tick, Vec<E>> {
     }
 }
 
-impl<E: Event> Deref for TpPlane<E> {
+impl<E: Event> Deref for TePlane<E> {
     type Target = Counter<Point<E>>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl<E: Event> DerefMut for TpPlane<E> {
+impl<E: Event> DerefMut for TePlane<E> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
@@ -97,19 +105,42 @@ pub struct TransEqClass<E: Event> {
     /// Translation offsets (scatter, ascending, excluding 0: zero is implied).
     pub scatter: BTreeSet<NonZero<Tick>>,
     /// Points (multiset) that this TEC operates on.
-    pub kernel: TpPlane<E>,
+    pub kernel: TePlane<E>,
 }
 
 impl<E: Event> TransEqClass<E> {
-    pub fn new(scatter: BTreeSet<NonZero<Tick>>, kernel: TpPlane<E>) -> Self {
+    pub fn new(scatter: BTreeSet<NonZero<Tick>>, kernel: TePlane<E>) -> Self {
         Self { scatter, kernel }
+    }
+
+    /// Reuse gain: `sum(kernel) * scatter.len()`. The scatter excludes the
+    /// implied zero offset, so its length is `|S| - 1`.
+    pub fn reuse(&self) -> usize {
+        self.kernel.values().sum::<usize>() * self.scatter.len()
+    }
+
+    /// Expand `kernel (+) scatter` into a plane, including the implied zero offset.
+    pub fn expand(&self) -> TePlane<E> {
+        std::iter::once(0)
+            .chain(self.scatter.iter().map(|o| o.get()))
+            .flat_map(|offset| self.kernel.translated(offset))
+            .collect()
+    }
+
+    /// Minimum gap between adjacent offsets, including the implied zero.
+    pub fn min_gap(&self) -> Option<Tick> {
+        std::iter::once(0)
+            .chain(self.scatter.iter().map(|o| o.get()))
+            .array_windows::<2>()
+            .map(|[a, b]| b - a)
+            .min()
     }
 }
 
 impl<E: Event> BitAnd for TransEqClass<E> {
     fn bitand(self, rhs: Self) -> Self {
         let scatter = &self.scatter | &rhs.scatter;
-        let kernel = TpPlane(self.kernel.0 & rhs.kernel.0);
+        let kernel = TePlane(self.kernel.0 & rhs.kernel.0);
         Self { scatter, kernel }
     }
     type Output = Self;

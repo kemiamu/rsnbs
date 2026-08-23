@@ -36,16 +36,11 @@ impl TappedLayout {
         // kernel -> compact layout
         for (lyr, tec) in tecs.into_iter().enumerate() {
             let tec = tec.into_inner();
+            let repeater_coarse = tec.min_gap().and_then(|gap| NonZero::new(gap / 2));
             let notes = Notes::<RedStoneTick, Vec<Tone>>::from(tec.kernel)
                 .into_iter()
                 .map(|(tick, tones)| (tick + 2 * lyr as u32, tones))
                 .collect::<Notes<RedStoneTick, Vec<Tone>>>();
-            let repeater_coarse = std::iter::once(0)
-                .chain(tec.scatter.iter().map(|o| o.get()))
-                .zip(tec.scatter.iter().map(|o| o.get()))
-                .map(|(prev, next)| next - prev)
-                .min()
-                .and_then(|gap| NonZero::new(gap / 2));
             let layout = CompactLayout::new(notes, repeater_coarse, wrap_length);
 
             tap_lines.push(TapLine::new(tec.scatter, repeater_coarse));

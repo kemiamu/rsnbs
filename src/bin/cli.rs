@@ -1,6 +1,6 @@
 use clap::Parser;
 use rsnbs::analysis::reuse::{manual_flow, plan_to_tecs, reuse_flow};
-use rsnbs::analysis::{BoundedTec, TpPlane};
+use rsnbs::analysis::{BoundedTec, TePlane};
 use rsnbs::note::{Note, Notes, Tone};
 use rsnbs::schematic::{Layout, MultiCompactLayout, MultiLinearLayout, SchematicBuilder};
 use rsnbs::schematic::{StackedLinearLayout, TappedLayout, WithFloor};
@@ -157,8 +157,8 @@ impl Decompose {
     fn run(self) {
         let song = open_song(&self.input);
         // 统一 tempo 到红石刻 (10tps)
-        let all_plane: TpPlane<Tone> =
-            TpPlane::from_iter(song.notes.rescale_to_redstone_tick(song.header.tempo));
+        let all_plane: TePlane<Tone> =
+            TePlane::from_iter(song.notes.rescale_to_redstone_tick(song.header.tempo));
 
         // 层数预算 = 布局高度的物理替身：分解在预算耗尽时停止；
         // 0 = 无预算，持续到自然极限（残差无任何同音色配对），层数可能远超布局可行范围
@@ -214,8 +214,8 @@ struct Match {
 impl Match {
     fn run(self) {
         let song = open_song(&self.input);
-        let all_plane: TpPlane<Tone> =
-            TpPlane::from_iter(song.notes.rescale_to_redstone_tick(song.header.tempo));
+        let all_plane: TePlane<Tone> =
+            TePlane::from_iter(song.notes.rescale_to_redstone_tick(song.header.tempo));
 
         let rules = self.rules.into_iter().map(|Rule(mut scatter)| {
             scatter.push(0);

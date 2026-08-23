@@ -19,39 +19,18 @@
 //!   packing), so the greedy (97%) + short augmenting (98.8%) is the natural
 //!   approximation at the hardness boundary.
 
-use crate::analysis::{Event, Point, TpPlane, TransEqClass};
+use crate::analysis::{Event, Point, TePlane, TransEqClass};
 use crate::types::Tick;
-use itertools::Itertools;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZero;
-
-// Layer
-//
-// ++++++++++++============++++++++++++============++++++++++++============
-
-/// A single reuse layer: an offset set paired with its capacity-safe kernel.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Layer<E: Event> {
-    /// Translation offsets (scatter, ascending, always contains 0).
-    pub scatter: Vec<Tick>,
-    /// Capacity-safe arithmetic kernel (anchor point -> multiplicity).
-    pub kernel: TpPlane<E>,
-}
-
-impl<E: Event> Layer<E> {
-    /// Reuse of this layer: `sum(K) * (|S| - 1)`.
-    pub fn reuse(&self) -> usize {
-        self.kernel.values().sum::<usize>() * (self.scatter.len() - 1)
-    }
-}
 
 // Multiset helpers
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// Add `count` to the multiplicity of `event` in `plane`.
-fn add_to<E: Event>(plane: &mut TpPlane<E>, event: Point<E>, count: usize) {
+fn add_to<E: Event>(plane: &mut TePlane<E>, event: Point<E>, count: usize) {
     plane
         .entry(event)
         .and_modify(|mult| *mult += count)
@@ -63,26 +42,13 @@ fn add_count(support: &mut BTreeMap<Tick, usize>, offset: Tick, count: usize) {
     *support.entry(offset).or_default() += count;
 }
 
-// Expansion
+// Subtraction
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// Expand `K (+) S`: kernel translated by every offset, multiplicities summed.
-pub fn expand<E: Event>(kernel: &TpPlane<E>, scatter: &[Tick]) -> TpPlane<E> {
-    let mut out = TpPlane::default();
-    for &offset in scatter {
-        for (&(tick, ref tone), &count) in kernel.iter() {
-            if count > 0 {
-                add_to(&mut out, (tick + offset, tone.clone()), count);
-            }
-        }
-    }
-    out
-}
-
 /// Subtract `consumed` from `source`, panicking if coverage exceeds source
 /// multiplicity (mirrors `subtract_exact`'s `ValueError`).
-pub fn subtract_exact<E: Event>(source: &TpPlane<E>, consumed: &TpPlane<E>) -> TpPlane<E> {
+pub fn subtract_exact<E: Event>(source: &TePlane<E>, consumed: &TePlane<E>) -> TePlane<E> {
     let mut out = source.clone();
     for (event, count) in consumed.iter() {
         let have = out.get(event).copied().unwrap_or(0);
@@ -103,7 +69,7 @@ pub fn subtract_exact<E: Event>(source: &TpPlane<E>, consumed: &TpPlane<E>) -> T
 /// Multiset match upper bound for every positive time offset.
 ///
 /// Per-tone pair enumeration: `support[right - left] += min(lc, rc)`.
-pub fn autocorrelation<E: Event>(source: &TpPlane<E>) -> BTreeMap<Tick, usize> {
+pub fn autocorrelation<E: Event>(source: &TePlane<E>) -> BTreeMap<Tick, usize> {
     let mut by_tone: BTreeMap<E, BTreeMap<Tick, usize>> = BTreeMap::new();
     for (&(tick, ref tone), &count) in source.iter() {
         if count > 0 {
@@ -132,11 +98,15 @@ pub fn autocorrelation<E: Event>(source: &TpPlane<E>) -> BTreeMap<Tick, usize> {
 ///
 /// Per-tone greedy least-conflict anchor selection (conflict graph
 /// independent set): commit the minimum multiplicity of the least-conflicting
-/// anchor, deduct it, and repeat. `expand(kernel, scatter)` is always within
+/// anchor, deduct it, and repeat. `kernel (+) scatter` is always within
 /// `source` (a heuristic can miss savings but never overdraws the source).
-pub fn feasible_kernel<E: Event>(source: &TpPlane<E>, scatter: &[Tick]) -> TpPlane<E> {
-    let offsets: Vec<Tick> = scatter.iter().copied().sorted().dedup().collect();
-    assert!(offsets.contains(&0), "scatter must contain zero");
+pub fn feasible_kernel<E: Event>(
+    source: &TePlane<E>,
+    scatter: &BTreeSet<NonZero<Tick>>,
+) -> TePlane<E> {
+    let offsets: Vec<Tick> = std::iter::once(0)
+        .chain(scatter.iter().map(|o| o.get()))
+        .collect();
 
     let mut by_tone: BTreeMap<E, BTreeMap<Tick, usize>> = BTreeMap::new();
     for (&(tick, ref tone), &count) in source.iter() {
@@ -145,7 +115,7 @@ pub fn feasible_kernel<E: Event>(source: &TpPlane<E>, scatter: &[Tick]) -> TpPla
         }
     }
 
-    let mut kernel = TpPlane::default();
+    let mut kernel = TePlane::default();
     for (tone, capacities) in &by_tone {
         kernel_for_tone(tone, capacities, &offsets, &mut kernel);
     }
@@ -157,7 +127,7 @@ fn kernel_for_tone<E: Event>(
     tone: &E,
     capacities: &BTreeMap<Tick, usize>,
     offsets: &[Tick],
-    kernel: &mut TpPlane<E>,
+    kernel: &mut TePlane<E>,
 ) {
     let mut available = capacities.clone();
 
@@ -236,7 +206,7 @@ fn conflicting_anchors(by_tick: &BTreeMap<Tick, BTreeSet<Tick>>, ticks: &[Tick])
 /// Commit the least-conflicting anchor: write its minimum multiplicity into
 /// the kernel and deduct it from the available capacities.
 fn commit_anchor<E: Event>(
-    kernel: &mut TpPlane<E>,
+    kernel: &mut TePlane<E>,
     tone: E,
     anchor: Tick,
     ticks: &[Tick],
@@ -285,7 +255,7 @@ fn expire_depleted(
 /// yields k when the finer family takes it instead of 1 here, so committing
 /// the pair forfeits (k-1). Used only to rank families for arbitration;
 /// committed layers keep their full kernels.
-pub fn nested_penalty<E: Event>(kernel: &TpPlane<E>, d: Tick, work: &TpPlane<E>) -> usize {
+pub fn nested_penalty<E: Event>(kernel: &TePlane<E>, d: Tick, work: &TePlane<E>) -> usize {
     let mut penalty = 0;
     for (&(anchor, ref tone), &count) in kernel.iter() {
         for k in [2u32, 3] {
@@ -311,15 +281,15 @@ pub fn nested_penalty<E: Event>(kernel: &TpPlane<E>, d: Tick, work: &TpPlane<E>)
 /// Deep-first (len decreasing) layers of the AP family at spacing `d`.
 ///
 /// Returns `(total_reuse, layers, nested_penalty)` where layers are ordered
-/// 4, 3, 2 and each entry is a [`Layer`]. The penalty estimates forfeited
-/// fine-block gain on the family's len-2 pairs and is used only for family
-/// arbitration.
+/// 4, 3, 2 and each entry is a [`TransEqClass`]. The penalty estimates
+/// forfeited fine-block gain on the family's len-2 pairs and is used only
+/// for family arbitration.
 pub fn family_deep_first<E: Event>(
-    source: &TpPlane<E>,
+    source: &TePlane<E>,
     d: Tick,
     max_len: usize,
     budget: usize,
-) -> (usize, Vec<Layer<E>>, usize) {
+) -> (usize, Vec<TransEqClass<E>>, usize) {
     let mut total = 0;
     let mut layers = Vec::new();
     let mut work = source.clone();
@@ -331,18 +301,21 @@ pub fn family_deep_first<E: Event>(
         if layers.len() >= budget {
             break;
         }
-        let scatter: Vec<Tick> = (0..n).map(|i| (i as Tick) * d).collect();
+        let scatter: BTreeSet<NonZero<Tick>> = (1..n)
+            .map(|i| NonZero::new((i as Tick) * d).unwrap())
+            .collect();
         let kernel = feasible_kernel(&work, &scatter);
         if n == 2 {
             penalty = nested_penalty(&kernel, d, &work);
         }
-        let gain = kernel.values().sum::<usize>() * (n - 1);
+        let tec = TransEqClass::new(scatter, kernel);
+        let gain = tec.reuse();
         if gain <= 0 {
             continue;
         }
         total += gain;
-        let expansion = expand(&kernel, &scatter);
-        layers.push(Layer { scatter, kernel });
+        let expansion = tec.expand();
+        layers.push(tec);
         work = subtract_exact(&work, &expansion);
     }
     (total, layers, penalty)
@@ -358,12 +331,12 @@ pub fn family_deep_first<E: Event>(
 /// AP family with its complete deep-first flow, then commits the winner
 /// (`score = total - nested_penalty`, deepest len used, smallest d).
 pub fn reuse_flow<E: Event>(
-    source: &TpPlane<E>,
+    source: &TePlane<E>,
     max_len: usize,
     max_layers: usize,
-) -> (Vec<Layer<E>>, usize, TpPlane<E>) {
+) -> (Vec<TransEqClass<E>>, usize, TePlane<E>) {
     let mut residual = source.clone();
-    let mut plan: Vec<Layer<E>> = Vec::new();
+    let mut plan: Vec<TransEqClass<E>> = Vec::new();
     let mut total_reuse = 0;
 
     while plan.len() < max_layers {
@@ -382,7 +355,7 @@ pub fn reuse_flow<E: Event>(
             break;
         }
 
-        let mut best: Option<((isize, usize, Reverse<Tick>), Vec<Layer<E>>)> = None;
+        let mut best: Option<((isize, usize, Reverse<Tick>), Vec<TransEqClass<E>>)> = None;
         for &d in &candidates {
             let budget = max_layers - plan.len();
             let (total, layers, penalty) = family_deep_first(&residual, d, max_len, budget);
@@ -393,7 +366,7 @@ pub fn reuse_flow<E: Event>(
             let score = total as isize - penalty as isize;
             let deepest = layers
                 .iter()
-                .map(|layer| layer.scatter.len())
+                .map(|tec| tec.scatter.len() + 1)
                 .max()
                 .unwrap_or(0);
             let key = (score, deepest, Reverse(d));
@@ -405,11 +378,10 @@ pub fn reuse_flow<E: Event>(
             break;
         };
 
-        for layer in layers {
-            let expansion = expand(&layer.kernel, &layer.scatter);
-            total_reuse += layer.reuse();
-            residual = subtract_exact(&residual, &expansion);
-            plan.push(layer);
+        for tec in layers {
+            total_reuse += tec.reuse();
+            residual = subtract_exact(&residual, &tec.expand());
+            plan.push(tec);
         }
     }
 
@@ -423,20 +395,20 @@ pub fn reuse_flow<E: Event>(
 /// families compete freely at every step, so cross-family combinations emerge
 /// naturally (e.g. a deep AP block from one family plus a pair from another).
 pub fn reuse_flow_beam<E: Event>(
-    source: &TpPlane<E>,
+    source: &TePlane<E>,
     max_len: usize,
     max_layers: usize,
     beam: usize,
-) -> (Vec<Layer<E>>, usize, TpPlane<E>) {
+) -> (Vec<TransEqClass<E>>, usize, TePlane<E>) {
     #[derive(Clone)]
     struct Path<E: Event> {
-        layers: Vec<(Vec<Tick>, usize)>,
-        work: TpPlane<E>,
+        layers: Vec<(BTreeSet<NonZero<Tick>>, usize)>,
+        work: TePlane<E>,
         acc: usize,
     }
 
     let mut residual = source.clone();
-    let mut plan: Vec<Layer<E>> = Vec::new();
+    let mut plan: Vec<TransEqClass<E>> = Vec::new();
     let mut total_reuse = 0;
 
     while plan.len() < max_layers {
@@ -464,15 +436,17 @@ pub fn reuse_flow_beam<E: Event>(
                     continue;
                 };
                 let threshold = ms / (max_len - 1);
-                let mut cand: Vec<(Vec<Tick>, usize)> = Vec::new();
+                let mut cand: Vec<(BTreeSet<NonZero<Tick>>, usize)> = Vec::new();
                 for (&d, &v) in &sup {
                     if v <= threshold {
                         continue;
                     }
                     for n in (2..=max_len).rev() {
-                        let scatter: Vec<Tick> = (0..n as Tick).map(|i| i * d).collect();
+                        let scatter: BTreeSet<NonZero<Tick>> = (1..n)
+                            .map(|i| NonZero::new((i as Tick) * d).unwrap())
+                            .collect();
                         let kernel = feasible_kernel(&path.work, &scatter);
-                        let gain = kernel.values().sum::<usize>() * (n - 1);
+                        let gain = kernel.values().sum::<usize>() * scatter.len();
                         if gain == 0 {
                             continue;
                         }
@@ -482,9 +456,10 @@ pub fn reuse_flow_beam<E: Event>(
                 cand.sort_by(|a, b| b.1.cmp(&a.1));
                 for (scatter, gain) in cand.into_iter().take(beam) {
                     let kernel = feasible_kernel(&path.work, &scatter);
-                    let work = subtract_exact(&path.work, &expand(&kernel, &scatter));
+                    let tec = TransEqClass::new(scatter, kernel);
+                    let work = subtract_exact(&path.work, &tec.expand());
                     let mut layers = path.layers.clone();
-                    layers.push((scatter, gain));
+                    layers.push((tec.scatter, gain));
                     next.push(Path {
                         layers,
                         work,
@@ -504,9 +479,10 @@ pub fn reuse_flow_beam<E: Event>(
         };
         for (scatter, gain) in best.layers {
             let kernel = feasible_kernel(&residual, &scatter);
+            let tec = TransEqClass::new(scatter, kernel);
             total_reuse += gain;
-            residual = subtract_exact(&residual, &expand(&kernel, &scatter));
-            plan.push(Layer { scatter, kernel });
+            residual = subtract_exact(&residual, &tec.expand());
+            plan.push(tec);
         }
     }
 
@@ -516,25 +492,29 @@ pub fn reuse_flow_beam<E: Event>(
 /// Apply scatter rules in order, extracting a kernel per rule and subtracting
 /// its expansion from the working set. Returns `(plan, total_reuse, residual)`.
 pub fn manual_flow<E: Event>(
-    source: &TpPlane<E>,
+    source: &TePlane<E>,
     rules: &[Vec<Tick>],
-) -> (Vec<Layer<E>>, usize, TpPlane<E>) {
+) -> (Vec<TransEqClass<E>>, usize, TePlane<E>) {
     let mut residual = source.clone();
-    let mut plan: Vec<Layer<E>> = Vec::new();
+    let mut plan: Vec<TransEqClass<E>> = Vec::new();
     let mut total_reuse = 0;
 
-    for scatter in rules {
-        let kernel = feasible_kernel(&residual, scatter);
-        let gain = kernel.values().sum::<usize>() * (scatter.len() - 1);
+    for rule in rules {
+        let scatter: BTreeSet<NonZero<Tick>> = rule
+            .iter()
+            .copied()
+            .filter(|&t| t != 0)
+            .filter_map(NonZero::new)
+            .collect();
+        let kernel = feasible_kernel(&residual, &scatter);
+        let tec = TransEqClass::new(scatter, kernel);
+        let gain = tec.reuse();
         if gain == 0 {
             continue;
         }
         total_reuse += gain;
-        residual = subtract_exact(&residual, &expand(&kernel, scatter));
-        plan.push(Layer {
-            scatter: scatter.clone(),
-            kernel,
-        });
+        residual = subtract_exact(&residual, &tec.expand());
+        plan.push(tec);
     }
 
     (plan, total_reuse, residual)
@@ -546,35 +526,28 @@ pub fn manual_flow<E: Event>(
 
 /// Convert a reuse plan and residual into layout TECs.
 ///
-/// Layers whose minimum offset gap is too tight for the tapped delay line
+/// TECs whose minimum offset gap is too tight for the tapped delay line
 /// (repeater coarse >= 4, i.e. min gap >= 8) are skipped and absorbed back
 /// into the residual (degenerate absorption).
 ///
 /// Returns `(tecs, skipped_layers)` where the residual is appended as a
 /// no-offset TEC when non-empty.
 pub fn plan_to_tecs<E: Event>(
-    plan: Vec<Layer<E>>,
-    mut residual: TpPlane<E>,
+    plan: Vec<TransEqClass<E>>,
+    mut residual: TePlane<E>,
 ) -> (Vec<TransEqClass<E>>, usize) {
     let mut tecs = Vec::new();
     let mut skipped = 0;
-    for layer in plan {
-        let min_gap = layer.scatter.windows(2).map(|w| w[1] - w[0]).min();
-        if min_gap < Some(8) {
-            let expansion = expand(&layer.kernel, &layer.scatter);
+    for tec in plan {
+        if tec.min_gap().is_none_or(|gap| gap < 8) {
+            let expansion = tec.expand();
             for (event, count) in expansion.iter() {
                 add_to(&mut residual, event.clone(), *count);
             }
             skipped += 1;
             continue;
         }
-        let offsets: BTreeSet<NonZero<Tick>> = layer
-            .scatter
-            .into_iter()
-            .skip(1)
-            .filter_map(NonZero::new)
-            .collect();
-        tecs.push(TransEqClass::new(offsets, layer.kernel));
+        tecs.push(tec);
     }
     if !residual.is_empty() {
         tecs.push(TransEqClass::new(BTreeSet::new(), residual));
@@ -595,8 +568,8 @@ mod tests {
         Tone::new(Instrument::Harp, Key::FS3)
     }
 
-    fn chain(n: usize, d: Tick, start: Tick) -> TpPlane<Tone> {
-        TpPlane::from_iter((0..n).map(|i| (start + (i as Tick) * d, tone())))
+    fn chain(n: usize, d: Tick, start: Tick) -> TePlane<Tone> {
+        TePlane::from_iter((0..n).map(|i| (start + (i as Tick) * d, tone())))
     }
 
     /// Per-chain closed form: `f(T) = 3*floor(T/4) + [0,0,1,2][T mod 4]`.
@@ -605,11 +578,14 @@ mod tests {
     }
 
     /// Composition check: `expand(plan) + residual == source`.
-    fn verify_composition(source: &TpPlane<Tone>, plan: &[Layer<Tone>], residual: &TpPlane<Tone>) {
+    fn verify_composition(
+        source: &TePlane<Tone>,
+        plan: &[TransEqClass<Tone>],
+        residual: &TePlane<Tone>,
+    ) {
         let mut total = residual.clone();
-        for layer in plan {
-            let expanded = expand(&layer.kernel, &layer.scatter);
-            for (event, count) in expanded.iter() {
+        for tec in plan {
+            for (event, count) in tec.expand().iter() {
                 add_to(&mut total, event.clone(), *count);
             }
         }
@@ -621,7 +597,7 @@ mod tests {
         for ticks in 2..16 {
             let (total, layers, _) = family_deep_first(&chain(ticks, 128, 1000), 128, 4, 3);
             assert_eq!(total, f(ticks), "T={ticks}");
-            let lens: Vec<usize> = layers.iter().map(|layer| layer.scatter.len()).collect();
+            let lens: Vec<usize> = layers.iter().map(|tec| tec.scatter.len() + 1).collect();
             let mut sorted = lens.clone();
             sorted.sort_by(|a, b| b.cmp(a));
             assert_eq!(lens, sorted, "T={ticks}");
@@ -638,7 +614,7 @@ mod tests {
     #[test]
     fn non_ap_motif_deep_wins() {
         let t = tone();
-        let m: TpPlane<Tone> = TpPlane::from_iter([
+        let m: TePlane<Tone> = TePlane::from_iter([
             (0u32, t),
             (100u32, t),
             (1000u32, t),
@@ -662,8 +638,8 @@ mod tests {
     #[test]
     fn isolated_chains_stay_single_offset() {
         let t = tone();
-        let m: TpPlane<Tone> =
-            TpPlane::from_iter([(0u32, t), (128u32, t), (4000u32, t), (4128u32, t)]);
+        let m: TePlane<Tone> =
+            TePlane::from_iter([(0u32, t), (128u32, t), (4000u32, t), (4128u32, t)]);
         let (_, total, _) = reuse_flow(&m, 4, 4);
         assert_eq!(total, 2); // two isolated pairs, no deep layer possible
     }
@@ -683,7 +659,7 @@ mod tests {
         ];
         for (ticks, expected) in cases {
             let t = tone();
-            let m: TpPlane<Tone> = TpPlane::from_iter(ticks.iter().map(|&x| (x, t)));
+            let m: TePlane<Tone> = TePlane::from_iter(ticks.iter().map(|&x| (x, t)));
             let (_, total, _) = reuse_flow(&m, 4, 1000);
             assert_eq!(total, *expected, "ticks={ticks:?}");
         }
