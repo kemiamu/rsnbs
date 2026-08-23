@@ -77,7 +77,7 @@ impl Layout for TappedLayout {
         self.size
     }
 
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+    fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         let divide = self.control.size().x;
         let side = pos.x < divide;
 
@@ -159,7 +159,7 @@ impl Layout for TapLine {
         self.size
     }
 
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+    fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         const INNER_ANCHOR: BlockPos = BlockPos::new(0, 0, 1);
         match pos.z == 0 {
             true => self.port(pos),
@@ -199,7 +199,7 @@ impl Layout for Tap {
         self.size
     }
 
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+    fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         let rev_easting = self.size.x - pos.x - 1;
         let delay = self.delay.get();
         let clamp = |tick: Tick| tick.min(4).to_string();

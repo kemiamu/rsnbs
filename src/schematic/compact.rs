@@ -67,7 +67,7 @@ impl Layout for MultiCompactLayout {
         self.0.size()
     }
 
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+    fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         self.0.get_block(pos)
     }
 }
@@ -120,15 +120,12 @@ impl Layout for CompactLayout {
         BlockPos::new(self.easting, Self::ELEVATION, self.southing)
     }
 
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+    fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         let BlockPos {
             x: easting,
             y: elevation,
             z: southing,
         } = pos;
-        debug_assert!((0..Self::ELEVATION).contains(&elevation), "y out of range");
-        debug_assert!((0..self.easting).contains(&easting), "x out of range");
-        debug_assert!((0..self.southing).contains(&southing), "z out of range");
 
         let tile_col = |s: i32, row: i32| match row & 1 {
             0 => s + 1,
@@ -142,7 +139,7 @@ impl Layout for CompactLayout {
             let row = easting / 4 * 2;
             let col = group as usize / 2;
             let layout_idx = (elevation + (group & 1) * 3) as u8;
-            self.track.block_at(row, col, layout_idx)
+            self.track.tile_block(row, col, layout_idx)
         } else if southing + 1 == self.southing {
             // South edge turn
             let easting = easting + 3;
@@ -150,12 +147,12 @@ impl Layout for CompactLayout {
             let row = easting / 4 * 2 - 1;
             let col = group as usize / 2;
             let layout_idx = (elevation + (group & 1) * 3) as u8;
-            self.track.block_at(row, col, layout_idx)
+            self.track.tile_block(row, col, layout_idx)
         } else if easting & 1 == 1 {
             // Trunk row
             let row = easting / 2;
             let col = tile_col(southing, row) as usize;
-            self.track.block_at(row, col, elevation as u8)
+            self.track.tile_block(row, col, elevation as u8)
         } else {
             // Tooth row
             let cell = easting / 2;
@@ -163,7 +160,7 @@ impl Layout for CompactLayout {
             let row = cell - zig;
             let col = tile_col(southing, row) as usize;
             let layout_idx = (elevation + 3 + zig * 3) as u8;
-            self.track.block_at(row, col, layout_idx)
+            self.track.tile_block(row, col, layout_idx)
         }
     }
 }
@@ -304,7 +301,7 @@ impl Track {
             .get(row.try_into().ok()? * self.cols_or_len() + offset)
     }
 
-    fn block_at(&self, row: i32, col: usize, layout_idx: u8) -> GenericBlockState {
+    fn tile_block(&self, row: i32, col: usize, layout_idx: u8) -> GenericBlockState {
         let repeater_facing = match ((row & 1) == 0, col < 2) {
             (_, true) => "west",
             (true, false) => "north",

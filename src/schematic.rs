@@ -51,8 +51,29 @@ impl<L: Layout> SchematicBuilder<L> {
 pub trait Layout {
     /// Total size of the bounding box.
     fn size(&self) -> BlockPos;
-    /// Block at the given world position.
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState;
+
+    /// Block at the given world position, assumed to be in bounds.
+    fn block_at(&self, pos: BlockPos) -> GenericBlockState;
+
+    /// Block at the given world position; panics on out-of-bounds access.
+    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+        debug_assert!(self.contains(pos), "block out of bounds");
+        self.block_at(pos)
+    }
+
+    /// Block at the given world position; out-of-bounds access yields air.
+    fn get_block_or_air(&self, pos: BlockPos) -> GenericBlockState {
+        match self.contains(pos) {
+            true => self.block_at(pos),
+            false => air(),
+        }
+    }
+
+    /// Whether `pos` is inside the bounding box.
+    fn contains(&self, pos: BlockPos) -> bool {
+        let size = self.size();
+        (0..size.x).contains(&pos.x) && (0..size.y).contains(&pos.y) && (0..size.z).contains(&pos.z)
+    }
 }
 
 // EdgeArranged
@@ -79,7 +100,7 @@ impl<L: Layout> Layout for EdgeArranged<L> {
         self.inner.size()
     }
 
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+    fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         self.inner.get_block(pos)
     }
 }
@@ -120,11 +141,7 @@ impl<L: Layout> Layout for Arranged<L> {
         self.size
     }
 
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
-        debug_assert!((0..self.size.x).contains(&pos.x), "x out of range");
-        debug_assert!((0..self.size.y).contains(&pos.y), "y out of range");
-        debug_assert!((0..self.size.z).contains(&pos.z), "z out of range");
-
+    fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         let found = self
             .bands
             .partition_point(|(_, a)| a.y <= pos.y && a.z <= pos.z && a.x <= pos.x)
@@ -133,11 +150,7 @@ impl<L: Layout> Layout for Arranged<L> {
 
         let (layout, anchor) = &self.bands[index];
         let local = BlockPos::new(pos.x - anchor.x, pos.y - anchor.y, pos.z - anchor.z);
-        let size = layout.size();
-        let hit = (0..size.x).contains(&local.x)
-            && (0..size.y).contains(&local.y)
-            && (0..size.z).contains(&local.z);
-        if hit { layout.get_block(local) } else { air() }
+        layout.get_block_or_air(local)
     }
 }
 
@@ -176,18 +189,10 @@ impl<L: Layout> Layout for Anchored<L> {
         self.size
     }
 
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
-        debug_assert!((0..self.size.x).contains(&pos.x), "x out of range");
-        debug_assert!((0..self.size.y).contains(&pos.y), "y out of range");
-        debug_assert!((0..self.size.z).contains(&pos.z), "z out of range");
-
+    fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         let found = self.entries.iter().find_map(|(layout, anchor)| {
             let local = pos - *anchor;
-            let size = layout.size();
-            let hit = (0..size.x).contains(&local.x)
-                && (0..size.y).contains(&local.y)
-                && (0..size.z).contains(&local.z);
-            hit.then(|| layout.get_block(local))
+            layout.contains(local).then(|| layout.get_block(local))
         });
 
         found.unwrap_or_else(air)
@@ -215,12 +220,9 @@ impl<L: Layout> Layout for Reverse<L> {
         self.layout.size()
     }
 
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+    fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         let size = self.layout.size();
         let orig = pos + self.sign * (size - BlockPos::new(1, 1, 1) - pos * 2);
-        debug_assert!((0..size.x).contains(&orig.x));
-        debug_assert!((0..size.y).contains(&orig.y));
-        debug_assert!((0..size.z).contains(&orig.z));
         self.layout.get_block(orig)
     }
 }
@@ -249,11 +251,7 @@ impl<L: Layout> Layout for WithFloor<L> {
         BlockPos::new(size.x, size.y + 1, size.z)
     }
 
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
-        debug_assert!((0..self.size().x).contains(&pos.x), "x out of range");
-        debug_assert!((0..self.size().y).contains(&pos.y), "y out of range");
-        debug_assert!((0..self.size().z).contains(&pos.z), "z out of range");
-
+    fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         let floor = || match self.full {
             true => floor_block(),
             false if self.layout.get_block(pos).needs_floor() => floor_block(),
