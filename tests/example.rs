@@ -9,13 +9,13 @@
 fn test_readme_example() {
     use rsnbs::note::{Instrument, Key, Note, Tone};
     use rsnbs::song::Song;
-    use rsnbs::types::{Position, Tick, TickAnchor};
+    use rsnbs::types::{Position, Tick, TimeAnchor};
 
     // example 1: iterating over a song's notes
     let song: Song = Song::open_nbs("fixtures/source.nbs").unwrap();
     for (pos, note) in &song.notes {
         let tick: Tick = pos.into_tick();
-        let key: Key = note.tone().key();
+        let key: Key = note.tone.key;
         println!("tick: {tick}, key: {key}");
     }
 

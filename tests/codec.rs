@@ -5,7 +5,7 @@
 
 use rsnbs::note::Instrument;
 use rsnbs::song::Song;
-use rsnbs::types::{TickAnchor, Version};
+use rsnbs::types::{TimeAnchor, Version};
 use std::io::Cursor;
 
 fn write_str(buf: &mut Vec<u8>, s: &str) {
@@ -129,8 +129,8 @@ fn v6_parses_trumpets_as_vanilla_and_bytes_as_custom_slots() {
 
     let notes: Vec<_> = song.notes.iter().collect();
     assert_eq!(notes.len(), 2);
-    assert_eq!(notes[0].1.tone().instrument(), Instrument::Trumpet);
-    assert_eq!(notes[1].1.tone().instrument(), Instrument::Custom(1));
+    assert_eq!(notes[0].1.tone.instrument, Instrument::Trumpet);
+    assert_eq!(notes[1].1.tone.instrument, Instrument::Custom(1));
     assert_eq!(song.custom_instruments[1].name, "B");
 }
 
@@ -149,7 +149,7 @@ fn v5_parses_custom_byte_as_custom_slot_not_trumpet() {
     let song = parse(bytes);
     assert_eq!(song.header.default_instruments, 16);
     let notes: Vec<_> = song.notes.iter().collect();
-    assert_eq!(notes[0].1.tone().instrument(), Instrument::Custom(1));
+    assert_eq!(notes[0].1.tone.instrument, Instrument::Custom(1));
 }
 
 // write() borrows the song: derived header fields are computed while
@@ -174,7 +174,7 @@ fn write_does_not_modify_the_song() {
     let instruments: Vec<_> = song
         .notes
         .values()
-        .map(|note| note.tone().instrument())
+        .map(|note| note.tone.instrument)
         .collect();
     assert_eq!(instruments, [Instrument::Trumpet]);
     assert_eq!(song.header.song_length, 0);
@@ -202,7 +202,7 @@ fn v5_to_v6_upgrade_remaps_custom_slots() {
 
     let upgraded = parse(out);
     let notes: Vec<_> = upgraded.notes.iter().collect();
-    assert_eq!(notes[0].1.tone().instrument(), Instrument::Custom(1));
+    assert_eq!(notes[0].1.tone.instrument, Instrument::Custom(1));
     assert_eq!(upgraded.custom_instruments[1].name, "B");
 }
 
@@ -251,7 +251,7 @@ fn v5_roundtrip_is_idempotent() {
     let mut back = parse(first.clone());
     assert_eq!(back.custom_instruments.len(), 1);
     let notes: Vec<_> = back.notes.iter().collect();
-    assert_eq!(notes[0].1.tone().instrument(), Instrument::Custom(0));
+    assert_eq!(notes[0].1.tone.instrument, Instrument::Custom(0));
 
     // 幂等：再写与首次写出字节一致
     let second = write(&mut back);
@@ -296,7 +296,7 @@ fn classic_v0_parses_and_roundtrips() {
     assert_eq!(song.header.version.get(), 0);
     assert_eq!(song.header.default_instruments, 10);
     let notes: Vec<_> = song.notes.iter().collect();
-    assert_eq!(notes[0].1.tone().instrument(), Instrument::SnareDrum);
+    assert_eq!(notes[0].1.tone.instrument, Instrument::SnareDrum);
 
     // v0（fci=10）写出的表尾追加 10 条预设；读回折叠后表只剩用户条目，
     // 再写与首次写出字节一致
@@ -330,7 +330,7 @@ fn v6_to_v5_downgrade_presets_trumpet_and_folds_on_read() {
     let downgraded = parse(out);
     assert!(downgraded.custom_instruments.is_empty());
     let notes: Vec<_> = downgraded.notes.iter().collect();
-    assert_eq!(notes[0].1.tone().instrument(), Instrument::Trumpet);
+    assert_eq!(notes[0].1.tone.instrument, Instrument::Trumpet);
 
     // 幂等：再写一次与首次写入字节一致
     let mut again = Vec::new();
@@ -370,9 +370,9 @@ fn v6_to_v5_downgrade_mixes_preset_and_user_customs() {
     assert_eq!(names, ["A", "B"]);
     // 音符：Trumpet 还原 vanilla，自定义槽位保持
     let notes: Vec<_> = downgraded.notes.iter().collect();
-    assert_eq!(notes[0].1.tone().instrument(), Instrument::Trumpet);
-    assert_eq!(notes[1].1.tone().instrument(), Instrument::Custom(1));
-    assert_eq!(notes[2].1.tone().instrument(), Instrument::Custom(0));
+    assert_eq!(notes[0].1.tone.instrument, Instrument::Trumpet);
+    assert_eq!(notes[1].1.tone.instrument, Instrument::Custom(1));
+    assert_eq!(notes[2].1.tone.instrument, Instrument::Custom(0));
 }
 
 // v6 写入（fci=20）无预设：用户自定义的 "Trumpet" 条目不被折叠，保持 Custom。
@@ -390,7 +390,7 @@ fn v6_roundtrip_keeps_user_custom_named_like_trumpet() {
     let mut song = parse(bytes.clone());
     assert_eq!(write(&mut song), bytes);
     let notes: Vec<_> = song.notes.iter().collect();
-    assert_eq!(notes[0].1.tone().instrument(), Instrument::Custom(0));
+    assert_eq!(notes[0].1.tone.instrument, Instrument::Custom(0));
 }
 
 // v0 降级（fci=10）：铁琴等 10 个乐器全量预设，读回折叠还原。
@@ -413,7 +413,7 @@ fn v0_downgrade_presets_all_instruments_above_fci() {
     assert_eq!(downgraded.header.default_instruments, 10);
     assert!(downgraded.custom_instruments.is_empty());
     let notes: Vec<_> = downgraded.notes.iter().collect();
-    assert_eq!(notes[0].1.tone().instrument(), Instrument::IronXylophone);
+    assert_eq!(notes[0].1.tone.instrument, Instrument::IronXylophone);
 }
 
 // 折叠保持音符位置：多 tick 多 layer 的音符在折叠后位置不变。

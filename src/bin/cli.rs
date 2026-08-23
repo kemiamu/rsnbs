@@ -1,15 +1,16 @@
 use clap::Parser;
-use rsnbs::note::{Note, Notes};
-use rsnbs::reuse::{plan_to_tecs, reuse_flow};
+use rsnbs::analysis::reuse::{plan_to_tecs, reuse_flow};
+use rsnbs::analysis::{BoundedTec, TePlane, TransEqClass};
+use rsnbs::note::{Note, Notes, Tone};
 use rsnbs::schematic::{Layout, MultiCompactLayout, MultiLinearLayout, SchematicBuilder};
 use rsnbs::schematic::{StackedLinearLayout, TappedLayout, WithFloor};
 use rsnbs::song::Song;
-use rsnbs::types::{Tick, TickAnchor};
-use rsnbs::util::TpPlane;
+use rsnbs::types::{Tick, TimeAnchor};
 use rustmatica::Litematic;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZero;
 use std::path::Path;
+use std::str::FromStr;
 
 // Cli
 //
@@ -24,6 +25,7 @@ enum Cli {
     Compact(Compact),
     Linear(Linear),
     Decompose(Decompose),
+    Match(Match),
 }
 
 fn main() {
@@ -31,6 +33,7 @@ fn main() {
         Cli::Compact(cmd) => cmd.run(),
         Cli::Linear(cmd) => cmd.run(),
         Cli::Decompose(cmd) => cmd.run(),
+        Cli::Match(cmd) => cmd.run(),
     }
 }
 
@@ -55,12 +58,9 @@ struct Compact {
     /// Block spacing between adjacent tracks
     #[arg(short, long, default_value_t = 0)]
     gap: u32,
-    /// Add a floor platform below the build
-    #[arg(short, long)]
-    floor: bool,
-    /// Only place floor below gravity blocks (default: full coverage)
-    #[arg(short, long)]
-    sparse_floor: bool,
+    /// Floor platform mode
+    #[arg(short, long, value_enum, default_value_t = Floor::None)]
+    floor: Floor,
 }
 
 impl Compact {
@@ -76,7 +76,7 @@ impl Compact {
         let tracks = std::iter::once((by_tick, NonZero::new(self.coarse)));
         let layout = MultiCompactLayout::new(tracks, NonZero::new(self.wrap), self.gap);
         let description = format!("Sectional from {}", self.input);
-        let litematic = build_schematic(layout, self.floor, self.sparse_floor, description);
+        let litematic = build_schematic(layout, self.floor, description);
         write_output(&self.output, litematic);
     }
 }
@@ -99,12 +99,9 @@ struct Linear {
     /// Max columns per row before wrapping (0 = no wrap)
     #[arg(short, long, default_value_t = 0)]
     wrap: u32,
-    /// Add a floor platform below the build (only when wrap = 0)
-    #[arg(short, long)]
-    floor: bool,
-    /// Only place floor below gravity blocks (default: full coverage)
-    #[arg(short, long)]
-    sparse_floor: bool,
+    /// Floor platform mode
+    #[arg(short, long, value_enum, default_value_t = Floor::None)]
+    floor: Floor,
 }
 
 impl Linear {
@@ -121,11 +118,11 @@ impl Linear {
         let description = format!("Sectional from {}", self.input);
 
         let litematic = if let Some(wrap) = NonZero::new(self.wrap) {
-            let layout = StackedLinearLayout::new(tracks, Some(wrap), self.gap, !self.sparse_floor);
-            build_schematic(layout, false, false, description)
+            let layout = StackedLinearLayout::new(tracks, Some(wrap), self.gap, self.floor.full());
+            build_schematic(layout, Floor::None, description)
         } else {
             let layout = MultiLinearLayout::new(tracks, self.gap);
-            build_schematic(layout, self.floor, self.sparse_floor, description)
+            build_schematic(layout, self.floor, description)
         };
         write_output(&self.output, litematic);
     }
@@ -160,7 +157,8 @@ impl Decompose {
     fn run(self) {
         let song = open_song(&self.input);
         // 统一 tempo 到红石刻 (10tps)
-        let all_plane = TpPlane::from_iter(song.notes.rescale_to_redstone_tick(song.header.tempo));
+        let all_plane: TePlane<Tone> =
+            TePlane::from_iter(song.notes.rescale_to_redstone_tick(song.header.tempo));
 
         // 层数预算 = 布局高度的物理替身：分解在预算耗尽时停止；
         // 0 = 无预算，持续到自然极限（残差无任何同音色配对），层数可能远超布局可行范围
@@ -168,21 +166,90 @@ impl Decompose {
             0 => usize::MAX,
             n => n,
         };
-        let (plan, total_reuse, residual) = reuse_flow(&all_plane, 6, max_layers);
-
-        let residual_events = residual.values().sum::<usize>();
-        eprintln!("total reuse = {total_reuse}, residual events = {residual_events}");
+        let (plan, _, residual) = reuse_flow(&all_plane, 6, max_layers);
 
         // 物化适配：延迟线最小间距限制内的层进入 TEC，其余退回残差
-        let (tecs, skipped) = plan_to_tecs(plan, residual);
-        if skipped > 0 {
-            eprintln!("  {skipped} layer(s) skipped: min gap < 8");
+        let (tecs, _) = plan_to_tecs(plan, residual);
+
+        let layout = TappedLayout::new(
+            tecs.into_iter().map(BoundedTec::new),
+            NonZero::new(self.wrap),
+            self.floor,
+        );
+        let description = format!("Tapped from {}", self.input);
+        let litematic = build_schematic(layout, Floor::None, description);
+        write_output(&self.output, litematic);
+    }
+}
+
+// Match
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// Manually specified TEC offsets applied as reuse layers.
+#[derive(clap::Args)]
+struct Match {
+    /// Path to input NBS file
+    input: String,
+    /// Path to output litematic file
+    #[arg(default_value = "out/generated_match.litematic")]
+    output: String,
+    /// Match rule offsets, slash-separated; multiple rules in order
+    #[arg(short, long, num_args = 1..)]
+    rules: Vec<Rule>,
+    /// Max tiles per row before wrapping (0 = no wrap)
+    #[arg(short, long, default_value_t = 16)]
+    wrap: usize,
+    /// Add a full floor platform below the build (default: floor only below gravity blocks)
+    #[arg(short, long)]
+    floor: bool,
+}
+
+impl Match {
+    fn run(self) {
+        let song = open_song(&self.input);
+        let mut residual: TePlane<Tone> =
+            TePlane::from_iter(song.notes.rescale_to_redstone_tick(song.header.tempo));
+
+        // normalize rules.
+        let rules = self.rules.into_iter().map(|Rule(mut scatter)| {
+            scatter.sort_unstable();
+            scatter.dedup();
+            scatter
+        });
+
+        // one TEC each.
+        let mut tecs: Vec<BoundedTec<Tone>> = Vec::new();
+        for rule in rules {
+            let scatter: BTreeSet<_> = rule.into_iter().filter_map(NonZero::new).collect();
+            tecs.push(BoundedTec::extract_from(&mut residual, scatter));
+        }
+
+        // keep the rest.
+        if !residual.is_empty() {
+            let offsets = Default::default();
+            tecs.push(BoundedTec::new(TransEqClass::new(offsets, residual)));
         }
 
         let layout = TappedLayout::new(tecs, NonZero::new(self.wrap), self.floor);
-        let description = format!("Tapped from {}", self.input);
-        let litematic = build_schematic(layout, false, false, description);
+        let description = format!("Match from {}", self.input);
+        let litematic = build_schematic(layout, Floor::None, description);
         write_output(&self.output, litematic);
+    }
+}
+
+/// One match rule's offsets, slash-separated, e.g. "4/8".
+#[derive(Clone, Debug)]
+struct Rule(Vec<Tick>);
+
+impl FromStr for Rule {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let parse = |t: &str| t.parse().map_err(|_| format!("invalid tick: {t}"));
+        let tokens = s.split(|c| matches!(c, '/' | ',' | ' '));
+        let offsets: Result<_, _> = tokens.filter(|t| !t.is_empty()).map(parse).collect();
+        Ok(Rule(offsets?))
     }
 }
 
@@ -191,16 +258,30 @@ impl Decompose {
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// Builds the schematic, wrapping the layout in a floor platform when requested.
-fn build_schematic<L: Layout>(
-    layout: L,
-    floor: bool,
-    sparse_floor: bool,
-    description: String,
-) -> Litematic {
+fn build_schematic<L: Layout>(layout: L, floor: Floor, description: String) -> Litematic {
     const AUTHOR: &str = "rsnbs";
-    match floor || sparse_floor {
-        true => SchematicBuilder(WithFloor::new(layout, !sparse_floor)).build(description, AUTHOR),
-        false => SchematicBuilder(layout).build(description, AUTHOR),
+    match floor {
+        Floor::None => SchematicBuilder(layout).build(description, AUTHOR),
+        _ => SchematicBuilder(WithFloor::new(layout, floor.full())).build(description, AUTHOR),
+    }
+}
+
+/// Floor platform mode.
+#[derive(Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+enum Floor {
+    /// No floor platform.
+    #[default]
+    None,
+    /// Full coverage platform.
+    Full,
+    /// Platform only below gravity blocks.
+    Gravity,
+}
+
+impl Floor {
+    /// Full-coverage flag for layouts that always carry a floor.
+    fn full(self) -> bool {
+        matches!(self, Floor::Full | Floor::None)
     }
 }
 

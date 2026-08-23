@@ -11,8 +11,8 @@ use std::{borrow::Cow, collections::HashMap};
 impl Tone {
     /// returns the minecraft note block block state for this tone.
     pub fn note_block_state(&self) -> Option<GenericBlockState> {
-        let note = self.key().minecraft_note()?;
-        let instr = self.instrument().note_property();
+        let note = self.key.minecraft_note()?;
+        let instr = self.instrument.note_property();
         let properties = HashMap::from([
             ("note".into(), note.to_string().into()),
             ("powered".into(), "false".into()),
@@ -26,11 +26,11 @@ impl Tone {
 
     /// returns the block under the note block for this instrument's sound.
     pub fn instrument_block_state(&self) -> Option<GenericBlockState> {
-        if !self.is_valid() || matches!(self.instrument(), Instrument::Imitate(_)) {
+        if !self.is_valid() || matches!(self.instrument, Instrument::Imitate(_)) {
             return None;
         }
-        let block = self.instrument().block_resource().unwrap();
-        let properties = match self.instrument() {
+        let block = self.instrument.block_resource().unwrap();
+        let properties = match self.instrument {
             Instrument::Banjo => HashMap::from([("axis".into(), "y".into())]),
             _ => HashMap::new(),
         };
@@ -42,10 +42,10 @@ impl Tone {
 
     /// returns the mob head block for this tone, if it is a mob head instrument.
     pub fn head_block_state(&self) -> Option<GenericBlockState> {
-        if !self.is_valid() || !matches!(self.instrument(), Instrument::Imitate(_)) {
+        if !self.is_valid() || !matches!(self.instrument, Instrument::Imitate(_)) {
             return None;
         }
-        let block = self.instrument().block_resource().unwrap();
+        let block = self.instrument.block_resource().unwrap();
         Some(GenericBlockState {
             name: block.into(),
             properties: HashMap::new(),

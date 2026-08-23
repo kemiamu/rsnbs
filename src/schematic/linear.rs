@@ -3,7 +3,7 @@
 use super::{Arranged, Axis, Layout, WithFloor, air, chain_block, inst_block, note_block};
 use super::{redstone_block, redstone_wire, repeater, sticky_piston};
 use crate::note::Tone;
-use crate::types::{Index, Position, Tick, TickAnchor};
+use crate::types::{Index, Position, Tick, TimeAnchor};
 use mcdata::{GenericBlockState, util::BlockPos};
 use std::collections::BTreeMap;
 use std::num::NonZero;
