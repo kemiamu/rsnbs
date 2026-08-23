@@ -105,17 +105,13 @@ impl<L: Layout> Arranged<L> {
             let size: BlockPos = layout.size();
             let anchor: BlockPos = cursor + gap_vec;
             cursor = anchor + unit * size;
-            extent = Self::_max(extent, size);
+            extent = include(extent, size);
             (layout, anchor)
         });
 
         let bands = placed.collect();
-        let size = Self::_max(Self::_max(cursor, BlockPos::ORIGIN), extent);
+        let size = include(include(cursor, BlockPos::ORIGIN), extent);
         Self { bands, size }
-    }
-
-    fn _max(a: BlockPos, b: BlockPos) -> BlockPos {
-        BlockPos::new(a.x.max(b.x), a.y.max(b.y), a.z.max(b.z))
     }
 }
 
@@ -164,7 +160,7 @@ impl<L: Layout> Anchored<L> {
         let placed = entries.into_iter().map(|(layout, anchor)| {
             let size = layout.size();
             let far = anchor + size;
-            extent = _component_max(extent, far);
+            extent = include(extent, far);
             (layout, anchor)
         });
 
@@ -359,7 +355,7 @@ impl std::ops::Mul<i32> for Mask {
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// Component-wise maximum of two [`BlockPos`].
-fn _component_max(a: BlockPos, b: BlockPos) -> BlockPos {
+fn include(a: BlockPos, b: BlockPos) -> BlockPos {
     BlockPos::new(a.x.max(b.x), a.y.max(b.y), a.z.max(b.z))
 }
 
