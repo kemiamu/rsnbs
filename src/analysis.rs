@@ -113,27 +113,47 @@ impl<E: Event> TransEqClass<E> {
         Self { scatter, kernel }
     }
 
+    /// Offsets including the implied zero, ascending.
+    pub fn offsets(&self) -> impl Iterator<Item = Tick> {
+        std::iter::once(0).chain(self.scatter.iter().map(|o| o.get()))
+    }
+
+    /// Number of offsets, including the implied zero.
+    pub fn arity(&self) -> usize {
+        self.scatter.len() + 1
+    }
+
     /// Reuse gain: `sum(kernel) * scatter.len()`. The scatter excludes the
     /// implied zero offset, so its length is `|S| - 1`.
     pub fn reuse(&self) -> usize {
         self.kernel.values().sum::<usize>() * self.scatter.len()
     }
 
+    /// Total covered multiplicity: `sum(kernel) * (scatter.len() + 1)`.
+    pub fn coverage(&self) -> usize {
+        self.kernel.values().sum::<usize>() * self.arity()
+    }
+
     /// Expand `kernel (+) scatter` into a plane, including the implied zero offset.
     pub fn expand(&self) -> TePlane<E> {
-        std::iter::once(0)
-            .chain(self.scatter.iter().map(|o| o.get()))
+        self.offsets()
             .flat_map(|offset| self.kernel.translated(offset))
             .collect()
     }
 
     /// Minimum gap between adjacent offsets, including the implied zero.
     pub fn min_gap(&self) -> Option<Tick> {
-        std::iter::once(0)
-            .chain(self.scatter.iter().map(|o| o.get()))
+        self.offsets()
             .array_windows::<2>()
             .map(|[a, b]| b - a)
             .min()
+    }
+
+    /// Translate the kernel along the time axis; the scatter is unchanged.
+    pub fn translate(self, tick: Tick) -> Self {
+        let Self { scatter, kernel } = self;
+        let kernel = kernel.translated(tick).collect();
+        Self { kernel, scatter }
     }
 }
 

@@ -364,11 +364,7 @@ pub fn reuse_flow<E: Event>(
             }
             // 嵌套惩罚可能超过总量（Python 语义允许负 score，仅用于排序）
             let score = total as isize - penalty as isize;
-            let deepest = layers
-                .iter()
-                .map(|tec| tec.scatter.len() + 1)
-                .max()
-                .unwrap_or(0);
+            let deepest = layers.iter().map(|tec| tec.arity()).max().unwrap_or(0);
             let key = (score, deepest, Reverse(d));
             if best.as_ref().is_none_or(|(best_key, _)| key > *best_key) {
                 best = Some((key, layers));
@@ -597,7 +593,7 @@ mod tests {
         for ticks in 2..16 {
             let (total, layers, _) = family_deep_first(&chain(ticks, 128, 1000), 128, 4, 3);
             assert_eq!(total, f(ticks), "T={ticks}");
-            let lens: Vec<usize> = layers.iter().map(|tec| tec.scatter.len() + 1).collect();
+            let lens: Vec<usize> = layers.iter().map(|tec| tec.arity()).collect();
             let mut sorted = lens.clone();
             sorted.sort_by(|a, b| b.cmp(a));
             assert_eq!(lens, sorted, "T={ticks}");
