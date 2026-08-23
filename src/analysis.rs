@@ -194,28 +194,32 @@ impl<E: Event> BoundedTec<E> {
     }
 
     /// Extract a bounded TEC from `source` under `scatter` by directed
-    /// stepwise deconvolution.
+    /// stepwise deconvolution, leaving the residual in `source`.
     ///
     /// Precision is lower than conflict-based allocation: committing in
     /// ascending order lets early deductions shape later slots. It performs
     /// well on hot paths. Assumes a linear time axis: offsets never shift
     /// backward, so the frontier advances monotonically. Does not apply to
     /// cyclic spaces where the axis wraps around.
-    pub fn extract(source: &TePlane<E>, scatter: BTreeSet<NonZero<Tick>>) -> Self {
+    pub fn extract_from(source: &mut TePlane<E>, scatter: BTreeSet<NonZero<Tick>>) -> Self {
+        let plane = std::mem::take(source);
         let offsets: Vec<Tick> = scatter.iter().map(|o| o.get()).collect();
-        let mut work: BTreeMap<(Tick, &E), usize> = source
+        let mut work: BTreeMap<(Tick, &E), usize> = plane
             .iter()
             .map(|(&(tick, ref event), &count)| ((tick, event), count))
             .collect();
 
         let mut kernel = TePlane::default();
-        while let Some((point, capacity)) = work.pop_first() {
-            let (tick, event) = point;
+        while let Some((_point @ (tick, event), capacity)) = work.pop_first() {
             let slots = offsets.iter().map(|&offset| {
                 let cap = work.get(&(tick + offset, event));
                 cap.copied().unwrap_or(0)
             });
             let base = slots.fold(capacity, usize::min);
+            let rest = capacity - base;
+            if rest > 0 {
+                source.entry((tick, event.clone())).or_insert(rest);
+            }
             if base == 0 {
                 continue;
             }
@@ -227,6 +231,13 @@ impl<E: Event> BoundedTec<E> {
         }
 
         Self(TransEqClass { scatter, kernel })
+    }
+
+    /// Non-consuming `extract_from`: clones `source` and returns the
+    /// extracted TEC, leaving `source` unchanged.
+    pub fn extract(source: &TePlane<E>, scatter: BTreeSet<NonZero<Tick>>) -> Self {
+        let mut source = source.clone();
+        Self::extract_from(&mut source, scatter)
     }
 
     /// Unwrap into the underlying (already bounded) TEC.

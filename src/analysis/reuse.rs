@@ -320,9 +320,8 @@ pub fn reuse_flow_beam<E: Event>(
             break;
         };
         for (scatter, gain) in best.layers {
-            let tec = BoundedTec::extract(&residual, scatter).into_inner();
+            let tec = BoundedTec::extract_from(&mut residual, scatter).into_inner();
             total_reuse += gain;
-            residual = subtract_exact(&residual, &tec.expand());
             plan.push(tec);
         }
     }
@@ -347,13 +346,15 @@ pub fn manual_flow<E: Event>(
             .filter(|&t| t != 0)
             .filter_map(NonZero::new)
             .collect();
-        let tec = BoundedTec::extract(&residual, scatter).into_inner();
+        if scatter.is_empty() {
+            continue;
+        }
+        let tec = BoundedTec::extract_from(&mut residual, scatter).into_inner();
         let gain = tec.reuse();
         if gain == 0 {
             continue;
         }
         total_reuse += gain;
-        residual = subtract_exact(&residual, &tec.expand());
         plan.push(tec);
     }
 
