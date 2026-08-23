@@ -57,8 +57,8 @@ impl<E: Event> TePlane<E> {
 
     /// Shift every point by `offset`, expanding multiplicity.
     pub fn translated(&self, offset: Tick) -> impl Iterator<Item = Point<E>> {
-        self.iter().flat_map(move |(&(tick, ref tone), &count)| {
-            repeat((tick + offset, tone.clone())).take(count)
+        self.iter().flat_map(move |(&(tick, ref event), &count)| {
+            repeat((tick + offset, event.clone())).take(count)
         })
     }
 }
@@ -110,17 +110,6 @@ pub struct TransEqClass<E: Event> {
 
 impl<E: Event> TransEqClass<E> {
     pub fn new(scatter: BTreeSet<NonZero<Tick>>, kernel: TePlane<E>) -> Self {
-        Self { scatter, kernel }
-    }
-
-    /// Extract a TEC from `source` under `scatter` by directed stepwise
-    /// deconvolution: scan ticks in ascending order, commit the minimum
-    /// neighborhood multiplicity, and deduct it.
-    ///
-    /// Precision is lower than conflict-based allocation, but it performs
-    /// well on hot paths.
-    pub fn extract(source: &TePlane<E>, scatter: BTreeSet<NonZero<Tick>>) -> Self {
-        let kernel = stepwise_kernel(source, &scatter);
         Self { scatter, kernel }
     }
 
@@ -177,55 +166,6 @@ impl<E: Event> BitAnd for TransEqClass<E> {
     type Output = Self;
 }
 
-// Kernel extraction
-//
-// ++++++++++++============++++++++++++============++++++++++++============
-
-/// Add `count` to the multiplicity of `event` in `plane`.
-pub(crate) fn add_to<E: Event>(plane: &mut TePlane<E>, event: Point<E>, count: usize) {
-    plane
-        .entry(event)
-        .and_modify(|mult| *mult += count)
-        .or_insert(count);
-}
-
-/// Directed stepwise kernel: scan ticks in ascending order, commit the
-/// minimum multiplicity over each offset neighborhood, and deduct it.
-fn stepwise_kernel<E: Event>(source: &TePlane<E>, scatter: &BTreeSet<NonZero<Tick>>) -> TePlane<E> {
-    let offsets: Vec<Tick> = std::iter::once(0)
-        .chain(scatter.iter().map(|o| o.get()))
-        .collect();
-
-    let mut by_tone: BTreeMap<E, BTreeMap<Tick, usize>> = BTreeMap::new();
-    for (&(tick, ref tone), &count) in source.iter() {
-        if count > 0 {
-            by_tone.entry(tone.clone()).or_default().insert(tick, count);
-        }
-    }
-
-    let mut kernel = TePlane::default();
-    for (tone, capacities) in &by_tone {
-        let mut work = capacities.clone();
-        for &tick in capacities.keys() {
-            let base = offsets
-                .iter()
-                .map(|&offset| work.get(&(tick + offset)).copied().unwrap_or(0))
-                .min()
-                .unwrap_or(0);
-            if base == 0 {
-                continue;
-            }
-            for &offset in &offsets {
-                if let Some(cap) = work.get_mut(&(tick + offset)) {
-                    *cap -= base;
-                }
-            }
-            add_to(&mut kernel, (tick, tone.clone()), base);
-        }
-    }
-    kernel
-}
-
 // Bounded TEC
 //
 // ++++++++++++============++++++++++++============++++++++++++============
@@ -245,12 +185,54 @@ impl<E: Event> BoundedTec<E> {
         let indexes: Vec<Point<E>> = tec.kernel.keys().cloned().sorted().collect();
         for (point, scatter_offset) in iproduct!(indexes, tec.scatter.iter()) {
             let anchor_mult = tec.kernel[&point];
-            let (tick, tone) = point;
-            let shifted = (tick + scatter_offset.get(), tone);
+            let (tick, event) = point;
+            let shifted = (tick + scatter_offset.get(), event);
             let entry = tec.kernel.entry(shifted);
             entry.and_modify(|mult| *mult -= anchor_mult.min(*mult));
         }
         BoundedTec(tec)
+    }
+
+    /// Extract a bounded TEC from `source` under `scatter` by directed
+    /// stepwise deconvolution.
+    ///
+    /// Precision is lower than conflict-based allocation: committing in
+    /// ascending order lets early deductions shape later slots. It performs
+    /// well on hot paths.
+    pub fn extract(source: &TePlane<E>, scatter: BTreeSet<NonZero<Tick>>) -> Self {
+        let offsets: Vec<Tick> = std::iter::once(0)
+            .chain(scatter.iter().map(|o| o.get()))
+            .collect();
+
+        let mut by_event: BTreeMap<E, BTreeMap<Tick, usize>> = BTreeMap::new();
+        for (&(tick, ref event), &count) in source.iter() {
+            let event = by_event.entry(event.clone());
+            event.or_default().insert(tick, count);
+        }
+
+        let mut kernel = TePlane::default();
+        let slots = by_event.iter().flat_map(|(event, capacities)| {
+            let slots = capacities.keys().copied();
+            slots.map(move |tick| (tick, event.clone()))
+        });
+        for (tick, event) in slots.collect::<Vec<Point<E>>>() {
+            let capacities = by_event.get_mut(&event).unwrap();
+            let base = offsets
+                .iter()
+                .map(|&offset| capacities.get(&(tick + offset)).copied().unwrap_or(0))
+                .min()
+                .unwrap_or(0);
+            if base == 0 {
+                continue;
+            }
+            for &offset in &offsets {
+                *capacities.get_mut(&(tick + offset)).unwrap() -= base;
+            }
+            let point = kernel.entry((tick, event));
+            point.and_modify(|mult| *mult += base).or_insert(base);
+        }
+
+        Self(TransEqClass { scatter, kernel })
     }
 
     /// Unwrap into the underlying (already bounded) TEC.
