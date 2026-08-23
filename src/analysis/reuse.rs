@@ -19,7 +19,7 @@
 //!   packing), so the greedy (97%) + short augmenting (98.8%) is the natural
 //!   approximation at the hardness boundary.
 
-use crate::analysis::{Event, Point, TePlane, TransEqClass};
+use crate::analysis::{Event, TePlane, TransEqClass, add_to};
 use crate::types::Tick;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
@@ -28,14 +28,6 @@ use std::num::NonZero;
 // Multiset helpers
 //
 // ++++++++++++============++++++++++++============++++++++++++============
-
-/// Add `count` to the multiplicity of `event` in `plane`.
-fn add_to<E: Event>(plane: &mut TePlane<E>, event: Point<E>, count: usize) {
-    plane
-        .entry(event)
-        .and_modify(|mult| *mult += count)
-        .or_insert(count);
-}
 
 /// Add `count` to the support of `offset`.
 fn add_count(support: &mut BTreeMap<Tick, usize>, offset: Tick, count: usize) {
@@ -88,161 +80,6 @@ pub fn autocorrelation<E: Event>(source: &TePlane<E>) -> BTreeMap<Tick, usize> {
         }
     }
     support
-}
-
-// Kernel
-//
-// ++++++++++++============++++++++++++============++++++++++++============
-
-/// Construct a capacity-safe kernel for the given scatter.
-///
-/// Per-tone greedy least-conflict anchor selection (conflict graph
-/// independent set): commit the minimum multiplicity of the least-conflicting
-/// anchor, deduct it, and repeat. `kernel (+) scatter` is always within
-/// `source` (a heuristic can miss savings but never overdraws the source).
-pub fn feasible_kernel<E: Event>(
-    source: &TePlane<E>,
-    scatter: &BTreeSet<NonZero<Tick>>,
-) -> TePlane<E> {
-    let offsets: Vec<Tick> = std::iter::once(0)
-        .chain(scatter.iter().map(|o| o.get()))
-        .collect();
-
-    let mut by_tone: BTreeMap<E, BTreeMap<Tick, usize>> = BTreeMap::new();
-    for (&(tick, ref tone), &count) in source.iter() {
-        if count > 0 {
-            by_tone.entry(tone.clone()).or_default().insert(tick, count);
-        }
-    }
-
-    let mut kernel = TePlane::default();
-    for (tone, capacities) in &by_tone {
-        kernel_for_tone(tone, capacities, &offsets, &mut kernel);
-    }
-    kernel
-}
-
-/// Per-tone greedy independent set over the anchor conflict graph.
-fn kernel_for_tone<E: Event>(
-    tone: &E,
-    capacities: &BTreeMap<Tick, usize>,
-    offsets: &[Tick],
-    kernel: &mut TePlane<E>,
-) {
-    let mut available = capacities.clone();
-
-    // Anchors: points whose full offset neighborhood still has capacity.
-    let anchors: BTreeSet<Tick> = capacities
-        .keys()
-        .copied()
-        .filter(|&anchor| has_full_neighborhood(capacities, offsets, anchor))
-        .collect();
-
-    // Anchor -> the ticks it covers (anchor + each offset).
-    let covered: BTreeMap<Tick, Vec<Tick>> = anchors
-        .iter()
-        .map(|&anchor| (anchor, covered_ticks(anchor, offsets)))
-        .collect();
-
-    // Tick -> anchors covering it.
-    let mut by_tick: BTreeMap<Tick, BTreeSet<Tick>> = BTreeMap::new();
-    for (&anchor, ticks) in &covered {
-        for &tick in ticks {
-            by_tick.entry(tick).or_default().insert(anchor);
-        }
-    }
-
-    // Least-conflict first (conflict count excluding self), ties by anchor.
-    let mut ranked: BTreeSet<(usize, Tick)> = BTreeSet::new();
-    for (&anchor, ticks) in &covered {
-        let conflicts = conflicting_anchors(&by_tick, ticks);
-        ranked.insert((conflicts.len() - 1, anchor));
-    }
-
-    let mut active: BTreeSet<Tick> = anchors;
-    while let Some(&key) = ranked.iter().next() {
-        ranked.remove(&key);
-        let (_, anchor) = key;
-        if !active.contains(&anchor) {
-            continue;
-        }
-        let ticks = &covered[&anchor];
-        commit_anchor(kernel, tone.clone(), anchor, ticks, &mut available);
-        active.remove(&anchor);
-        for &tick in ticks {
-            expire_depleted(tick, &by_tick, &available, &mut active);
-        }
-    }
-}
-
-/// Whether every offset neighborhood of `anchor` still has capacity.
-fn has_full_neighborhood(
-    capacities: &BTreeMap<Tick, usize>,
-    offsets: &[Tick],
-    anchor: Tick,
-) -> bool {
-    offsets
-        .iter()
-        .all(|&offset| capacities.get(&(anchor + offset)).copied().unwrap_or(0) > 0)
-}
-
-/// Ticks covered by an anchor: anchor + each offset.
-fn covered_ticks(anchor: Tick, offsets: &[Tick]) -> Vec<Tick> {
-    offsets.iter().map(|&offset| anchor + offset).collect()
-}
-
-/// Anchors sharing at least one covered tick with `ticks`.
-fn conflicting_anchors(by_tick: &BTreeMap<Tick, BTreeSet<Tick>>, ticks: &[Tick]) -> BTreeSet<Tick> {
-    let mut conflicts = BTreeSet::new();
-    for &tick in ticks {
-        let Some(anchors) = by_tick.get(&tick) else {
-            continue;
-        };
-        conflicts.extend(anchors);
-    }
-    conflicts
-}
-
-/// Commit the least-conflicting anchor: write its minimum multiplicity into
-/// the kernel and deduct it from the available capacities.
-fn commit_anchor<E: Event>(
-    kernel: &mut TePlane<E>,
-    tone: E,
-    anchor: Tick,
-    ticks: &[Tick],
-    available: &mut BTreeMap<Tick, usize>,
-) {
-    let count = ticks
-        .iter()
-        .map(|tick| available.get(tick).copied().unwrap_or(0))
-        .min()
-        .unwrap_or(0);
-    if count == 0 {
-        return;
-    }
-    add_to(kernel, (anchor, tone), count);
-    for &tick in ticks {
-        let Some(cap) = available.get_mut(&tick) else {
-            continue;
-        };
-        *cap -= count;
-    }
-}
-
-/// Drop anchors whose covered ticks are fully consumed from the active set.
-fn expire_depleted(
-    tick: Tick,
-    by_tick: &BTreeMap<Tick, BTreeSet<Tick>>,
-    available: &BTreeMap<Tick, usize>,
-    active: &mut BTreeSet<Tick>,
-) {
-    if available.get(&tick).copied().unwrap_or(0) > 0 {
-        return;
-    }
-    let Some(anchors) = by_tick.get(&tick) else {
-        return;
-    };
-    active.retain(|a| !anchors.contains(a));
 }
 
 // Family deep-first
@@ -304,11 +141,10 @@ pub fn family_deep_first<E: Event>(
         let scatter: BTreeSet<NonZero<Tick>> = (1..n)
             .map(|i| NonZero::new((i as Tick) * d).unwrap())
             .collect();
-        let kernel = feasible_kernel(&work, &scatter);
+        let tec = TransEqClass::extract(&work, scatter);
         if n == 2 {
-            penalty = nested_penalty(&kernel, d, &work);
+            penalty = nested_penalty(&tec.kernel, d, &work);
         }
-        let tec = TransEqClass::new(scatter, kernel);
         let gain = tec.reuse();
         if gain <= 0 {
             continue;
@@ -441,18 +277,17 @@ pub fn reuse_flow_beam<E: Event>(
                         let scatter: BTreeSet<NonZero<Tick>> = (1..n)
                             .map(|i| NonZero::new((i as Tick) * d).unwrap())
                             .collect();
-                        let kernel = feasible_kernel(&path.work, &scatter);
-                        let gain = kernel.values().sum::<usize>() * scatter.len();
+                        let tec = TransEqClass::extract(&path.work, scatter);
+                        let gain = tec.reuse();
                         if gain == 0 {
                             continue;
                         }
-                        cand.push((scatter, gain));
+                        cand.push((tec.scatter, gain));
                     }
                 }
                 cand.sort_by(|a, b| b.1.cmp(&a.1));
                 for (scatter, gain) in cand.into_iter().take(beam) {
-                    let kernel = feasible_kernel(&path.work, &scatter);
-                    let tec = TransEqClass::new(scatter, kernel);
+                    let tec = TransEqClass::extract(&path.work, scatter);
                     let work = subtract_exact(&path.work, &tec.expand());
                     let mut layers = path.layers.clone();
                     layers.push((tec.scatter, gain));
@@ -474,8 +309,7 @@ pub fn reuse_flow_beam<E: Event>(
             break;
         };
         for (scatter, gain) in best.layers {
-            let kernel = feasible_kernel(&residual, &scatter);
-            let tec = TransEqClass::new(scatter, kernel);
+            let tec = TransEqClass::extract(&residual, scatter);
             total_reuse += gain;
             residual = subtract_exact(&residual, &tec.expand());
             plan.push(tec);
@@ -502,8 +336,7 @@ pub fn manual_flow<E: Event>(
             .filter(|&t| t != 0)
             .filter_map(NonZero::new)
             .collect();
-        let kernel = feasible_kernel(&residual, &scatter);
-        let tec = TransEqClass::new(scatter, kernel);
+        let tec = TransEqClass::extract(&residual, scatter);
         let gain = tec.reuse();
         if gain == 0 {
             continue;

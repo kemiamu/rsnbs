@@ -8,7 +8,7 @@ use crate::note::Notes;
 use crate::types::{Tick, TimeAnchor};
 use counter::Counter;
 use itertools::{Itertools, iproduct};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::iter::repeat;
@@ -113,6 +113,17 @@ impl<E: Event> TransEqClass<E> {
         Self { scatter, kernel }
     }
 
+    /// Extract a TEC from `source` under `scatter` by directed stepwise
+    /// deconvolution: scan ticks in ascending order, commit the minimum
+    /// neighborhood multiplicity, and deduct it.
+    ///
+    /// Precision is lower than conflict-based allocation, but it performs
+    /// well on hot paths.
+    pub fn extract(source: &TePlane<E>, scatter: BTreeSet<NonZero<Tick>>) -> Self {
+        let kernel = stepwise_kernel(source, &scatter);
+        Self { scatter, kernel }
+    }
+
     /// Offsets including the implied zero, ascending.
     pub fn offsets(&self) -> impl Iterator<Item = Tick> {
         std::iter::once(0).chain(self.scatter.iter().map(|o| o.get()))
@@ -166,6 +177,55 @@ impl<E: Event> BitAnd for TransEqClass<E> {
     type Output = Self;
 }
 
+// Kernel extraction
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// Add `count` to the multiplicity of `event` in `plane`.
+pub(crate) fn add_to<E: Event>(plane: &mut TePlane<E>, event: Point<E>, count: usize) {
+    plane
+        .entry(event)
+        .and_modify(|mult| *mult += count)
+        .or_insert(count);
+}
+
+/// Directed stepwise kernel: scan ticks in ascending order, commit the
+/// minimum multiplicity over each offset neighborhood, and deduct it.
+fn stepwise_kernel<E: Event>(source: &TePlane<E>, scatter: &BTreeSet<NonZero<Tick>>) -> TePlane<E> {
+    let offsets: Vec<Tick> = std::iter::once(0)
+        .chain(scatter.iter().map(|o| o.get()))
+        .collect();
+
+    let mut by_tone: BTreeMap<E, BTreeMap<Tick, usize>> = BTreeMap::new();
+    for (&(tick, ref tone), &count) in source.iter() {
+        if count > 0 {
+            by_tone.entry(tone.clone()).or_default().insert(tick, count);
+        }
+    }
+
+    let mut kernel = TePlane::default();
+    for (tone, capacities) in &by_tone {
+        let mut work = capacities.clone();
+        for &tick in capacities.keys() {
+            let base = offsets
+                .iter()
+                .map(|&offset| work.get(&(tick + offset)).copied().unwrap_or(0))
+                .min()
+                .unwrap_or(0);
+            if base == 0 {
+                continue;
+            }
+            for &offset in &offsets {
+                if let Some(cap) = work.get_mut(&(tick + offset)) {
+                    *cap -= base;
+                }
+            }
+            add_to(&mut kernel, (tick, tone.clone()), base);
+        }
+    }
+    kernel
+}
+
 // Bounded TEC
 //
 // ++++++++++++============++++++++++++============++++++++++++============
@@ -178,6 +238,9 @@ pub struct BoundedTec<E: Event>(TransEqClass<E>);
 impl<E: Event> BoundedTec<E> {
     /// Deducts each point's covered multiplicity from its shifted copies,
     /// keeping the kernel expansion within the TEC's points.
+    ///
+    /// The pruning is lossy: it trades precision for performance and lower
+    /// mental overhead, with the arithmetic constraint carried by the type.
     pub fn new(mut tec: TransEqClass<E>) -> Self {
         let indexes: Vec<Point<E>> = tec.kernel.keys().cloned().sorted().collect();
         for (point, scatter_offset) in iproduct!(indexes, tec.scatter.iter()) {
