@@ -321,38 +321,6 @@ pub fn reuse_flow_beam<E: Event>(
     (plan, total_reuse, residual)
 }
 
-/// Apply scatter rules in order, extracting a kernel per rule and subtracting
-/// its expansion from the working set. Returns `(plan, total_reuse, residual)`.
-pub fn manual_flow<E: Event>(
-    source: &TePlane<E>,
-    rules: &[Vec<Tick>],
-) -> (Vec<TransEqClass<E>>, usize, TePlane<E>) {
-    let mut residual = source.clone();
-    let mut plan: Vec<TransEqClass<E>> = Vec::new();
-    let mut total_reuse = 0;
-
-    for rule in rules {
-        let scatter: BTreeSet<NonZero<Tick>> = rule
-            .iter()
-            .copied()
-            .filter(|&t| t != 0)
-            .filter_map(NonZero::new)
-            .collect();
-        if scatter.is_empty() {
-            continue;
-        }
-        let tec = BoundedTec::extract_from(&mut residual, scatter).into_inner();
-        let gain = tec.reuse();
-        if gain == 0 {
-            continue;
-        }
-        total_reuse += gain;
-        plan.push(tec);
-    }
-
-    (plan, total_reuse, residual)
-}
-
 // Layout adaptation
 //
 // ++++++++++++============++++++++++++============++++++++++++============

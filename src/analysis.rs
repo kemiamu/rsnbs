@@ -100,7 +100,7 @@ impl<E: Event> DerefMut for TePlane<E> {
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// Translation Equivalence Class (TEC)
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TransEqClass<E: Event> {
     /// Translation offsets (scatter, ascending, excluding 0: zero is implied).
     pub scatter: BTreeSet<NonZero<Tick>>,
@@ -172,7 +172,7 @@ impl<E: Event> BitAnd for TransEqClass<E> {
 
 /// A TEC whose kernel expansion stays within its points:
 /// `kernel (+) scatter <= points`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BoundedTec<E: Event>(TransEqClass<E>);
 
 impl<E: Event> BoundedTec<E> {

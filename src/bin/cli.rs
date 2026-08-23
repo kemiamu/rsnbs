@@ -1,13 +1,13 @@
 use clap::Parser;
-use rsnbs::analysis::reuse::{manual_flow, plan_to_tecs, reuse_flow};
-use rsnbs::analysis::{BoundedTec, TePlane};
+use rsnbs::analysis::reuse::{plan_to_tecs, reuse_flow};
+use rsnbs::analysis::{BoundedTec, TePlane, TransEqClass};
 use rsnbs::note::{Note, Notes, Tone};
 use rsnbs::schematic::{Layout, MultiCompactLayout, MultiLinearLayout, SchematicBuilder};
 use rsnbs::schematic::{StackedLinearLayout, TappedLayout, WithFloor};
 use rsnbs::song::Song;
 use rsnbs::types::{Tick, TimeAnchor};
 use rustmatica::Litematic;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZero;
 use std::path::Path;
 use std::str::FromStr;
@@ -166,16 +166,10 @@ impl Decompose {
             0 => usize::MAX,
             n => n,
         };
-        let (plan, total_reuse, residual) = reuse_flow(&all_plane, 6, max_layers);
-
-        let residual_events = residual.values().sum::<usize>();
-        eprintln!("total reuse = {total_reuse}, residual events = {residual_events}");
+        let (plan, _, residual) = reuse_flow(&all_plane, 6, max_layers);
 
         // 物化适配：延迟线最小间距限制内的层进入 TEC，其余退回残差
-        let (tecs, skipped) = plan_to_tecs(plan, residual);
-        if skipped > 0 {
-            eprintln!("  {skipped} layer(s) skipped: min gap < 8");
-        }
+        let (tecs, _) = plan_to_tecs(plan, residual);
 
         let layout = TappedLayout::new(
             tecs.into_iter().map(BoundedTec::new),
@@ -214,31 +208,30 @@ struct Match {
 impl Match {
     fn run(self) {
         let song = open_song(&self.input);
-        let all_plane: TePlane<Tone> =
+        let mut residual: TePlane<Tone> =
             TePlane::from_iter(song.notes.rescale_to_redstone_tick(song.header.tempo));
 
+        // normalize rules.
         let rules = self.rules.into_iter().map(|Rule(mut scatter)| {
-            scatter.push(0);
             scatter.sort_unstable();
             scatter.dedup();
             scatter
         });
-        let rules: Vec<Vec<Tick>> = rules.collect();
 
-        let (plan, total_reuse, residual) = manual_flow(&all_plane, &rules);
-        let residual_events = residual.values().sum::<usize>();
-        eprintln!("total reuse = {total_reuse}, residual events = {residual_events}");
-
-        let (tecs, skipped) = plan_to_tecs(plan, residual);
-        if skipped > 0 {
-            eprintln!("  {skipped} layer(s) skipped: min gap < 8");
+        // one TEC each.
+        let mut tecs: Vec<BoundedTec<Tone>> = Vec::new();
+        for rule in rules {
+            let scatter: BTreeSet<_> = rule.into_iter().filter_map(NonZero::new).collect();
+            tecs.push(BoundedTec::extract_from(&mut residual, scatter));
         }
 
-        let layout = TappedLayout::new(
-            tecs.into_iter().map(BoundedTec::new),
-            NonZero::new(self.wrap),
-            self.floor,
-        );
+        // keep the rest.
+        if !residual.is_empty() {
+            let offsets = Default::default();
+            tecs.push(BoundedTec::new(TransEqClass::new(offsets, residual)));
+        }
+
+        let layout = TappedLayout::new(tecs, NonZero::new(self.wrap), self.floor);
         let description = format!("Match from {}", self.input);
         let litematic = build_schematic(layout, Floor::None, description);
         write_output(&self.output, litematic);
