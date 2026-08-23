@@ -56,7 +56,7 @@ pub fn subtract_exact<E: Event>(source: &TePlane<E>, consumed: &TePlane<E>) -> T
             have >= *count,
             "coverage exceeds source multiplicity at {event:?}"
         );
-        out.entry(event.clone()).and_modify(|mult| *mult -= count);
+        out.entry(*event).and_modify(|mult| *mult -= count);
     }
     out.retain(|_, mult| *mult > 0);
     out
@@ -73,10 +73,7 @@ pub fn autocorrelation<E: Event>(source: &TePlane<E>) -> BTreeMap<Tick, usize> {
     let mut by_event: BTreeMap<E, BTreeMap<Tick, usize>> = BTreeMap::new();
     for (&(tick, ref event), &count) in source.iter() {
         if count > 0 {
-            by_event
-                .entry(event.clone())
-                .or_default()
-                .insert(tick, count);
+            by_event.entry(*event).or_default().insert(tick, count);
         }
     }
 
@@ -111,12 +108,8 @@ pub fn nested_penalty<E: Event>(kernel: &TePlane<E>, d: Tick, work: &TePlane<E>)
                 continue;
             }
             let step = d / k;
-            let nested = (1..k).all(|i| {
-                work.get(&(anchor + i * step, event.clone()))
-                    .copied()
-                    .unwrap_or(0)
-                    > 0
-            });
+            let nested =
+                (1..k).all(|i| work.get(&(anchor + i * step, *event)).copied().unwrap_or(0) > 0);
             if nested {
                 penalty += (k as usize - 1) * count;
                 break;
@@ -383,7 +376,7 @@ pub fn plan_to_tecs<E: Event>(
         if tec.min_gap().is_none_or(|gap| gap < 8) {
             let expansion = tec.expand();
             for (event, count) in expansion.iter() {
-                add_to(&mut residual, event.clone(), *count);
+                add_to(&mut residual, *event, *count);
             }
             skipped += 1;
             continue;
@@ -427,7 +420,7 @@ mod tests {
         let mut total = residual.clone();
         for tec in plan {
             for (event, count) in tec.expand().iter() {
-                add_to(&mut total, event.clone(), *count);
+                add_to(&mut total, *event, *count);
             }
         }
         assert_eq!(&total, source);

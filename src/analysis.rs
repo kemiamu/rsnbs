@@ -26,8 +26,8 @@ pub mod reuse;
 /// In the design document this is a tone, which may be any enum type;
 /// `note::Notes` uses the same word for its value type. `Event` is the
 /// minimal capability set the plane and TEC machinery need from it.
-pub trait Event: Hash + Eq + Ord + Clone + Debug {}
-impl<T: Hash + Eq + Ord + Clone + Debug> Event for T {}
+pub trait Event: Hash + Eq + Ord + Copy + Debug {}
+impl<T: Hash + Eq + Ord + Copy + Debug> Event for T {}
 
 // TePlane
 //
@@ -58,7 +58,7 @@ impl<E: Event> TePlane<E> {
     /// Shift every point by `offset`, expanding multiplicity.
     pub fn translated(&self, offset: Tick) -> impl Iterator<Item = Point<E>> {
         self.iter().flat_map(move |(&(tick, ref event), &count)| {
-            repeat((tick + offset, event.clone())).take(count)
+            repeat((tick + offset, *event)).take(count)
         })
     }
 }
@@ -182,7 +182,7 @@ impl<E: Event> BoundedTec<E> {
     /// The pruning is lossy: it trades precision for performance and lower
     /// mental overhead, with the arithmetic constraint carried by the type.
     pub fn new(mut tec: TransEqClass<E>) -> Self {
-        let indexes: Vec<Point<E>> = tec.kernel.keys().cloned().sorted().collect();
+        let indexes: Vec<Point<E>> = tec.kernel.keys().copied().sorted().collect();
         for (point, scatter_offset) in iproduct!(indexes, tec.scatter.iter()) {
             let anchor_mult = tec.kernel[&point];
             let (tick, event) = point;
@@ -202,31 +202,28 @@ impl<E: Event> BoundedTec<E> {
     /// backward, so the frontier advances monotonically. Does not apply to
     /// cyclic spaces where the axis wraps around.
     pub fn extract_from(source: &mut TePlane<E>, scatter: BTreeSet<NonZero<Tick>>) -> Self {
-        let plane = std::mem::take(source);
         let offsets: Vec<Tick> = scatter.iter().map(|o| o.get()).collect();
-        let mut work: BTreeMap<(Tick, &E), usize> = plane
-            .iter()
-            .map(|(&(tick, ref event), &count)| ((tick, event), count))
-            .collect();
+        let TePlane(inner) = std::mem::take(source);
+        let mut plane: BTreeMap<Point<E>, usize> = FromIterator::from_iter(inner);
 
         let mut kernel = TePlane::default();
-        while let Some((_point @ (tick, event), capacity)) = work.pop_first() {
+        while let Some(((tick, event), capacity)) = plane.pop_first() {
             let slots = offsets.iter().map(|&offset| {
-                let cap = work.get(&(tick + offset, event));
+                let cap = plane.get(&(tick + offset, event));
                 cap.copied().unwrap_or(0)
             });
             let base = slots.fold(capacity, usize::min);
             let rest = capacity - base;
             if rest > 0 {
-                source.entry((tick, event.clone())).or_insert(rest);
+                source.entry((tick, event)).or_insert(rest);
             }
             if base == 0 {
                 continue;
             }
             for &offset in &offsets {
-                *work.get_mut(&(tick + offset, event)).unwrap() -= base;
+                *plane.get_mut(&(tick + offset, event)).unwrap() -= base;
             }
-            let anchor = kernel.entry((tick, event.clone()));
+            let anchor = kernel.entry((tick, event));
             anchor.and_modify(|mult| *mult += base).or_insert(base);
         }
 
