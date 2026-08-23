@@ -1,47 +1,18 @@
 //! Generate Minecraft litematic projections from NBS songs.
 
-pub use self::blocks::*;
-pub use self::compact::*;
-pub use self::linear::*;
-pub use self::tapped::*;
 use itertools::iproduct;
 use mcdata::{BlockState, GenericBlockState, util::BlockPos};
 use rustmatica::{Litematic, Region};
 use std::borrow::Cow;
 
+pub use self::blocks::*;
+pub use self::compact::*;
+pub use self::linear::*;
+pub use self::tapped::*;
 mod blocks;
 mod compact;
 mod linear;
 mod tapped;
-
-// SchematicBuilder
-//
-// ++++++++++++============++++++++++++============++++++++++++============
-
-/// Output a [`Layout`] as a litematic file.
-///
-/// Example: `SchematicBuilder(layout).build("Song", "Me")`
-pub struct SchematicBuilder<L: Layout>(pub L);
-
-impl<L: Layout> SchematicBuilder<L> {
-    /// Iterate every position in the layout's bounding box and produce a litematic.
-    pub fn build(
-        self,
-        description: impl Into<Cow<'static, str>>,
-        author: impl Into<Cow<'static, str>>,
-    ) -> Litematic {
-        let SchematicBuilder(layout) = self;
-        let size = layout.size();
-        const NAME: &str = "Note Block Track Schematic";
-        let mut region: Region<GenericBlockState> = Region::new(NAME, BlockPos::ORIGIN, size);
-
-        for (y, z, x) in iproduct!(0..size.y, 0..size.z, 0..size.x) {
-            let pos = BlockPos::new(x, y, z);
-            region.set_block(pos, layout.get_block(pos));
-        }
-        region.as_litematic(description, author)
-    }
-}
 
 // Layout trait
 //
@@ -73,6 +44,23 @@ pub trait Layout {
     fn contains(&self, pos: BlockPos) -> bool {
         let size = self.size();
         (0..size.x).contains(&pos.x) && (0..size.y).contains(&pos.y) && (0..size.z).contains(&pos.z)
+    }
+
+    /// Build a litematic projection of this layout.
+    fn as_litematic(
+        &self,
+        description: impl Into<Cow<'static, str>>,
+        author: impl Into<Cow<'static, str>>,
+    ) -> Litematic {
+        const NAME: &str = "Note Block Track Schematic";
+        let size = self.size();
+        let mut region: Region<GenericBlockState> = Region::new(NAME, BlockPos::ORIGIN, size);
+
+        for (y, z, x) in iproduct!(0..size.y, 0..size.z, 0..size.x) {
+            let pos = BlockPos::new(x, y, z);
+            region.set_block(pos, self.get_block(pos));
+        }
+        region.as_litematic(description, author)
     }
 }
 

@@ -2,7 +2,7 @@ use clap::Parser;
 use rsnbs::analysis::reuse::{plan_to_tecs, reuse_flow};
 use rsnbs::analysis::{BoundedTec, TePlane, TransEqClass};
 use rsnbs::note::{Note, Notes, Tone};
-use rsnbs::schematic::{Layout, MultiCompactLayout, MultiLinearLayout, SchematicBuilder};
+use rsnbs::schematic::{Layout, MultiCompactLayout, MultiLinearLayout};
 use rsnbs::schematic::{StackedLinearLayout, TappedLayout, WithFloor};
 use rsnbs::song::Song;
 use rsnbs::types::{Tick, TimeAnchor};
@@ -261,8 +261,8 @@ impl FromStr for Rule {
 fn build_schematic<L: Layout>(layout: L, floor: Floor, description: String) -> Litematic {
     const AUTHOR: &str = "rsnbs";
     match floor {
-        Floor::None => SchematicBuilder(layout).build(description, AUTHOR),
-        _ => SchematicBuilder(WithFloor::new(layout, floor.full())).build(description, AUTHOR),
+        Floor::None => layout.as_litematic(description, AUTHOR),
+        _ => WithFloor::new(layout, floor.full()).as_litematic(description, AUTHOR),
     }
 }
 
