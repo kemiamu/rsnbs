@@ -145,7 +145,8 @@ pub fn family_deep_first<E: Event>(
         let scatter: BTreeSet<NonZero<Tick>> = (1..n)
             .map(|i| NonZero::new((i as Tick) * d).unwrap())
             .collect();
-        let tec = BoundedTec::extract(&work, scatter).into_inner();
+        let mut candidate = work.clone();
+        let tec = BoundedTec::extract_from(&mut candidate, scatter).into_inner();
         if n == 2 {
             penalty = nested_penalty(&tec.kernel, d, &work);
         }
@@ -154,9 +155,8 @@ pub fn family_deep_first<E: Event>(
             continue;
         }
         total += gain;
-        let expansion = tec.expand();
         layers.push(tec);
-        work = subtract_exact(&work, &expansion);
+        work = candidate;
     }
     (total, layers, penalty)
 }
@@ -272,7 +272,7 @@ pub fn reuse_flow_beam<E: Event>(
                     continue;
                 };
                 let threshold = ms / (max_len - 1);
-                let mut cand: Vec<(BTreeSet<NonZero<Tick>>, usize)> = Vec::new();
+                let mut cand: Vec<(usize, TransEqClass<E>)> = Vec::new();
                 for (&d, &v) in &sup {
                     if v <= threshold {
                         continue;
@@ -286,12 +286,11 @@ pub fn reuse_flow_beam<E: Event>(
                         if gain == 0 {
                             continue;
                         }
-                        cand.push((tec.scatter, gain));
+                        cand.push((gain, tec));
                     }
                 }
-                cand.sort_by(|a, b| b.1.cmp(&a.1));
-                for (scatter, gain) in cand.into_iter().take(beam) {
-                    let tec = BoundedTec::extract(&path.work, scatter).into_inner();
+                cand.sort_by(|a, b| b.0.cmp(&a.0));
+                for (gain, tec) in cand.into_iter().take(beam) {
                     let work = subtract_exact(&path.work, &tec.expand());
                     let mut layers = path.layers.clone();
                     layers.push((tec.scatter, gain));
