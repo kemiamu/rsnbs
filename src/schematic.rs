@@ -21,29 +21,23 @@ mod tapped;
 /// A queryable projection layout.
 pub trait Layout {
     /// Block at the given world position, assumed to be in bounds.
-    fn block_at(&self, pos: BlockPos) -> GenericBlockState;
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState>;
 
     /// Total size of the bounding box.
     fn size(&self) -> BlockPos;
 
     /// Block at the given world position; panics on out-of-bounds access.
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+    fn get_block(&self, pos: BlockPos) -> Option<GenericBlockState> {
         debug_assert!(self.contains(pos), "block out of bounds");
         self.block_at(pos)
     }
 
-    /// Block at the given world position; out-of-bounds access yields air.
-    fn get_block_or_air(&self, pos: BlockPos) -> GenericBlockState {
+    /// Block at the given world position, which may miss the bounding box.
+    fn get_block_or_air(&self, pos: BlockPos) -> Option<GenericBlockState> {
         match self.contains(pos) {
             true => self.block_at(pos),
-            false => air(),
+            false => None,
         }
-    }
-
-    /// Block at the given world position; None when it is air.
-    fn try_get_block(&self, pos: BlockPos) -> Option<GenericBlockState> {
-        let block = self.get_block(pos);
-        (block.name != "minecraft:air").then_some(block)
     }
 
     /// Whether `pos` is inside the bounding box.
@@ -64,7 +58,7 @@ pub trait Layout {
 
         for (y, z, x) in iproduct!(0..size.y, 0..size.z, 0..size.x) {
             let pos = BlockPos::new(x, y, z);
-            region.set_block(pos, self.get_block(pos));
+            region.set_block(pos, self.get_block(pos).unwrap_or_else(air));
         }
         region.as_litematic(description, author)
     }
@@ -90,7 +84,7 @@ impl<L: Layout> EdgeArranged<L> {
 }
 
 impl<L: Layout> Layout for EdgeArranged<L> {
-    fn block_at(&self, pos: BlockPos) -> GenericBlockState {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
         self.inner.get_block(pos)
     }
 
@@ -131,12 +125,11 @@ impl<L: Layout> Arranged<L> {
 }
 
 impl<L: Layout> Layout for Arranged<L> {
-    fn block_at(&self, pos: BlockPos) -> GenericBlockState {
-        let found = self
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        let index = self
             .bands
             .partition_point(|(_, a)| a.y <= pos.y && a.z <= pos.z && a.x <= pos.x)
-            .checked_sub(1);
-        let Some(index) = found else { return air() };
+            .checked_sub(1)?;
 
         let (layout, anchor) = &self.bands[index];
         let local = BlockPos::new(pos.x - anchor.x, pos.y - anchor.y, pos.z - anchor.z);
@@ -188,14 +181,13 @@ impl<L: Layout> EvenArranged<L> {
 }
 
 impl<L: Layout> Layout for EvenArranged<L> {
-    fn block_at(&self, pos: BlockPos) -> GenericBlockState {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
         let offset = self.pitch.dot(pos);
         let start = (offset / self.spacing).min(self.items.len() as i32 - 1);
         let low = 0.max((offset - self.cell).div_euclid(self.spacing) + 1);
         (low..=start)
             .rev()
-            .find_map(|index| self.items[index as usize].try_get_block(pos - self.pitch * index))
-            .unwrap_or_else(air)
+            .find_map(|index| self.items[index as usize].get_block_or_air(pos - self.pitch * index))
     }
 
     fn size(&self) -> BlockPos {
@@ -234,13 +226,10 @@ impl<L: Layout> Anchored<L> {
 
 #[allow(deprecated)]
 impl<L: Layout> Layout for Anchored<L> {
-    fn block_at(&self, pos: BlockPos) -> GenericBlockState {
-        let found = self.entries.iter().find_map(|(layout, anchor)| {
-            let local = pos - *anchor;
-            layout.contains(local).then(|| layout.get_block(local))
-        });
-
-        found.unwrap_or_else(air)
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        self.entries
+            .iter()
+            .find_map(|(layout, anchor)| layout.get_block_or_air(pos - *anchor))
     }
 
     fn size(&self) -> BlockPos {
@@ -267,7 +256,7 @@ impl<L: Layout> Reverse<L> {
 }
 
 impl<L: Layout> Layout for Reverse<L> {
-    fn block_at(&self, pos: BlockPos) -> GenericBlockState {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
         let size = self.layout.size();
         let orig = pos + self.sign * (size - BlockPos::new(1, 1, 1) - pos * 2);
         self.layout.get_block(orig)
@@ -297,16 +286,11 @@ impl<L: Layout> WithFloor<L> {
 }
 
 impl<L: Layout> Layout for WithFloor<L> {
-    fn block_at(&self, pos: BlockPos) -> GenericBlockState {
-        let floor = || match self.full {
-            true => floor_block(),
-            false if self.layout.get_block(pos).needs_floor() => floor_block(),
-            false => air(),
-        };
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
         let local_pos = || BlockPos::new(pos.x, pos.y - 1, pos.z);
-
         match pos.y {
-            0 => floor(),
+            0 if self.full => Some(floor_block()),
+            0 if self.layout.get_block(pos).is_some_and(|b| b.needs_floor()) => Some(floor_block()),
             _ => self.layout.get_block(local_pos()),
         }
     }

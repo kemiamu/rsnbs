@@ -34,7 +34,7 @@ impl MultiLinearLayout {
 }
 
 impl Layout for MultiLinearLayout {
-    fn block_at(&self, pos: BlockPos) -> GenericBlockState {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
         self.0.get_block(pos)
     }
 
@@ -75,7 +75,7 @@ impl StackedLinearLayout {
 }
 
 impl Layout for StackedLinearLayout {
-    fn block_at(&self, pos: BlockPos) -> GenericBlockState {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
         self.0.get_block(pos)
     }
 
@@ -147,17 +147,17 @@ impl LinearLayout {
         }
     }
 
-    fn turn_block(idx: i32) -> GenericBlockState {
+    fn turn_block(idx: i32) -> Option<GenericBlockState> {
         match idx {
-            0 => chain_block(),
-            1 => redstone_wire(),
-            _ => air(),
+            0 => Some(chain_block()),
+            1 => Some(redstone_wire()),
+            _ => None,
         }
     }
 }
 
 impl Layout for LinearLayout {
-    fn block_at(&self, pos: BlockPos) -> GenericBlockState {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
         let width = self.track.width();
         let pitch = width + self.track.gap as i32;
         let gap = self.track.gap as i32;
@@ -205,7 +205,7 @@ impl Layout for LinearLayout {
             return self.track.get_block(cell, col, local_pos);
         }
 
-        air()
+        None
     }
 
     fn size(&self) -> BlockPos {
@@ -244,7 +244,7 @@ impl Track {
         }
     }
 
-    fn get_block(&self, row: i32, col: i32, local_pos: BlockPos) -> GenericBlockState {
+    fn get_block(&self, row: i32, col: i32, local_pos: BlockPos) -> Option<GenericBlockState> {
         let BlockPos {
             x: easting,
             y: elevation,
@@ -275,30 +275,30 @@ impl Track {
             .is_some();
 
         match (has_branch, is_piston, easting, southing, elevation) {
-            (true, true, 3, 1, 1) => sticky_piston("west"),
-            (true, true, 2, 1, 1) => redstone_block(),
-            (true, true, 1, 2, 0) => inst_block(note(branch_tick, 0), air),
-            (true, true, 1, 2, 1) => note_block(note(branch_tick, 0), air),
-            (true, true, 0, 1, 0) => inst_block(note(branch_tick, 1), air),
-            (true, true, 0, 1, 1) => note_block(note(branch_tick, 1), air),
+            (true, true, 3, 1, 1) => Some(sticky_piston("west")),
+            (true, true, 2, 1, 1) => Some(redstone_block()),
+            (true, true, 1, 2, 0) => Some(inst_block(note(branch_tick, 0), air)),
+            (true, true, 1, 2, 1) => Some(note_block(note(branch_tick, 0), air)),
+            (true, true, 0, 1, 0) => Some(inst_block(note(branch_tick, 1), air)),
+            (true, true, 0, 1, 1) => Some(note_block(note(branch_tick, 1), air)),
 
-            (true, false, 3, 1, 0) => chain_block(),
-            (true, false, 3, 1, 1) => repeater((scale / 2).to_string(), "east", false),
-            (true, false, 1, 1, 0) => inst_block(note(branch_tick, 0), chain_block),
-            (true, false, 1, 1, 1) => note_block(note(branch_tick, 0), chain_block),
-            (true, false, 0, 1, 0) => inst_block(note(branch_tick, 1), air),
-            (true, false, 0, 1, 1) => note_block(note(branch_tick, 1), air),
+            (true, false, 3, 1, 0) => Some(chain_block()),
+            (true, false, 3, 1, 1) => Some(repeater((scale / 2).to_string(), "east", false)),
+            (true, false, 1, 1, 0) => Some(inst_block(note(branch_tick, 0), chain_block)),
+            (true, false, 1, 1, 1) => Some(note_block(note(branch_tick, 0), chain_block)),
+            (true, false, 0, 1, 0) => Some(inst_block(note(branch_tick, 1), air)),
+            (true, false, 0, 1, 1) => Some(note_block(note(branch_tick, 1), air)),
 
-            (_, _, 4, 0, 0) => chain_block(),
-            (_, _, 4, 0, 1) => repeater(scale.to_string(), repeater_facing, false),
-            (_, _, 4, 1, 0) => inst_block(note(0, 0), chain_block),
-            (_, _, 4, 1, 1) => note_block(note(0, 0), chain_block),
-            (_, _, 5, 1, 0) => inst_block(note(0, 1), air),
-            (_, _, 5, 1, 1) => note_block(note(0, 1), air),
-            (false, _, 3, 1, 0) => inst_block(note(0, 2), air),
-            (false, _, 3, 1, 1) => note_block(note(0, 2), air),
+            (_, _, 4, 0, 0) => Some(chain_block()),
+            (_, _, 4, 0, 1) => Some(repeater(scale.to_string(), repeater_facing, false)),
+            (_, _, 4, 1, 0) => Some(inst_block(note(0, 0), chain_block)),
+            (_, _, 4, 1, 1) => Some(note_block(note(0, 0), chain_block)),
+            (_, _, 5, 1, 0) => Some(inst_block(note(0, 1), air)),
+            (_, _, 5, 1, 1) => Some(note_block(note(0, 1), air)),
+            (false, _, 3, 1, 0) => Some(inst_block(note(0, 2), air)),
+            (false, _, 3, 1, 1) => Some(note_block(note(0, 2), air)),
 
-            _ => air(),
+            _ => None,
         }
     }
 
