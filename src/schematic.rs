@@ -152,33 +152,35 @@ impl<L: Layout> Layout for Arranged<L> {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// Arranges sub-layouts along an [`Axis`] at a uniform pitch (cell + gap),
-/// where the cell width is the supremum of the axial projections and the
-/// pitch is constrained non-negative, bounding the gap below by `-cell`.
+/// Arranges sub-layouts along the direction of `pitch`: item `i` is anchored
+/// at `i * pitch`, the anchor spacing being the `pitch` vector itself.
+///
+/// Query cost is O(k) with `k` the candidate window width, independent of
+/// the item count. `pitch` must be component-wise non-negative and not all zero.
 pub struct EvenArranged<L: Layout> {
     items: Vec<L>,
-    unit: Mask,
-    pitch: i32,
+    pitch: BlockPos,
+    spacing: i32,
     cell: i32,
     size: BlockPos,
 }
 
 impl<L: Layout> EvenArranged<L> {
-    pub fn new<I: IntoIterator<Item = L>>(items: I, axis: Axis, gap: i32) -> Self {
-        let unit = axis.unit();
+    pub fn new<I: IntoIterator<Item = L>>(items: I, pitch: BlockPos) -> Self {
         let items: Vec<L> = FromIterator::from_iter(items);
         let extent = items
             .iter()
-            .fold(BlockPos::ORIGIN, |e, l| include(e, l.size()));
-        let cell = unit.dot(extent);
-        let pitch = cell + gap;
-        let size = include(unit * (pitch * items.len() as i32 - gap), extent);
+            .map(Layout::size)
+            .fold(BlockPos::ORIGIN, include);
+        let spacing = pitch.dot(pitch);
+        let cell = pitch.dot(extent);
+        let size = include(pitch * (items.len() as i32 - 1) + extent, BlockPos::ORIGIN);
 
-        assert!(pitch >= 0, "pitch must be non-negative");
+        assert!(spacing > 0 && pitch == pitch.abs());
         Self {
             items,
-            unit,
             pitch,
+            spacing,
             cell,
             size,
         }
@@ -187,14 +189,13 @@ impl<L: Layout> EvenArranged<L> {
 
 impl<L: Layout> Layout for EvenArranged<L> {
     fn block_at(&self, pos: BlockPos) -> GenericBlockState {
-        let offset = self.unit.dot(pos);
-        let start = (offset / self.pitch).min(self.items.len() as i32 - 1);
-        let low = 0.max((offset - self.cell).div_euclid(self.pitch) + 1);
-        let hit = (low..=start).rev().find_map(|index| {
-            let anchor = self.unit * (index * self.pitch);
-            self.items[index as usize].try_get_block(pos - anchor)
-        });
-        hit.unwrap_or_else(air)
+        let offset = self.pitch.dot(pos);
+        let start = (offset / self.spacing).min(self.items.len() as i32 - 1);
+        let low = 0.max((offset - self.cell).div_euclid(self.spacing) + 1);
+        (low..=start)
+            .rev()
+            .find_map(|index| self.items[index as usize].try_get_block(pos - self.pitch * index))
+            .unwrap_or_else(air)
     }
 
     fn size(&self) -> BlockPos {
@@ -251,7 +252,9 @@ impl<L: Layout> Layout for Anchored<L> {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// Mirror-reverse a layout along given axes. Block facing unchanged.
+/// Mirror-reverse a layout along given axes. Block facing unchanged:
+/// the layout has no block-internal facing transform, so the block's own
+/// orientation state is never dictated by it.
 pub struct Reverse<L: Layout> {
     layout: L,
     sign: Mask,
@@ -373,16 +376,9 @@ impl Mask {
         }
     }
 
-    /// The scalar projection of `v` onto this axis.
-    pub fn dot(self, v: BlockPos) -> i32 {
-        let masked = self * v;
-        masked.x + masked.y + masked.z
-    }
-}
-
-impl From<Mask> for BlockPos {
-    fn from(s: Mask) -> Self {
-        s.0
+    /// Unwrap into the underlying [`BlockPos`].
+    pub fn into_inner(self) -> BlockPos {
+        self.0
     }
 }
 
@@ -399,6 +395,27 @@ impl std::ops::Mul<i32> for Mask {
 
     fn mul(self, rhs: i32) -> BlockPos {
         self.0 * rhs
+    }
+}
+
+// Dot
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// The scalar projection of `v` onto `self`, treating both as vectors.
+trait Dot {
+    fn dot(self, v: BlockPos) -> i32;
+}
+
+impl Dot for BlockPos {
+    fn dot(self, v: BlockPos) -> i32 {
+        self.x * v.x + self.y * v.y + self.z * v.z
+    }
+}
+
+impl Dot for Mask {
+    fn dot(self, v: BlockPos) -> i32 {
+        self.into_inner().dot(v)
     }
 }
 
