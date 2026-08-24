@@ -34,12 +34,12 @@ impl MultiLinearLayout {
 }
 
 impl Layout for MultiLinearLayout {
-    fn size(&self) -> BlockPos {
-        self.0.size()
-    }
-
     fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         self.0.get_block(pos)
+    }
+
+    fn size(&self) -> BlockPos {
+        self.0.size()
     }
 }
 
@@ -75,12 +75,12 @@ impl StackedLinearLayout {
 }
 
 impl Layout for StackedLinearLayout {
-    fn size(&self) -> BlockPos {
-        self.0.size()
-    }
-
     fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         self.0.get_block(pos)
+    }
+
+    fn size(&self) -> BlockPos {
+        self.0.size()
     }
 }
 
@@ -157,10 +157,6 @@ impl LinearLayout {
 }
 
 impl Layout for LinearLayout {
-    fn size(&self) -> BlockPos {
-        BlockPos::new(self.easting, Track::ELEVATION, self.southing)
-    }
-
     fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         let width = self.track.width();
         let pitch = width + self.track.gap as i32;
@@ -210,6 +206,10 @@ impl Layout for LinearLayout {
         }
 
         air()
+    }
+
+    fn size(&self) -> BlockPos {
+        BlockPos::new(self.easting, Track::ELEVATION, self.southing)
     }
 }
 

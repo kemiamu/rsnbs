@@ -73,10 +73,6 @@ impl TappedLayout {
 }
 
 impl Layout for TappedLayout {
-    fn size(&self) -> BlockPos {
-        self.size
-    }
-
     fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         let divide = self.control.size().x;
         let side = pos.x < divide;
@@ -93,6 +89,10 @@ impl Layout for TappedLayout {
             true => dispatch(),
             false => air(),
         }
+    }
+
+    fn size(&self) -> BlockPos {
+        self.size
     }
 }
 
@@ -155,16 +155,16 @@ impl TapLine {
 }
 
 impl Layout for TapLine {
-    fn size(&self) -> BlockPos {
-        self.size
-    }
-
     fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         const INNER_ANCHOR: BlockPos = BlockPos::new(0, 0, 1);
         match pos.z == 0 {
             true => self.port(pos),
             false => self.delays.get_block(pos - INNER_ANCHOR),
         }
+    }
+
+    fn size(&self) -> BlockPos {
+        self.size
     }
 }
 
@@ -195,10 +195,6 @@ impl Tap {
 }
 
 impl Layout for Tap {
-    fn size(&self) -> BlockPos {
-        self.size
-    }
-
     fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         let rev_easting = self.size.x - pos.x - 1;
         let delay = self.delay.get();
@@ -224,5 +220,9 @@ impl Layout for Tap {
             (0, _, 0, 2) => repeater(decay(3), "south", false),
             _ => air(),
         }
+    }
+
+    fn size(&self) -> BlockPos {
+        self.size
     }
 }

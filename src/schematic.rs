@@ -20,11 +20,11 @@ mod tapped;
 
 /// A queryable projection layout.
 pub trait Layout {
-    /// Total size of the bounding box.
-    fn size(&self) -> BlockPos;
-
     /// Block at the given world position, assumed to be in bounds.
     fn block_at(&self, pos: BlockPos) -> GenericBlockState;
+
+    /// Total size of the bounding box.
+    fn size(&self) -> BlockPos;
 
     /// Block at the given world position; panics on out-of-bounds access.
     fn get_block(&self, pos: BlockPos) -> GenericBlockState {
@@ -90,12 +90,12 @@ impl<L: Layout> EdgeArranged<L> {
 }
 
 impl<L: Layout> Layout for EdgeArranged<L> {
-    fn size(&self) -> BlockPos {
-        self.inner.size()
-    }
-
     fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         self.inner.get_block(pos)
+    }
+
+    fn size(&self) -> BlockPos {
+        self.inner.size()
     }
 }
 
@@ -131,10 +131,6 @@ impl<L: Layout> Arranged<L> {
 }
 
 impl<L: Layout> Layout for Arranged<L> {
-    fn size(&self) -> BlockPos {
-        self.size
-    }
-
     fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         let found = self
             .bands
@@ -145,6 +141,10 @@ impl<L: Layout> Layout for Arranged<L> {
         let (layout, anchor) = &self.bands[index];
         let local = BlockPos::new(pos.x - anchor.x, pos.y - anchor.y, pos.z - anchor.z);
         layout.get_block_or_air(local)
+    }
+
+    fn size(&self) -> BlockPos {
+        self.size
     }
 }
 
@@ -186,10 +186,6 @@ impl<L: Layout> EvenArranged<L> {
 }
 
 impl<L: Layout> Layout for EvenArranged<L> {
-    fn size(&self) -> BlockPos {
-        self.size
-    }
-
     fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         let offset = self.unit.dot(pos);
         let start = (offset / self.pitch).min(self.items.len() as i32 - 1);
@@ -199,6 +195,10 @@ impl<L: Layout> Layout for EvenArranged<L> {
             self.items[index as usize].try_get_block(pos - anchor)
         });
         hit.unwrap_or_else(air)
+    }
+
+    fn size(&self) -> BlockPos {
+        self.size
     }
 }
 
@@ -233,10 +233,6 @@ impl<L: Layout> Anchored<L> {
 
 #[allow(deprecated)]
 impl<L: Layout> Layout for Anchored<L> {
-    fn size(&self) -> BlockPos {
-        self.size
-    }
-
     fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         let found = self.entries.iter().find_map(|(layout, anchor)| {
             let local = pos - *anchor;
@@ -244,6 +240,10 @@ impl<L: Layout> Layout for Anchored<L> {
         });
 
         found.unwrap_or_else(air)
+    }
+
+    fn size(&self) -> BlockPos {
+        self.size
     }
 }
 
@@ -264,14 +264,14 @@ impl<L: Layout> Reverse<L> {
 }
 
 impl<L: Layout> Layout for Reverse<L> {
-    fn size(&self) -> BlockPos {
-        self.layout.size()
-    }
-
     fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         let size = self.layout.size();
         let orig = pos + self.sign * (size - BlockPos::new(1, 1, 1) - pos * 2);
         self.layout.get_block(orig)
+    }
+
+    fn size(&self) -> BlockPos {
+        self.layout.size()
     }
 }
 
@@ -294,11 +294,6 @@ impl<L: Layout> WithFloor<L> {
 }
 
 impl<L: Layout> Layout for WithFloor<L> {
-    fn size(&self) -> BlockPos {
-        let size = self.layout.size();
-        BlockPos::new(size.x, size.y + 1, size.z)
-    }
-
     fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         let floor = || match self.full {
             true => floor_block(),
@@ -311,6 +306,11 @@ impl<L: Layout> Layout for WithFloor<L> {
             0 => floor(),
             _ => self.layout.get_block(local_pos()),
         }
+    }
+
+    fn size(&self) -> BlockPos {
+        let size = self.layout.size();
+        BlockPos::new(size.x, size.y + 1, size.z)
     }
 }
 

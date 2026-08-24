@@ -63,12 +63,12 @@ impl MultiCompactLayout {
 }
 
 impl Layout for MultiCompactLayout {
-    fn size(&self) -> BlockPos {
-        self.0.size()
-    }
-
     fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         self.0.get_block(pos)
+    }
+
+    fn size(&self) -> BlockPos {
+        self.0.size()
     }
 }
 
@@ -116,10 +116,6 @@ impl CompactLayout {
 }
 
 impl Layout for CompactLayout {
-    fn size(&self) -> BlockPos {
-        BlockPos::new(self.easting, Self::ELEVATION, self.southing)
-    }
-
     fn block_at(&self, pos: BlockPos) -> GenericBlockState {
         let BlockPos {
             x: easting,
@@ -162,6 +158,10 @@ impl Layout for CompactLayout {
             let layout_idx = (elevation + 3 + zig * 3) as u8;
             self.track.tile_block(row, col, layout_idx)
         }
+    }
+
+    fn size(&self) -> BlockPos {
+        BlockPos::new(self.easting, Self::ELEVATION, self.southing)
     }
 }
 
