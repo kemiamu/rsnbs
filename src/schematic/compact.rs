@@ -1,7 +1,7 @@
 //! Compact note block layouts for NBS song projection.
 
 use super::{Arranged, Axis, Layout, chain_block, inst_block};
-use super::{air, note_block, redstone_wire, repeater};
+use super::{Facing, air, note_block, redstone_wire, repeater};
 use crate::note::{Notes, Tone};
 use crate::types::{GameTick, RedStoneTick, Tick};
 use mcdata::{GenericBlockState, util::BlockPos};
@@ -303,9 +303,9 @@ impl Track {
 
     fn tile_block(&self, row: i32, col: usize, layout_idx: u8) -> Option<GenericBlockState> {
         let repeater_facing = match ((row & 1) == 0, col < 2) {
-            (_, true) => "west",
-            (true, false) => "north",
-            (false, false) => "south",
+            (_, true) => Facing::East,
+            (true, false) => Facing::South,
+            (false, false) => Facing::North,
         };
         self.get_tile(row, col)
             .and_then(|t| t.get_block(layout_idx, repeater_facing))
@@ -374,16 +374,14 @@ impl Tile {
         }
     }
 
-    fn get_block(
-        &self,
-        layout_index: u8,
-        repeater_facing: &'static str,
-    ) -> Option<GenericBlockState> {
+    fn get_block(&self, layout_index: u8, repeater_facing: Facing) -> Option<GenericBlockState> {
         // The repeater facing direction is reversed.
         match (self, layout_index) {
             // main straight track
             (Self::Delay(_), 0) => Some(chain_block()),
-            (Self::Delay(delay), 1) => Some(repeater(delay.to_string(), repeater_facing, false)),
+            (Self::Delay(delay), 1) => {
+                Some(repeater(delay.to_string(), repeater_facing, false, false))
+            }
             (Self::Link, 0) => Some(chain_block()),
             (Self::Link, 1) => Some(redstone_wire()),
             (Self::Terminal(center, _, _), 0) => Some(inst_block(center.as_ref(), chain_block)),
@@ -402,7 +400,7 @@ impl Tile {
             (Self::TurningDelay(_), 0 | 3) => Some(chain_block()),
             (Self::TurningDelay(_), 1) => Some(redstone_wire()),
             (Self::TurningDelay(delay), 4) => {
-                Some(repeater(delay.to_string(), repeater_facing, false))
+                Some(repeater(delay.to_string(), repeater_facing, false, false))
             }
             (Self::TurningLink, 0 | 3) => Some(chain_block()),
             (Self::TurningLink, 1 | 4) => Some(redstone_wire()),

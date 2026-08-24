@@ -1,6 +1,6 @@
 //! Linear time-proportional layout for NBS song projection.
 
-use super::{Arranged, Axis, Layout, WithFloor, air, chain_block, inst_block, note_block};
+use super::{Arranged, Axis, Facing, Layout, WithFloor, air, chain_block, inst_block, note_block};
 use super::{redstone_block, redstone_wire, repeater, sticky_piston};
 use crate::note::Tone;
 use crate::types::{Index, Position, Tick, TimeAnchor};
@@ -260,8 +260,8 @@ impl Track {
             false => easting + 1,
         };
         let repeater_facing = match row.rem_euclid(2) == 0 {
-            true => "north",
-            false => "south",
+            true => Facing::South,
+            false => Facing::North,
         };
         let note = move |tick: Tick, layer: Index| -> Option<&Tone> {
             let group = row * self.cols_per_row() as i32 + col;
@@ -283,14 +283,19 @@ impl Track {
             (true, true, 0, 1, 1) => Some(note_block(note(branch_tick, 1), air)),
 
             (true, false, 3, 1, 0) => Some(chain_block()),
-            (true, false, 3, 1, 1) => Some(repeater((scale / 2).to_string(), "east", false)),
+            (true, false, 3, 1, 1) => Some(repeater(
+                (scale / 2).to_string(),
+                Facing::West,
+                false,
+                false,
+            )),
             (true, false, 1, 1, 0) => Some(inst_block(note(branch_tick, 0), chain_block)),
             (true, false, 1, 1, 1) => Some(note_block(note(branch_tick, 0), chain_block)),
             (true, false, 0, 1, 0) => Some(inst_block(note(branch_tick, 1), air)),
             (true, false, 0, 1, 1) => Some(note_block(note(branch_tick, 1), air)),
 
             (_, _, 4, 0, 0) => Some(chain_block()),
-            (_, _, 4, 0, 1) => Some(repeater(scale.to_string(), repeater_facing, false)),
+            (_, _, 4, 0, 1) => Some(repeater(scale.to_string(), repeater_facing, false, false)),
             (_, _, 4, 1, 0) => Some(inst_block(note(0, 0), chain_block)),
             (_, _, 4, 1, 1) => Some(note_block(note(0, 0), chain_block)),
             (_, _, 5, 1, 0) => Some(inst_block(note(0, 1), air)),
@@ -327,5 +332,131 @@ impl Track {
     fn cols_per_row(&self) -> Tick {
         let all_cols = self.length_in_units(NonZero::<Tick>::MIN);
         self.wrap_length.map_or(all_cols, |wrap| wrap.get())
+    }
+}
+
+// Template
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// A fixed-shape template tile of the linear track, including orientation.
+///
+/// Each variant is a complete structural unit resolved by local coordinates;
+/// note data is baked in at construction time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Template {
+    /// Turn junction column: chain at y0, wire at y1. Size 1×2×1.
+    Turn,
+    /// Repeater branch cell: logic column at x3, branch notes at x0/x1,
+    /// main notes at x4/x5. Size 6×2×2.
+    Branch {
+        repeater: Repeater,
+        branch: [Option<Tone>; 2],
+        notes: [Option<Tone>; 2],
+    },
+    /// Piston branch cell: piston column at x2/x3, branch notes at x0/x1,
+    /// main notes at x4/x5. Size 6×2×2.
+    Piston {
+        repeater: Repeater,
+        branch: [Option<Tone>; 2],
+        notes: [Option<Tone>; 2],
+    },
+    /// Note cell: spare note at x3, main notes at x4/x5. Size 6×2×2.
+    Note {
+        repeater: Repeater,
+        notes: [Option<Tone>; 3],
+    },
+}
+
+/// A repeater tile: delay and facing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Repeater {
+    /// Signal delay: the track scale.
+    delay: u8,
+    /// Facing of this repeater.
+    facing: Facing,
+}
+
+impl Repeater {
+    /// Signal repeater block: full delay, data facing.
+    fn block(self) -> GenericBlockState {
+        repeater(self.delay.to_string(), self.facing, false, false)
+    }
+
+    /// Logic repeater block: half delay, fixed east facing.
+    fn logic_block(self) -> GenericBlockState {
+        repeater((self.delay / 2).to_string(), Facing::West, false, false)
+    }
+}
+
+impl Layout for Template {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        let BlockPos { x, y, z } = pos;
+        let block = match self {
+            Template::Turn => match y {
+                0 => chain_block(),
+                1 => redstone_wire(),
+                _ => return None,
+            },
+            Template::Branch {
+                repeater,
+                branch,
+                notes,
+            } => match (x, y, z) {
+                (0, 0, 1) => inst_block(branch[1], air),
+                (0, 1, 1) => note_block(branch[1], air),
+                (1, 0, 1) => inst_block(branch[0], chain_block),
+                (1, 1, 1) => note_block(branch[0], chain_block),
+                (3, 0, 1) => chain_block(),
+                (3, 1, 1) => repeater.logic_block(),
+                (4, 0, 0) => chain_block(),
+                (4, 0, 1) => repeater.block(),
+                (4, 1, 0) => inst_block(notes[0], chain_block),
+                (4, 1, 1) => note_block(notes[0], chain_block),
+                (5, 1, 0) => inst_block(notes[1], air),
+                (5, 1, 1) => note_block(notes[1], air),
+                _ => return None,
+            },
+            Template::Piston {
+                repeater,
+                branch,
+                notes,
+            } => match (x, y, z) {
+                (0, 0, 1) => inst_block(branch[1], air),
+                (0, 1, 1) => note_block(branch[1], air),
+                (1, 0, 2) => inst_block(branch[0], air),
+                (1, 1, 2) => note_block(branch[0], air),
+                (2, 1, 1) => redstone_block(),
+                (3, 1, 1) => sticky_piston("west"),
+                (4, 0, 0) => chain_block(),
+                (4, 0, 1) => repeater.block(),
+                (4, 1, 0) => inst_block(notes[0], chain_block),
+                (4, 1, 1) => note_block(notes[0], chain_block),
+                (5, 1, 0) => inst_block(notes[1], air),
+                (5, 1, 1) => note_block(notes[1], air),
+                _ => return None,
+            },
+            Template::Note { repeater, notes } => match (x, y, z) {
+                (3, 0, 1) => inst_block(notes[2], air),
+                (3, 1, 1) => note_block(notes[2], air),
+                (4, 0, 0) => chain_block(),
+                (4, 0, 1) => repeater.block(),
+                (4, 1, 0) => inst_block(notes[0], chain_block),
+                (4, 1, 1) => note_block(notes[0], chain_block),
+                (5, 1, 0) => inst_block(notes[1], air),
+                (5, 1, 1) => note_block(notes[1], air),
+                _ => return None,
+            },
+        };
+        Some(block)
+    }
+
+    fn size(&self) -> BlockPos {
+        match self {
+            Template::Turn => BlockPos::new(1, 2, 1),
+            Template::Branch { .. } | Template::Piston { .. } | Template::Note { .. } => {
+                BlockPos::new(6, 2, 2)
+            }
+        }
     }
 }

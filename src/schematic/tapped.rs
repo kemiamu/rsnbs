@@ -1,7 +1,9 @@
 //! Tapped delay line layout for NBS song projection.
 
 use super::{Arranged, Axis, CompactLayout, EdgeArranged, Layout, WithFloor};
-use super::{chain_block, observer, redstone_torch, redstone_wire, repeater, wire_state};
+use super::{
+    Facing, WireConn, chain_block, observer, redstone_torch, redstone_wire, repeater, wire_state,
+};
 use crate::analysis::BoundedTec;
 use crate::note::{Instrument, Key, Notes, Tone};
 use crate::types::{RedStoneTick, Tick};
@@ -126,9 +128,23 @@ impl TapLine {
         let local_elevation = pos.y;
         let switch = self.delays.size().x == 0;
         let port_wire = || {
-            let switch_south = if switch { "none" } else { "side" };
-            let switch_west = if switch { "side" } else { "none" };
-            wire_state("side", "none", switch_south, switch_west, "0")
+            let switch_south = if switch {
+                WireConn::None
+            } else {
+                WireConn::Side
+            };
+            let switch_west = if switch {
+                WireConn::Side
+            } else {
+                WireConn::None
+            };
+            wire_state(
+                WireConn::Side,
+                WireConn::None,
+                switch_south,
+                switch_west,
+                "0",
+            )
         };
         let button = || {
             let tone = Tone::new(Instrument::BassDrum, Key::from_minecraft_note(0).unwrap());
@@ -140,7 +156,7 @@ impl TapLine {
             (0, 1) | (1, 2) => Some(chain_block()),
             (0, 2) => Some(port_wire()),
             (1..=4, 1) if switch => Some(chain_block()),
-            (2, 2) if switch => Some(repeater("4", "west", false)),
+            (2, 2) if switch => Some(repeater("4", Facing::East, false, false)),
             (3, 2) if switch => Some(observer("west")),
             (4, 2) if switch => Some(button()),
             (1, 0) if !switch => Some(chain_block()),
@@ -203,17 +219,29 @@ impl Layout for Tap {
             (_, _, _, 1) | (_, 0, 0, 2) | (1, _, 1, 2) => Some(chain_block()),
             (_, 0, 1, 2) => Some(redstone_torch(Some("south"), false)),
             (1, _, 0, 2) => Some(redstone_torch(Some("south"), true)),
-            (3.., 2.., 0, 2) => Some(repeater("4", "east", true)),
-            (2.., 2.., 1, 2) => Some(repeater("4", "west", false)),
-            (2, 1, 1, 2) => Some(repeater(decay(6), "west", false)),
-            (3.., 1, 1, 2) => Some(repeater(cycle(3, 8), "west", false)),
+            (3.., 2.., 0, 2) => Some(repeater("4", Facing::West, true, false)),
+            (2.., 2.., 1, 2) => Some(repeater("4", Facing::East, false, false)),
+            (2, 1, 1, 2) => Some(repeater(decay(6), Facing::East, false, false)),
+            (3.., 1, 1, 2) => Some(repeater(cycle(3, 8), Facing::East, false, false)),
             (2, 1, 0, 2) if delay < 11 => Some(redstone_wire()),
-            (2, 1, 0, 2) => Some(repeater(decay(10), "west", false)),
-            (2, 2.., 0, 2) if phase() < 4 => Some(wire_state("side", "none", "none", "side", "15")),
-            (2, 2.., 0, 2) => Some(repeater(cycle(3, 8), "east", true)),
-            (3.., 1, 0, 2) => Some(repeater("3", "east", true)),
-            (0, _, 1, 2) => Some(wire_state("none", "side", "side", "none", "0")),
-            (0, _, 0, 2) => Some(repeater(decay(3), "south", false)),
+            (2, 1, 0, 2) => Some(repeater(decay(10), Facing::East, false, false)),
+            (2, 2.., 0, 2) if phase() < 4 => Some(wire_state(
+                WireConn::Side,
+                WireConn::None,
+                WireConn::None,
+                WireConn::Side,
+                "15",
+            )),
+            (2, 2.., 0, 2) => Some(repeater(cycle(3, 8), Facing::West, true, false)),
+            (3.., 1, 0, 2) => Some(repeater("3", Facing::West, true, false)),
+            (0, _, 1, 2) => Some(wire_state(
+                WireConn::None,
+                WireConn::Side,
+                WireConn::Side,
+                WireConn::None,
+                "0",
+            )),
+            (0, _, 0, 2) => Some(repeater(decay(3), Facing::North, false, false)),
             _ => None,
         }
     }
