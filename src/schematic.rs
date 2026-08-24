@@ -98,6 +98,10 @@ impl<L: Layout> Layout for EdgeArranged<L> {
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// A layout wrapper that arranges sub-layouts along an [`Axis`].
+///
+/// Query cost is O(log n) with `n` the number of sub-layouts: [`Layout::block_at`]
+/// locates the containing band via a binary search over the anchors, which are
+/// sorted along the arrangement axis.
 pub struct Arranged<L: Layout> {
     bands: Vec<(L, BlockPos)>,
     size: BlockPos,
