@@ -40,6 +40,12 @@ pub trait Layout {
         }
     }
 
+    /// Block at the given world position; None when it is air.
+    fn try_get_block(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        let block = self.get_block(pos);
+        (block.name != "minecraft:air").then_some(block)
+    }
+
     /// Whether `pos` is inside the bounding box.
     fn contains(&self, pos: BlockPos) -> bool {
         let size = self.size();
@@ -139,6 +145,60 @@ impl<L: Layout> Layout for Arranged<L> {
         let (layout, anchor) = &self.bands[index];
         let local = BlockPos::new(pos.x - anchor.x, pos.y - anchor.y, pos.z - anchor.z);
         layout.get_block_or_air(local)
+    }
+}
+
+// EvenArranged
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// Arranges sub-layouts along an [`Axis`] at a uniform pitch (cell + gap),
+/// where the cell width is the supremum of the axial projections and the
+/// pitch is constrained non-negative, bounding the gap below by `-cell`.
+pub struct EvenArranged<L: Layout> {
+    items: Vec<L>,
+    unit: Mask,
+    pitch: i32,
+    cell: i32,
+    size: BlockPos,
+}
+
+impl<L: Layout> EvenArranged<L> {
+    pub fn new<I: IntoIterator<Item = L>>(items: I, axis: Axis, gap: i32) -> Self {
+        let unit = axis.unit();
+        let items: Vec<L> = FromIterator::from_iter(items);
+        let extent = items
+            .iter()
+            .fold(BlockPos::ORIGIN, |e, l| include(e, l.size()));
+        let cell = unit.dot(extent);
+        let pitch = cell + gap;
+        let size = include(unit * (pitch * items.len() as i32 - gap), extent);
+
+        assert!(pitch >= 0, "pitch must be non-negative");
+        Self {
+            items,
+            unit,
+            pitch,
+            cell,
+            size,
+        }
+    }
+}
+
+impl<L: Layout> Layout for EvenArranged<L> {
+    fn size(&self) -> BlockPos {
+        self.size
+    }
+
+    fn block_at(&self, pos: BlockPos) -> GenericBlockState {
+        let offset = self.unit.dot(pos);
+        let start = (offset / self.pitch).min(self.items.len() as i32 - 1);
+        let low = 0.max((offset - self.cell).div_euclid(self.pitch) + 1);
+        let hit = (low..=start).rev().find_map(|index| {
+            let anchor = self.unit * (index * self.pitch);
+            self.items[index as usize].try_get_block(pos - anchor)
+        });
+        hit.unwrap_or_else(air)
     }
 }
 
@@ -311,6 +371,12 @@ impl Mask {
             true => Some(Self(sign)),
             false => None,
         }
+    }
+
+    /// The scalar projection of `v` onto this axis.
+    pub fn dot(self, v: BlockPos) -> i32 {
+        let masked = self * v;
+        masked.x + masked.y + masked.z
     }
 }
 

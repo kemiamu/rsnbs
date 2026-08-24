@@ -111,7 +111,7 @@ impl TapLine {
         ticks: I,
         repeater_coarse: Option<NonZero<RedStoneTick>>,
     ) -> Self {
-        let ticks: Vec<NonZero<RedStoneTick>> = ticks.into_iter().collect();
+        let ticks: Vec<NonZero<RedStoneTick>> = FromIterator::from_iter(ticks);
         let taps = ticks.into_iter().scan(0, |prev, tick| {
             let diff = tick.get() - *prev;
             *prev = tick.get();
