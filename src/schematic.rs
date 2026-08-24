@@ -313,6 +313,44 @@ impl NeedsFloor for GenericBlockState {
     }
 }
 
+// Clipped
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// A layout wrapper that clips the inner layout along each axis by `pos`.
+///
+/// A non-negative component `n` shifts the inner layout by `n` and shrinks
+/// the size by `n`; a negative component keeps the inner layout in place and
+/// shrinks the size by `-n`.
+pub struct Clipped<L: Layout> {
+    layout: L,
+    anchor: BlockPos,
+    size: BlockPos,
+}
+
+impl<L: Layout> Clipped<L> {
+    pub fn new(layout: L, pos: BlockPos) -> Self {
+        let anchor = include(pos, BlockPos::ORIGIN);
+        let size = layout.size() - pos.abs();
+
+        Self {
+            layout,
+            anchor,
+            size,
+        }
+    }
+}
+
+impl<L: Layout> Layout for Clipped<L> {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        self.layout.get_block(pos + self.anchor)
+    }
+
+    fn size(&self) -> BlockPos {
+        self.size
+    }
+}
+
 // Axis
 //
 // ++++++++++++============++++++++++++============++++++++++++============
