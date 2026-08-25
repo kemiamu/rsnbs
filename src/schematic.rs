@@ -32,8 +32,8 @@ pub trait Layout {
         self.block_at(pos)
     }
 
-    /// Block at the given world position, which may miss the bounding box.
-    fn get_block_or_air(&self, pos: BlockPos) -> Option<GenericBlockState> {
+    /// Block at the given world position; `None` when it misses the bounding box.
+    fn try_get_block(&self, pos: BlockPos) -> Option<GenericBlockState> {
         match self.contains(pos) {
             true => self.block_at(pos),
             false => None,
@@ -51,7 +51,10 @@ pub trait Layout {
         &self,
         description: impl Into<Cow<'static, str>>,
         author: impl Into<Cow<'static, str>>,
-    ) -> Litematic {
+    ) -> Litematic
+    where
+        Self: Sized,
+    {
         const NAME: &str = "Note Block Track Schematic";
         let size = self.size();
         let mut region: Region<GenericBlockState> = Region::new(NAME, BlockPos::ORIGIN, size);
@@ -137,7 +140,7 @@ impl<L: Layout> Layout for Arranged<L> {
 
         let (layout, anchor) = &self.bands[index];
         let local = BlockPos::new(pos.x - anchor.x, pos.y - anchor.y, pos.z - anchor.z);
-        layout.get_block_or_air(local)
+        layout.try_get_block(local)
     }
 
     fn size(&self) -> BlockPos {
@@ -191,7 +194,7 @@ impl<L: Layout> Layout for EvenArranged<L> {
         let low = 0.max((offset - self.cell).div_euclid(self.spacing) + 1);
         (low..=start)
             .rev()
-            .find_map(|index| self.items[index as usize].get_block_or_air(pos - self.pitch * index))
+            .find_map(|index| self.items[index as usize].try_get_block(pos - self.pitch * index))
     }
 
     fn size(&self) -> BlockPos {
@@ -204,36 +207,41 @@ impl<L: Layout> Layout for EvenArranged<L> {
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// A layout wrapper that places sub-layouts at explicit anchor positions.
-#[deprecated(note = "is too slow for hot paths; use `Arranged` instead")]
-pub struct Anchored<L: Layout> {
-    entries: Vec<(L, BlockPos)>,
+///
+/// Queries probe every entry in order via dynamic dispatch, so the cost is
+/// O(n) in the entry count and comparatively heavy; suited to small fixed
+/// groupings.
+pub struct Anchored {
+    entries: Vec<(Box<dyn Layout>, BlockPos)>,
     size: BlockPos,
 }
 
-#[allow(deprecated)]
-impl<L: Layout> Anchored<L> {
-    pub fn new<I: IntoIterator<Item = (L, BlockPos)>>(entries: I) -> Self {
-        let mut extent = BlockPos::ORIGIN;
+impl Anchored {
+    /// Build from initial entries; [`Self::push`] appends more later.
+    pub fn new(entries: impl IntoIterator<Item = (Box<dyn Layout>, BlockPos)>) -> Self {
+        let mut anchored = Self {
+            entries: Vec::new(),
+            size: BlockPos::ORIGIN,
+        };
+        for (layout, anchor) in entries {
+            anchored.push(layout, anchor);
+        }
+        anchored
+    }
 
-        let placed = entries.into_iter().map(|(layout, anchor)| {
-            let size = layout.size();
-            let far = anchor + size;
-            extent = include(extent, far);
-            (layout, anchor)
-        });
-
-        let entries = placed.collect();
-        let size = extent;
-        Self { entries, size }
+    pub fn push(&mut self, layout: impl Into<Box<dyn Layout>>, anchor: BlockPos) {
+        let layout = layout.into();
+        let far = anchor + layout.size();
+        self.size = include(self.size, far);
+        self.entries.push((layout, anchor));
     }
 }
 
-#[allow(deprecated)]
-impl<L: Layout> Layout for Anchored<L> {
+impl Layout for Anchored {
     fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
         self.entries
             .iter()
-            .find_map(|(layout, anchor)| layout.get_block_or_air(pos - *anchor))
+            .find_map(|(layout, anchor)| layout.try_get_block(pos - *anchor))
     }
 
     fn size(&self) -> BlockPos {
