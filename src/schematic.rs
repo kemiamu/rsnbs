@@ -67,6 +67,16 @@ pub trait Layout {
     }
 }
 
+impl Layout for Box<dyn Layout + '_> {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        self.as_ref().block_at(pos)
+    }
+
+    fn size(&self) -> BlockPos {
+        self.as_ref().size()
+    }
+}
+
 // EdgeArranged
 //
 // ++++++++++++============++++++++++++============++++++++++++============
@@ -148,16 +158,16 @@ impl<L: Layout> Layout for Arranged<L> {
     }
 }
 
-// EvenArranged
+// EvenlyArranged
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// Arranges sub-layouts along the direction of `pitch`: item `i` is anchored
-/// at `i * pitch`, the anchor spacing being the `pitch` vector itself.
+/// Evenly arranges sub-layouts along the direction of `pitch`: item `i` is
+/// anchored at `i * pitch`, a monotone linear lattice of equal spacing.
 ///
 /// Query cost is O(k) with `k` the candidate window width, independent of
 /// the item count. `pitch` must be component-wise non-negative and not all zero.
-pub struct EvenArranged<L: Layout> {
+pub struct EvenlyArranged<L: Layout> {
     items: Vec<L>,
     pitch: BlockPos,
     spacing: i32,
@@ -165,7 +175,7 @@ pub struct EvenArranged<L: Layout> {
     size: BlockPos,
 }
 
-impl<L: Layout> EvenArranged<L> {
+impl<L: Layout> EvenlyArranged<L> {
     pub fn new<I: IntoIterator<Item = L>>(items: I, pitch: BlockPos) -> Self {
         let items: Vec<L> = FromIterator::from_iter(items);
         let extent = items
@@ -187,7 +197,7 @@ impl<L: Layout> EvenArranged<L> {
     }
 }
 
-impl<L: Layout> Layout for EvenArranged<L> {
+impl<L: Layout> Layout for EvenlyArranged<L> {
     fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
         let offset = self.pitch.dot(pos);
         let start = (offset / self.spacing).min(self.items.len() as i32 - 1);
