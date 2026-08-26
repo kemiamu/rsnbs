@@ -1,11 +1,11 @@
 //! Linear time-proportional layout for NBS song projection.
 
-use super::{Anchored, Arranged, Axis, Clipped, EvenlyArranged, Facing, Layout, Mask, Reverse};
+use super::{Axis, EvenlyArranged, Facing, Layout, Reverse};
 use super::{WithFloor, air, chain_block, inst_block, note_block};
-use super::{redstone_block, redstone_wire, repeater, sticky_piston};
+use super::{redstone_block, repeater, sticky_piston};
 use crate::note::Tone;
 use crate::schematic::{WireConn, wire_state};
-use crate::types::{Index, LayerAnchor, Tick};
+use crate::types::Tick;
 use mcdata::{GenericBlockState, util::BlockPos};
 use std::num::NonZero;
 
@@ -93,9 +93,7 @@ impl Layout for StackedLinearLayout {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-pub struct LinearLayout {
-    inner: Clipped<EvenlyArranged<Row>>,
-}
+pub struct LinearLayout(EvenlyArranged<Row>);
 
 impl LinearLayout {
     pub fn new<Trk, Chord, T>(
@@ -109,17 +107,40 @@ impl LinearLayout {
         Chord: IntoIterator<Item = T>,
         T: Into<Tone>,
     {
-        todo!()
+        let mut cells: Vec<(Vec<Tone>, Vec<Tone>)> = Default::default();
+        for (tick, chord) in notes {
+            let (index, is_branch) = scale.cell_slot(tick);
+            cells.resize_with(index + 1, Default::default);
+            let (main, branch) = &mut cells[index];
+            let notes = if is_branch { branch } else { main };
+            notes.extend(chord.into_iter().map(Into::into));
+        }
+
+        let cells = cells
+            .into_iter()
+            .map(|(main, branch)| Template::from_notes(scale, main, branch))
+            .collect::<Vec<_>>();
+        let row_length = wrap_length.map_or(cells.len(), |length| length.get() as usize);
+        let width = scale.width() + gap as i32;
+        let rows = cells.chunks(row_length).enumerate().map(|(index, cells)| {
+            let south_bound = index % 2 == 0;
+            let cells = cells
+                .iter()
+                .copied()
+                .map(|cell| cell.with_north_bound(!south_bound));
+            Row::new(cells, width, index > 0, south_bound)
+        });
+        Self(EvenlyArranged::new(rows, BlockPos::new(width - 2, 0, 0)))
     }
 }
 
 impl Layout for LinearLayout {
     fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
-        self.inner.get_block(pos)
+        self.0.get_block(pos)
     }
 
     fn size(&self) -> BlockPos {
-        self.inner.size()
+        self.0.size()
     }
 }
 
@@ -220,7 +241,7 @@ impl Layout for Cells {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// A fixed-shape template tile of the linear track.
+/// Template cell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Template {
     pub main: [Option<Tone>; 2],
@@ -233,6 +254,31 @@ pub struct Template {
 pub enum Branch {
     Unbranched(Option<Tone>),
     Branched([Option<Tone>; 2]),
+}
+
+impl Template {
+    fn from_notes(scale: ScaleMode, main: Vec<Tone>, branch: Vec<Tone>) -> Self {
+        let mut main = main.into_iter();
+        let main_line = [main.next(), main.next()];
+        let branch = match branch.is_empty() {
+            true => Branch::Unbranched(main.next()),
+            false => {
+                let mut branch = branch.into_iter();
+                Branch::Branched([branch.next(), branch.next()])
+            }
+        };
+        Self {
+            main: main_line,
+            branch,
+            scale,
+            north_bound: false,
+        }
+    }
+
+    fn with_north_bound(mut self, north_bound: bool) -> Self {
+        self.north_bound = north_bound;
+        self
+    }
 }
 
 impl Layout for Template {
@@ -291,7 +337,7 @@ pub enum ScaleMode {
 }
 
 impl ScaleMode {
-    const SCALE_MODES: [Tick; 3] = [4, 2, 3];
+    const SCALE_MODES: [Tick; 3] = [4, 3, 2];
 
     pub fn from_tracks<'a, Trks, Trk: 'a, Chord: 'a>(tracks: &'a Trks) -> Self
     where
@@ -332,5 +378,21 @@ impl ScaleMode {
             Self::Scale4 | Self::Scale2 => 5,
             Self::Scale3 | Self::Scale1 => 6,
         }
+    }
+
+    fn cell_slot(self, tick: Tick) -> (usize, bool) {
+        if matches!(self, Self::Scale1) {
+            return match tick % 2 {
+                0 => (tick as usize / 2 + 1, false),
+                _ => (tick as usize / 2, true),
+            };
+        }
+        assert_eq!(
+            tick % self.scale(),
+            0,
+            "tick {tick} is incompatible with {self:?}"
+        );
+        let tick = tick / self.scale();
+        (tick as usize / 2, tick % 2 == 1)
     }
 }
