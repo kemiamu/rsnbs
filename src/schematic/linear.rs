@@ -93,9 +93,14 @@ impl Layout for StackedLinearLayout {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
+/// A zigzag linear layout for one track.
 pub struct LinearLayout(EvenlyArranged<Row>);
 
 impl LinearLayout {
+    /// Builds a layout from timestamped note events.
+    ///
+    /// Events with the same timestamp share a cell. `wrap_length` limits the
+    /// number of cells in each row; `gap` widens every row uniformly.
     pub fn new<Trk, A, T>(
         notes: Trk,
         scale: ScaleMode,
@@ -145,6 +150,7 @@ impl Layout for LinearLayout {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
+/// One directional row of template cells.
 pub struct Row {
     cells: Cells,
     width: i32,
@@ -153,6 +159,7 @@ pub struct Row {
 }
 
 impl Row {
+    /// Arranges cells in the row direction.
     pub fn new<I: IntoIterator<Item = Template>>(
         cells: I,
         width: i32,
@@ -247,9 +254,12 @@ pub struct Template {
     pub south_bound: bool,
 }
 
+/// Notes outside the two fixed main-line slots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Branch {
+    /// The third main-line note.
     Unbranched(Option<Tone>),
+    /// The two branch-line notes.
     Branched([Option<Tone>; 2]),
 }
 
@@ -320,6 +330,7 @@ impl Layout for Template {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
+/// Time scale used by linear cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScaleMode {
     Scale4,
@@ -331,6 +342,7 @@ pub enum ScaleMode {
 impl ScaleMode {
     const SCALE_MODES: [Tick; 3] = [4, 3, 2];
 
+    /// Selects the coarsest scale compatible with every event timestamp.
     pub fn from_tracks<'a, Trks, Trk: 'a, A: 'a, T: 'a>(tracks: &'a Trks) -> Self
     where
         &'a Trks: IntoIterator<Item = &'a Trk>,
@@ -343,7 +355,9 @@ impl ScaleMode {
         Self::new(ticks)
     }
 
-    /// Select the first applicable scaling mode.
+    /// Selects the coarsest scale compatible with all timestamps.
+    ///
+    /// The fallback is [`ScaleMode::Scale1`].
     pub fn new<I: IntoIterator<Item = Tick>>(ticks: I) -> Self {
         let applicable = ticks.into_iter().fold([true; 3], |applicable, tick| {
             let divisible = Self::SCALE_MODES.map(|scale| tick % scale == 0);
@@ -357,6 +371,7 @@ impl ScaleMode {
         }
     }
 
+    /// Returns the scale in game ticks.
     pub const fn scale(self) -> Tick {
         match self {
             Self::Scale4 => 4,
@@ -366,6 +381,7 @@ impl ScaleMode {
         }
     }
 
+    /// Returns the cell width in blocks.
     pub const fn width(self) -> i32 {
         match self {
             Self::Scale4 | Self::Scale2 => 5,
