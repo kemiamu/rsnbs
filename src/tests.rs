@@ -790,19 +790,7 @@ fn test_linear_layout() {
             (Position::new(tick, pos.into_layer()), note)
         })
         .collect();
-    let tracks = notes
-        .split_by_layer_gaps()
-        .into_iter()
-        .map(|notes| {
-            notes.into_iter().fold(
-                BTreeMap::<Tick, Vec<Tone>>::new(),
-                |mut chords, (pos, note)| {
-                    chords.entry(pos.into_tick()).or_default().push(note.into());
-                    chords
-                },
-            )
-        })
-        .collect::<Vec<_>>();
+    let tracks = notes.split_by_layer_gaps();
     let layout = MultiLinearLayout::new(tracks, 0);
     let litematic = layout.as_litematic("Linear from source.nbs", "rustnbs");
     litematic

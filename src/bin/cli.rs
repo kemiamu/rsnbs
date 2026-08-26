@@ -107,14 +107,13 @@ struct Linear {
 impl Linear {
     fn run(self) {
         let song = open_song(&self.input);
-        let tracks: Vec<BTreeMap<Tick, Vec<Tone>>> = song
+        let tracks: Vec<Notes> = song
             .notes
             .rescale_to_game_tick(song.header.tempo)
             .collect::<Notes>()
             .split_by_layer_gaps()
             .into_iter()
             .flat_map(|notes| notes.split_by_layer_count(NonZero::new(3)))
-            .map(group_by_tick)
             .collect();
         let description = format!("Sectional from {}", self.input);
 
@@ -127,15 +126,6 @@ impl Linear {
         };
         write_output(&self.output, litematic);
     }
-}
-
-fn group_by_tick(notes: Notes) -> BTreeMap<Tick, Vec<Tone>> {
-    notes
-        .into_iter()
-        .fold(BTreeMap::new(), |mut chords, (pos, note)| {
-            chords.entry(pos.into_tick()).or_default().push(note.into());
-            chords
-        })
 }
 
 // Decompose

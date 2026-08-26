@@ -5,7 +5,7 @@ use super::{WithFloor, air, chain_block, inst_block, note_block};
 use super::{redstone_block, repeater, sticky_piston};
 use crate::note::Tone;
 use crate::schematic::{WireConn, wire_state};
-use crate::types::Tick;
+use crate::types::{Tick, TimeAnchor};
 use mcdata::{GenericBlockState, util::BlockPos};
 use std::num::NonZero;
 
@@ -18,14 +18,14 @@ pub struct MultiLinearLayout(EvenlyArranged<LinearLayout>);
 
 impl MultiLinearLayout {
     /// Create a linear layout from per-track notes.
-    pub fn new<Trks, Trk, Chord, T>(tracks: Trks, gap: u32) -> Self
+    pub fn new<Trks, Trk, A, T>(tracks: Trks, gap: u32) -> Self
     where
         Trks: IntoIterator<Item = Trk>,
-        Trk: IntoIterator<Item = (Tick, Chord)>,
-        Chord: IntoIterator<Item = T>,
+        Trk: IntoIterator<Item = (A, T)>,
+        A: TimeAnchor,
         T: Into<Tone>,
         for<'a> &'a Trks: IntoIterator<Item = &'a Trk>,
-        for<'a> &'a Trk: IntoIterator<Item = (&'a Tick, &'a Chord)>,
+        for<'a> &'a Trk: IntoIterator<Item = (&'a A, &'a T)>,
     {
         let scale = ScaleMode::from_tracks(&tracks);
         let layouts = tracks
@@ -55,7 +55,7 @@ pub struct StackedLinearLayout(EvenlyArranged<WithFloor<LinearLayout>>);
 
 impl StackedLinearLayout {
     /// Create a stacked linear layout from per-track notes.
-    pub fn new<Trks, Trk, Chord, T>(
+    pub fn new<Trks, Trk, A, T>(
         tracks: Trks,
         wrap_length: Option<NonZero<Tick>>,
         gap: u32,
@@ -63,11 +63,11 @@ impl StackedLinearLayout {
     ) -> Self
     where
         Trks: IntoIterator<Item = Trk>,
-        Trk: IntoIterator<Item = (Tick, Chord)>,
-        Chord: IntoIterator<Item = T>,
+        Trk: IntoIterator<Item = (A, T)>,
+        A: TimeAnchor,
         T: Into<Tone>,
         for<'a> &'a Trks: IntoIterator<Item = &'a Trk>,
-        for<'a> &'a Trk: IntoIterator<Item = (&'a Tick, &'a Chord)>,
+        for<'a> &'a Trk: IntoIterator<Item = (&'a A, &'a T)>,
     {
         let scale = ScaleMode::from_tracks(&tracks);
         let layouts = tracks.into_iter().map(|notes| {
@@ -96,24 +96,24 @@ impl Layout for StackedLinearLayout {
 pub struct LinearLayout(EvenlyArranged<Row>);
 
 impl LinearLayout {
-    pub fn new<Trk, Chord, T>(
+    pub fn new<Trk, A, T>(
         notes: Trk,
         scale: ScaleMode,
         wrap_length: Option<NonZero<Tick>>,
         gap: u32,
     ) -> Self
     where
-        Trk: IntoIterator<Item = (Tick, Chord)>,
-        Chord: IntoIterator<Item = T>,
+        Trk: IntoIterator<Item = (A, T)>,
+        A: TimeAnchor,
         T: Into<Tone>,
     {
         let mut cells: Vec<(Vec<Tone>, Vec<Tone>)> = Default::default();
-        for (tick, chord) in notes {
-            let (index, is_branch) = scale.cell_slot(tick);
+        for (anchor, note) in notes {
+            let (index, is_branch) = scale.cell_slot(anchor.into_tick());
             cells.resize_with(index + 1, Default::default);
             let (main, branch) = &mut cells[index];
             let notes = if is_branch { branch } else { main };
-            notes.extend(chord.into_iter().map(Into::into));
+            notes.push(note.into());
         }
 
         let cells = cells
@@ -339,14 +339,15 @@ pub enum ScaleMode {
 impl ScaleMode {
     const SCALE_MODES: [Tick; 3] = [4, 3, 2];
 
-    pub fn from_tracks<'a, Trks, Trk: 'a, Chord: 'a>(tracks: &'a Trks) -> Self
+    pub fn from_tracks<'a, Trks, Trk: 'a, A: 'a, T: 'a>(tracks: &'a Trks) -> Self
     where
         &'a Trks: IntoIterator<Item = &'a Trk>,
-        &'a Trk: IntoIterator<Item = (&'a Tick, &'a Chord)>,
+        &'a Trk: IntoIterator<Item = (&'a A, &'a T)>,
+        A: TimeAnchor,
     {
         let ticks = tracks
             .into_iter()
-            .flat_map(|track| track.into_iter().map(|(tick, _)| *tick));
+            .flat_map(|track| track.into_iter().map(|(anchor, _)| (*anchor).into_tick()));
         Self::new(ticks)
     }
 
@@ -358,8 +359,8 @@ impl ScaleMode {
         });
         match applicable.iter().position(|&is_applicable| is_applicable) {
             Some(0) => Self::Scale4,
-            Some(1) => Self::Scale2,
-            Some(2) => Self::Scale3,
+            Some(1) => Self::Scale3,
+            Some(2) => Self::Scale2,
             _ => Self::Scale1,
         }
     }
