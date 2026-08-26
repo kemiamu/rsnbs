@@ -263,16 +263,17 @@ impl Layout for Anchored {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// Overlaps two sub-layouts at the origin.
-impl<A: Layout, B: Layout> Layout for (A, B) {
+/// Overlaps two positioned sub-layouts.
+impl<A: Layout, B: Layout> Layout for (BlockPos, A, BlockPos, B) {
     fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
-        self.0
-            .try_get_block(pos)
-            .or_else(|| self.1.try_get_block(pos))
+        let (first_anchor, first, second_anchor, second) = self;
+        let upper = first.try_get_block(pos - *first_anchor);
+        upper.or_else(|| second.try_get_block(pos - *second_anchor))
     }
 
     fn size(&self) -> BlockPos {
-        include(self.0.size(), self.1.size())
+        let (first_anchor, first, second_anchor, second) = self;
+        include(*first_anchor + first.size(), *second_anchor + second.size())
     }
 }
 

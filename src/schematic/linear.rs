@@ -4,11 +4,12 @@ use super::{Anchored, Arranged, Axis, Clipped, EvenlyArranged, Facing, Layout, M
 use super::{WithFloor, air, chain_block, inst_block, note_block};
 use super::{redstone_block, redstone_wire, repeater, sticky_piston};
 use crate::note::Tone;
+use crate::schematic::{WireConn, wire_state};
 use crate::types::{Index, LayerAnchor, Position, Tick, TimeAnchor};
 use mcdata::{GenericBlockState, util::BlockPos};
 use std::num::NonZero;
 
-//  MultiLinearLayout
+// MultiLinearLayout
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
@@ -25,11 +26,11 @@ impl MultiLinearLayout {
         for<'a> &'a Trks: IntoIterator<Item = &'a Trk>,
         for<'a> &'a Trk: IntoIterator<Item = (&'a Position, &'a T)>,
     {
-        let meta = Meta::new(&tracks);
+        let scale = ScaleMode::from_tracks(&tracks);
         let layouts = tracks
             .into_iter()
-            .map(|notes| LinearLayout::new(notes, meta, None, 0));
-        let pitch = BlockPos::new(LinearLayout::cell(meta.scale) + gap as i32, 0, 0);
+            .map(|notes| LinearLayout::new(notes, scale, None, 0));
+        let pitch = BlockPos::new(LinearLayout::cell(scale.scale()) + gap as i32, 0, 0);
         Self(EvenlyArranged::new(layouts, pitch))
     }
 }
@@ -44,7 +45,7 @@ impl Layout for MultiLinearLayout {
     }
 }
 
-//  StackedLinearLayout
+// StackedLinearLayout
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
@@ -66,9 +67,9 @@ impl StackedLinearLayout {
         for<'a> &'a Trks: IntoIterator<Item = &'a Trk>,
         for<'a> &'a Trk: IntoIterator<Item = (&'a Position, &'a T)>,
     {
-        let meta = Meta::new(&tracks);
+        let scale = ScaleMode::from_tracks(&tracks);
         let layouts = tracks.into_iter().map(|notes| {
-            let layout = LinearLayout::new(notes, meta, wrap_length, gap);
+            let layout = LinearLayout::new(notes, scale, wrap_length, gap);
             WithFloor::new(layout, full)
         });
         let pitch = BlockPos::new(0, 4, 0);
@@ -86,53 +87,21 @@ impl Layout for StackedLinearLayout {
     }
 }
 
-// LinearLayoutMeta
-//
-// ++++++++++++============++++++++++++============++++++++++++============
-
-type Meta = LinearLayoutMeta;
-
-/// Metadata for constructing a [`LinearLayout`], derived from a tick stream.
-#[derive(Clone, Copy)]
-pub struct LinearLayoutMeta {
-    pub song_length: Tick,
-    pub scale: Tick,
-}
-
-impl LinearLayoutMeta {
-    /// Compute metadata from a stream of tick positions.
-    pub fn new<'a, Trks, Trk: 'a, T: 'a>(tracks: &'a Trks) -> Self
-    where
-        &'a Trks: IntoIterator<Item = &'a Trk>,
-        &'a Trk: IntoIterator<Item = (&'a Position, &'a T)>,
-    {
-        let found_scale = TEMPL.into_iter().find(|&templ| {
-            tracks
-                .into_iter()
-                .flat_map(|n| n.into_iter().map(|(pos, _)| pos.into_tick()))
-                .all(|t| t % templ == 0)
-        });
-        let scale = found_scale.unwrap_or(1);
-        let song_length = tracks
-            .into_iter()
-            .flat_map(|n| n.into_iter().map(|(pos, _)| pos.into_tick()))
-            .max()
-            .map_or(0, |t| t + 1);
-        Self { song_length, scale }
-    }
-}
-
 // LinearLayout
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// A single linear track layout.
 pub struct LinearLayout {
     inner: Clipped<EvenlyArranged<Row>>,
 }
 
 impl LinearLayout {
-    pub fn new<Trk, T>(notes: Trk, meta: Meta, wrap_length: Option<NonZero<Tick>>, gap: u32) -> Self
+    pub fn new<Trk, T>(
+        notes: Trk,
+        scale: ScaleMode,
+        wrap_length: Option<NonZero<Tick>>,
+        gap: u32,
+    ) -> Self
     where
         Trk: IntoIterator<Item = (Position, T)>,
         T: Into<Tone>,
@@ -151,120 +120,213 @@ impl Layout for LinearLayout {
     }
 }
 
-// Row
+// Row & Turn
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// A complete zigzag row. The cell stream contains only data-bearing
-/// templates; turn junctions are owned and created by the row itself.
 pub struct Row {
-    inner: Anchored,
+    cells: Cells,
+    width: i32,
+    leading_turn: bool,
+    south_bound: bool,
 }
 
 impl Row {
-    /// Arrange a template stream and add all structure owned by that row.
-    ///
-    /// Direction is data on the templates' repeaters, so the row needs no
-    /// global row index or mode flag. A northbound row emits its main-column
-    /// overhang into the following row's overlap band.
-    pub fn new<I: IntoIterator<Item = Template>>(cells: I, gap: i32) -> Self {
-        todo!()
+    pub fn new<I: IntoIterator<Item = Template>>(
+        cells: I,
+        width: i32,
+        leading_turn: bool,
+        south_bound: bool,
+    ) -> Self {
+        let cells = Cells::new(cells, south_bound);
+
+        Self {
+            cells,
+            width,
+            leading_turn,
+            south_bound,
+        }
     }
 }
 
 impl Layout for Row {
     fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
-        self.inner.get_block(pos)
+        use WireConn::*;
+        let inner = self.cells.size();
+        let offset = inner.x - self.width;
+        let turning = self.leading_turn
+            && ((self.south_bound && pos.z == 0) || (!self.south_bound && pos.z == inner.z));
+        match (turning, pos.y, self.width - pos.x, self.south_bound) {
+            (true, 1, 2, true) => Some(wire_state(Side, None, Side, None, "0")),
+            (true, 1, 2, false) => Some(wire_state(Side, None, None, Side, "0")),
+            (true, 1, 2.., _) => Some(wire_state(Side, Side, None, None, "0")),
+            (true, 0, 2.., _) => Some(chain_block()),
+            (true, _, _, _) => Option::None,
+
+            (false, _, _, true) => self.cells.try_get_block(pos + BlockPos::new(offset, 0, 0)),
+            (false, _, _, false) => self.cells.try_get_block(pos + BlockPos::new(offset, 0, 1)),
+        }
     }
 
     fn size(&self) -> BlockPos {
-        self.inner.size()
+        let inner = self.cells.size();
+        BlockPos::new(self.width, inner.y, inner.z + 1)
     }
 }
 
-// Track sizing
+// Cells
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// Candidate track scales, tried in order for divisibility.
-const TEMPL: [Tick; 3] = [4, 2, 3];
-
-fn length_in_units(meta: &Meta, multiplier: NonZero<Tick>) -> Tick {
-    let head = if meta.scale == 1 { 2 } else { 0 };
-    (meta.song_length + head).div_ceil(meta.scale * 2 * multiplier.get())
+enum Cells {
+    South(EvenlyArranged<Template>),
+    North(Reverse<EvenlyArranged<Reverse<Template>>>),
 }
 
-fn wrap_rows(meta: &Meta, wrap_length: Option<NonZero<Tick>>) -> i32 {
-    wrap_length.map_or(1, |wrap| length_in_units(meta, wrap)) as i32
+impl Cells {
+    fn new<I: IntoIterator<Item = Template>>(cells: I, south_bound: bool) -> Self {
+        let pitch = BlockPos::new(0, 0, 2);
+        if south_bound {
+            return Self::South(EvenlyArranged::new(cells, pitch));
+        }
+        let rev = cells
+            .into_iter()
+            .map(|cell| Reverse::new(cell, Axis::Southing.unit()));
+        let cells = EvenlyArranged::new(rev, pitch);
+        Self::North(Reverse::new(cells, Axis::Southing.unit()))
+    }
 }
 
-fn cols_per_row(meta: &Meta, wrap_length: Option<NonZero<Tick>>) -> i32 {
-    let all = length_in_units(meta, NonZero::<Tick>::MIN);
-    wrap_length.map_or(all, |wrap| wrap.get()) as i32
+impl Layout for Cells {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        match self {
+            Self::South(cells) => cells.block_at(pos),
+            Self::North(cells) => cells.block_at(pos),
+        }
+    }
+
+    fn size(&self) -> BlockPos {
+        match self {
+            Self::South(cells) => cells.size(),
+            Self::North(cells) => cells.size(),
+        }
+    }
 }
 
 // Template
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// A fixed-shape template tile of the linear track, including orientation.
+/// A fixed-shape template tile of the linear track.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Template {
-    /// Repeater branch cell: logic column at x3, branch notes at x0/x1,
-    /// main notes at x4/x5. Size 6×2×2.
-    Branch {
-        repeater: Repeater,
-        branch: [Option<Tone>; 2],
-        notes: [Option<Tone>; 2],
-    },
-    /// Piston branch cell: piston column at x2/x3, branch notes at x0/x1,
-    /// main notes at x4/x5. Size 6×2×2.
-    Piston {
-        repeater: Repeater,
-        branch: [Option<Tone>; 2],
-        notes: [Option<Tone>; 2],
-    },
-    /// Note cell: spare note at x3, main notes at x4/x5. Size 6×2×2.
-    Note {
-        repeater: Repeater,
-        notes: [Option<Tone>; 3],
-    },
+pub struct Template {
+    pub main: [Option<Tone>; 2],
+    pub branch: Branch,
+    pub scale: ScaleMode,
+    pub north_bound: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Branch {
+    Unbranched(Option<Tone>),
+    Branched([Option<Tone>; 2]),
 }
 
 impl Layout for Template {
     fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
-        todo!()
+        use Branch::*;
+        use Facing::*;
+        use ScaleMode::*;
+        let local_z = if self.north_bound { pos.z } else { 2 - pos.z };
+        let local_x = match self.scale {
+            Scale4 | Scale2 => 4 - pos.x,
+            Scale3 | Scale1 => 5 - pos.x,
+        };
+        let facing = if self.north_bound { North } else { South };
+        let main_repeater = || repeater(self.scale.scale().to_string(), facing, false, false);
+        let branch_repeater = || repeater((self.scale.scale() / 2).to_string(), West, false, false);
+        match (self.scale, self.branch, local_x, pos.y, local_z) {
+            (_any_scale, _any_branch, 1, 0, 0) => Some(chain_block()),
+            (_any_scale, _any_branch, 1, 1, 0) => Some(main_repeater()),
+            (_any_scale, _any_branch, 1, 0, 1) => Some(inst_block(self.main[0], chain_block)),
+            (_any_scale, _any_branch, 1, 1, 1) => Some(note_block(self.main[0], chain_block)),
+            (_any_scale, _any_branch, 0, 0, 1) => Some(inst_block(self.main[1], air)),
+            (_any_scale, _any_branch, 0, 1, 1) => Some(note_block(self.main[1], air)),
+            (_any_scale, Unbranched(note), 2, 0, 1) => Some(inst_block(note, air)),
+            (_any_scale, Unbranched(note), 2, 1, 1) => Some(note_block(note, air)),
+
+            (Scale4 | Scale2, Branched(_), 2, 0, 1) => Some(chain_block()),
+            (Scale4 | Scale2, Branched(_), 2, 1, 1) => Some(branch_repeater()),
+            (Scale4 | Scale2, Branched(b), 3, 0, 1) => Some(inst_block(b[0], chain_block)),
+            (Scale4 | Scale2, Branched(b), 3, 1, 1) => Some(note_block(b[0], chain_block)),
+            (Scale4 | Scale2, Branched(b), 4, 0, 1) => Some(inst_block(b[1], air)),
+            (Scale4 | Scale2, Branched(b), 4, 1, 1) => Some(note_block(b[1], air)),
+
+            (Scale3 | Scale1, Branched(_), 2, 1, 1) => Some(sticky_piston("west")),
+            (Scale3 | Scale1, Branched(_), 3, 1, 1) => Some(redstone_block()),
+            (Scale3 | Scale1, Branched(b), 5, 0, 1) => Some(inst_block(b[0], air)),
+            (Scale3 | Scale1, Branched(b), 5, 1, 1) => Some(note_block(b[0], air)),
+            (Scale3 | Scale1, Branched(b), 4, 0, 2) => Some(inst_block(b[1], air)),
+            (Scale3 | Scale1, Branched(b), 4, 1, 2) => Some(note_block(b[1], air)),
+
+            _ => None,
+        }
     }
 
     fn size(&self) -> BlockPos {
-        match self {
-            Self::Piston { .. } => BlockPos::new(6, 2, 2),
-            Self::Branch { .. } | Self::Note { .. } => BlockPos::new(5, 2, 2),
+        match self.scale {
+            ScaleMode::Scale4 | ScaleMode::Scale2 => BlockPos::new(5, 2, 3),
+            ScaleMode::Scale3 | ScaleMode::Scale1 => BlockPos::new(6, 2, 3),
         }
     }
 }
 
-// Repeater
+// ScaleMode
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// A repeater tile: delay and facing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Repeater {
-    /// Signal delay: the track scale.
-    delay: u8,
-    /// Facing of this repeater.
-    facing: Facing,
+pub enum ScaleMode {
+    Scale4,
+    Scale2,
+    Scale3,
+    Scale1,
 }
 
-impl Repeater {
-    /// Signal repeater block: full delay, data facing.
-    fn block(self) -> GenericBlockState {
-        repeater(self.delay.to_string(), self.facing, false, false)
+impl ScaleMode {
+    const SCALE_MODES: [Tick; 3] = [4, 2, 3];
+
+    pub fn from_tracks<'a, Trks, Trk: 'a, T: 'a>(tracks: &'a Trks) -> Self
+    where
+        &'a Trks: IntoIterator<Item = &'a Trk>,
+        &'a Trk: IntoIterator<Item = (&'a Position, &'a T)>,
+    {
+        let ticks = tracks
+            .into_iter()
+            .flat_map(|track| track.into_iter().map(|(pos, _)| pos.into_tick()));
+        Self::new(ticks)
     }
 
-    /// Logic repeater block: half delay, fixed east facing.
-    fn logic_block(self) -> GenericBlockState {
-        repeater((self.delay / 2).to_string(), Facing::West, false, false)
+    /// Select the first applicable scaling mode.
+    pub fn new<I: IntoIterator<Item = Tick>>(ticks: I) -> Self {
+        let applicable = ticks.into_iter().fold([true; 3], |applicable, tick| {
+            let divisible = Self::SCALE_MODES.map(|scale| tick % scale == 0);
+            std::array::from_fn(|index| applicable[index] && divisible[index])
+        });
+        match applicable.iter().position(|&is_applicable| is_applicable) {
+            Some(0) => Self::Scale4,
+            Some(1) => Self::Scale2,
+            Some(2) => Self::Scale3,
+            _ => Self::Scale1,
+        }
+    }
+
+    pub const fn scale(self) -> Tick {
+        match self {
+            Self::Scale4 => 4,
+            Self::Scale2 => 2,
+            Self::Scale3 => 3,
+            Self::Scale1 => 1,
+        }
     }
 }

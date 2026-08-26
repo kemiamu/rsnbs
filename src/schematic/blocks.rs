@@ -232,10 +232,10 @@ pub fn redstone_wire() -> GenericBlockState {
 ///
 /// These are the post-update states a placed wire settles into.
 pub fn wire_state(
+    west: WireConn,
     east: WireConn,
     north: WireConn,
     south: WireConn,
-    west: WireConn,
     power: impl Into<Cow<'static, str>>,
 ) -> GenericBlockState {
     GenericBlockState {
