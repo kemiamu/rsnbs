@@ -7,7 +7,6 @@ use crate::note::Tone;
 use crate::types::{Index, Position, Tick, TimeAnchor};
 use mcdata::{GenericBlockState, util::BlockPos};
 use std::collections::BTreeMap;
-use std::iter;
 use std::num::NonZero;
 
 //  MultiLinearLayout
@@ -130,10 +129,10 @@ impl LinearLayoutMeta {
 
 /// A single linear track layout.
 ///
-/// The track is built at construction time into zigzag rows: each row is a
-/// column-stack of template cells plus its turn junctions, and rows are then
-/// evenly arranged along the track axis with overlapping overhangs absorbed
-/// by [`EvenlyArranged`]'s candidate fallback.
+/// The track is built at construction time into zigzag rows: each row wraps
+/// a template stream with its turn junctions rendered by the row itself, and
+/// rows are then evenly arranged along the track axis with overlapping
+/// overhangs absorbed by [`EvenlyArranged`]'s candidate fallback.
 pub struct LinearLayout {
     inner: Clipped<EvenlyArranged<Anchored>>,
 }
@@ -203,8 +202,9 @@ impl Layout for LinearLayout {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// Build one zigzag row: turn strips on both edges, the previous row's main
-/// column overhang at the head, and the column stack of template cells.
+/// Build one zigzag row: the template stream wrapped by the row layout plus
+/// the inter-row overhangs (the previous row's main column at the head and
+/// the piston branch[0] band).
 fn build_row(
     notes: &BTreeMap<Position, Tone>,
     meta: Meta,
@@ -224,53 +224,38 @@ fn build_row(
         notes.get(&Position::new(tick, layer)).copied()
     };
 
-    // Column stack of cells; odd rows run the columns in reverse.
-    let cells: Vec<Template> = (0..cols)
-        .map(|col| {
-            let group = row * cols + col;
-            let branch = [note(branch_tick, 0, group), note(branch_tick, 1, group)];
-            let has_branch = branch[0].or(branch[1]).is_some();
-            let repeater = Repeater {
-                delay: meta.scale as u8,
-                facing: match row.rem_euclid(2) {
-                    0 => Facing::South,
-                    _ => Facing::North,
-                },
-            };
-            let notes = [note(0, 0, group), note(0, 1, group)];
-            match (has_branch, is_piston) {
-                (true, true) => Template::Piston {
-                    repeater,
-                    branch,
-                    notes,
-                },
-                (true, false) => Template::Branch {
-                    repeater,
-                    branch,
-                    notes,
-                },
-                (false, _) => Template::Note {
-                    repeater,
-                    notes: [notes[0], notes[1], note(0, 2, group)],
-                },
-            }
-        })
-        .collect();
-    let columns = Arranged::new(cells, Axis::Southing, 0);
-    let columns: Box<dyn Layout> = match row.rem_euclid(2) {
-        0 => Box::new(columns),
-        _ => Box::new(Reverse::new(
-            columns,
-            Mask::new(BlockPos::new(0, 0, 1)).unwrap(),
-        )),
-    };
-    // Non-piston tracks skip the piston-only x=2 band: queries at x >= 2
-    // shift one band right, collapsing the gap.
-    let cells: Box<dyn Layout> = if is_piston {
-        columns
-    } else {
-        Box::new(NonPistonShift(columns))
-    };
+    // Data -> template stream -> row: the row renders the turn junctions and
+    // stacks the columns, so no structural judgment remains in the query.
+    let cells = (0..cols).map(|col| {
+        let group = row * cols + col;
+        let branch = [note(branch_tick, 0, group), note(branch_tick, 1, group)];
+        let has_branch = branch[0].or(branch[1]).is_some();
+        let repeater = Repeater {
+            delay: meta.scale as u8,
+            facing: match row.rem_euclid(2) {
+                0 => Facing::South,
+                _ => Facing::North,
+            },
+        };
+        let notes = [note(0, 0, group), note(0, 1, group)];
+        match (has_branch, is_piston) {
+            (true, true) => Template::Piston {
+                repeater,
+                branch,
+                notes,
+            },
+            (true, false) => Template::Branch {
+                repeater,
+                branch,
+                notes,
+            },
+            (false, _) => Template::Note {
+                repeater,
+                notes: [notes[0], notes[1], note(0, 2, group)],
+            },
+        }
+    });
+    let row_layout = Row::new(cells, pitch, gap, southing, row.rem_euclid(2), is_piston);
 
     // Piston branch[0] overhangs into the next column's z0 band (z odd on
     // even rows, z even on odd rows), so it is a separate overhang column;
@@ -320,27 +305,7 @@ fn build_row(
         )),
     };
 
-    // Turn junction strips: even rows carry the front strip at the row head,
-    // odd rows at the row tail, with the two edge bands complementary.
-    let front = pitch - gap - 1;
-    let (lo0, hi0, lo1, hi1) = match row.rem_euclid(2) {
-        0 => (0, front, front, pitch - 1),
-        _ => (front, pitch - 1, 0, front),
-    };
-    let strip0: Box<dyn Layout> = Box::new(Arranged::new(
-        iter::repeat(Template::Turn).take((hi0 - lo0 + 1) as usize),
-        Axis::Easting,
-        0,
-    ));
-    let strip1: Box<dyn Layout> = Box::new(Arranged::new(
-        iter::repeat(Template::Turn).take((hi1 - lo1 + 1) as usize),
-        Axis::Easting,
-        0,
-    ));
-
     Anchored::new(vec![
-        (strip0, BlockPos::new(lo0, 0, 0)),
-        (strip1, BlockPos::new(lo1, 0, southing - 1)),
         (extend, BlockPos::new(0, 0, 1 + row.rem_euclid(2))),
         // Even rows overhang into the odd z band; odd rows into the even z
         // band from the row head (z = 0) with reversed column order.
@@ -355,54 +320,80 @@ fn build_row(
                 },
             ),
         ),
-        (cells, BlockPos::new(0, 0, 1)),
+        (Box::new(row_layout), BlockPos::ORIGIN),
     ])
 }
 
-// NonPistonShift
+// Row
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// Collapses the piston-only x=2 band out of a non-piston cell stack:
-/// queries at `x >= 2` shift one band right, so the logic/spare, main and
-/// n1 bands sit at x 2..5 instead of the piston's 3..5.
-struct NonPistonShift<L: Layout>(L);
+/// A zigzag row layout: wraps a row's template stream and renders the turn
+/// junctions at both edges. The turn carries no data, so it is part of the
+/// row geometry rather than a template variant.
+pub struct Row {
+    inner: Anchored,
+}
 
-impl<L: Layout> Layout for NonPistonShift<L> {
-    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
-        let x = if pos.x >= 2 { pos.x + 1 } else { pos.x };
-        self.0.get_block(BlockPos::new(x, pos.y, pos.z))
-    }
+impl Row {
+    /// `parity` is the row index mod 2: even rows run the columns forward
+    /// with the front strip at the row head, odd rows mirrored.
+    pub fn new<I: IntoIterator<Item = Template>>(
+        cells: I,
+        pitch: i32,
+        gap: i32,
+        southing: i32,
+        parity: i32,
+        is_piston: bool,
+    ) -> Self {
+        let columns = Arranged::new(cells, Axis::Southing, 0);
+        // Odd rows run the columns in reverse.
+        let columns: Box<dyn Layout> = match parity {
+            0 => Box::new(columns),
+            _ => Box::new(Reverse::new(
+                columns,
+                Mask::new(BlockPos::new(0, 0, 1)).unwrap(),
+            )),
+        };
+        // Non-piston tracks skip the piston-only x=2 band: queries at x >= 2
+        // shift one band right, collapsing the gap.
+        let columns: Box<dyn Layout> = if is_piston {
+            columns
+        } else {
+            Box::new(NonPistonShift(columns))
+        };
 
-    fn size(&self) -> BlockPos {
-        let size = self.0.size();
-        BlockPos::new(size.x - 1, size.y, size.z)
+        // Turn junction strips: even rows carry the front strip at the row
+        // head, odd rows at the row tail, with the two edge bands
+        // complementary. The strip length grows with the gap.
+        let front = pitch - gap - 1;
+        let (lo0, hi0, lo1, hi1) = match parity {
+            0 => (0, front, front, pitch - 1),
+            _ => (front, pitch - 1, 0, front),
+        };
+
+        let inner = Anchored::new(vec![
+            (
+                Box::new(Turn::new(hi0 - lo0 + 1)) as Box<dyn Layout>,
+                BlockPos::new(lo0, 0, 0),
+            ),
+            (
+                Box::new(Turn::new(hi1 - lo1 + 1)) as Box<dyn Layout>,
+                BlockPos::new(lo1, 0, southing - 1),
+            ),
+            (columns, BlockPos::new(0, 0, 1)),
+        ]);
+        Self { inner }
     }
 }
 
-// ExtendCol
-//
-// ++++++++++++============++++++++++++============++++++++++++============
-
-/// A single-column overhang tile with an optional under/note pair,
-/// used for the previous row's n1 track and the piston branch[0] band.
-/// `None` under/note means the band is empty at that column.
-struct ExtendCol {
-    under: Option<GenericBlockState>,
-    note: Option<GenericBlockState>,
-}
-
-impl Layout for ExtendCol {
+impl Layout for Row {
     fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
-        match pos.y {
-            0 => self.under.clone(),
-            1 => self.note.clone(),
-            _ => None,
-        }
+        self.inner.get_block(pos)
     }
 
     fn size(&self) -> BlockPos {
-        BlockPos::new(1, 2, 1)
+        self.inner.size()
     }
 }
 
@@ -437,8 +428,6 @@ fn cols_per_row(meta: &Meta, wrap_length: Option<NonZero<Tick>>) -> i32 {
 /// note data is baked in at construction time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Template {
-    /// Turn junction column: chain at y0, wire at y1. Size 1×2×1.
-    Turn,
     /// Repeater branch cell: logic column at x3, branch notes at x0/x1,
     /// main notes at x4/x5. Size 6×2×2.
     Branch {
@@ -460,36 +449,10 @@ pub enum Template {
     },
 }
 
-/// A repeater tile: delay and facing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Repeater {
-    /// Signal delay: the track scale.
-    delay: u8,
-    /// Facing of this repeater.
-    facing: Facing,
-}
-
-impl Repeater {
-    /// Signal repeater block: full delay, data facing.
-    fn block(self) -> GenericBlockState {
-        repeater(self.delay.to_string(), self.facing, false, false)
-    }
-
-    /// Logic repeater block: half delay, fixed east facing.
-    fn logic_block(self) -> GenericBlockState {
-        repeater((self.delay / 2).to_string(), Facing::West, false, false)
-    }
-}
-
 impl Layout for Template {
     fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
         let BlockPos { x, y, z } = pos;
         let block = match self {
-            Template::Turn => match y {
-                0 => chain_block(),
-                1 => redstone_wire(),
-                _ => return None,
-            },
             Template::Branch {
                 repeater,
                 branch,
@@ -543,10 +506,112 @@ impl Layout for Template {
 
     fn size(&self) -> BlockPos {
         match self {
-            Template::Turn => BlockPos::new(1, 2, 1),
             Template::Branch { .. } | Template::Piston { .. } | Template::Note { .. } => {
                 BlockPos::new(6, 2, 2)
             }
         }
+    }
+}
+
+// Turn
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// A turn junction strip: chain at y0, wire at y1, a run of `length`
+/// columns. Its length grows with the gap; rendered by the [`Row`] itself,
+/// not a template since it carries no note data.
+struct Turn {
+    length: i32,
+}
+
+impl Turn {
+    fn new(length: i32) -> Self {
+        Self { length }
+    }
+}
+
+impl Layout for Turn {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        match pos.y {
+            0 => Some(chain_block()),
+            1 => Some(redstone_wire()),
+            _ => None,
+        }
+    }
+
+    fn size(&self) -> BlockPos {
+        BlockPos::new(self.length, 2, 1)
+    }
+}
+
+// NonPistonShift
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// Collapses the piston-only x=2 band out of a non-piston cell stack:
+/// queries at `x >= 2` shift one band right, so the logic/spare, main and
+/// n1 bands sit at x 2..5 instead of the piston's 3..5.
+struct NonPistonShift<L: Layout>(L);
+
+impl<L: Layout> Layout for NonPistonShift<L> {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        let x = if pos.x >= 2 { pos.x + 1 } else { pos.x };
+        self.0.get_block(BlockPos::new(x, pos.y, pos.z))
+    }
+
+    fn size(&self) -> BlockPos {
+        let size = self.0.size();
+        BlockPos::new(size.x - 1, size.y, size.z)
+    }
+}
+
+// ExtendCol
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// A single-column overhang tile with an optional under/note pair,
+/// used for the previous row's n1 track and the piston branch[0] band.
+/// `None` under/note means the band is empty at that column.
+struct ExtendCol {
+    under: Option<GenericBlockState>,
+    note: Option<GenericBlockState>,
+}
+
+impl Layout for ExtendCol {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        match pos.y {
+            0 => self.under.clone(),
+            1 => self.note.clone(),
+            _ => None,
+        }
+    }
+
+    fn size(&self) -> BlockPos {
+        BlockPos::new(1, 2, 1)
+    }
+}
+
+// Repeater
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// A repeater tile: delay and facing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Repeater {
+    /// Signal delay: the track scale.
+    delay: u8,
+    /// Facing of this repeater.
+    facing: Facing,
+}
+
+impl Repeater {
+    /// Signal repeater block: full delay, data facing.
+    fn block(self) -> GenericBlockState {
+        repeater(self.delay.to_string(), self.facing, false, false)
+    }
+
+    /// Logic repeater block: half delay, fixed east facing.
+    fn logic_block(self) -> GenericBlockState {
+        repeater((self.delay / 2).to_string(), Facing::West, false, false)
     }
 }
