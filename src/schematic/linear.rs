@@ -7,7 +7,7 @@ use crate::note::Tone;
 use crate::schematic::{WireConn, wire_state};
 use crate::types::{Tick, TimeAnchor};
 use mcdata::{GenericBlockState, util::BlockPos};
-use std::num::NonZero;
+use std::{collections::VecDeque, num::NonZero};
 
 // MultiLinearLayout
 //
@@ -107,7 +107,7 @@ impl LinearLayout {
         A: TimeAnchor,
         T: Into<Tone>,
     {
-        let mut cells: Vec<(Vec<Tone>, Vec<Tone>)> = Default::default();
+        let mut cells: VecDeque<(Vec<Tone>, Vec<Tone>)> = Default::default();
         for (anchor, note) in notes {
             let (index, is_branch) = scale.cell_slot(anchor.into_tick());
             cells.resize_with(index + 1, Default::default);
@@ -116,20 +116,17 @@ impl LinearLayout {
             notes.push(note.into());
         }
 
-        let cells = cells
-            .into_iter()
-            .map(|(main, branch)| Template::from_notes(scale, main, branch))
-            .collect::<Vec<_>>();
         let row_length = wrap_length.map_or(cells.len(), |length| length.get() as usize);
         let width = scale.width() + gap as i32;
-        let rows = cells.chunks(row_length).enumerate().map(|(index, cells)| {
+        let mut rows = Vec::new();
+        while !cells.is_empty() {
+            let index = rows.len();
             let south_bound = index % 2 == 0;
-            let cells = cells
-                .iter()
-                .copied()
-                .map(|cell| cell.with_north_bound(!south_bound));
-            Row::new(cells, width, index > 0, south_bound)
-        });
+            let templates = cells
+                .drain(..row_length.min(cells.len()))
+                .map(|(main, branch)| Template::from_notes(scale, main, branch, south_bound));
+            rows.push(Row::new(templates, width, index > 0, south_bound));
+        }
         Self(EvenlyArranged::new(rows, BlockPos::new(width - 2, 0, 0)))
     }
 }
@@ -175,7 +172,7 @@ impl Row {
 
 impl Layout for Row {
     fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
-        use WireConn::*;
+        use self::WireConn::*;
         let inner = self.cells.size();
         let offset = inner.x - self.width;
         let turning = self.leading_turn
@@ -247,7 +244,7 @@ pub struct Template {
     pub main: [Option<Tone>; 2],
     pub branch: Branch,
     pub scale: ScaleMode,
-    pub north_bound: bool,
+    pub south_bound: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -257,38 +254,33 @@ pub enum Branch {
 }
 
 impl Template {
-    fn from_notes(scale: ScaleMode, main: Vec<Tone>, branch: Vec<Tone>) -> Self {
-        let mut main = main.into_iter();
-        let main_line = [main.next(), main.next()];
-        let branch = match branch.is_empty() {
-            true => Branch::Unbranched(main.next()),
-            false => {
-                let mut branch = branch.into_iter();
-                Branch::Branched([branch.next(), branch.next()])
-            }
+    fn from_notes<M, B>(scale: ScaleMode, main: M, branch: B, south_bound: bool) -> Self
+    where
+        M: IntoIterator<Item = Tone>,
+        B: IntoIterator<Item = Tone>,
+    {
+        let (mut main_notes, mut branch_notes) = (main.into_iter(), branch.into_iter());
+        let main = [main_notes.next(), main_notes.next()];
+        let branch = match branch_notes.next() {
+            Some(first) => Branch::Branched([Some(first), branch_notes.next()]),
+            None => Branch::Unbranched(main_notes.next()),
         };
+
         Self {
-            main: main_line,
+            main,
             branch,
             scale,
-            north_bound: false,
+            south_bound,
         }
-    }
-
-    fn with_north_bound(mut self, north_bound: bool) -> Self {
-        self.north_bound = north_bound;
-        self
     }
 }
 
 impl Layout for Template {
     fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
-        use Branch::*;
-        use Facing::*;
-        use ScaleMode::*;
-        let local_z = if self.north_bound { pos.z } else { 2 - pos.z };
+        use self::{Branch::*, Facing::*, ScaleMode::*};
+        let local_z = if self.south_bound { pos.z } else { 2 - pos.z };
         let local_x = self.scale.width() - pos.x - 1;
-        let facing = if self.north_bound { North } else { South };
+        let facing = if self.south_bound { South } else { North };
         let main_repeater = || repeater(self.scale.scale().to_string(), facing, false, false);
         let branch_repeater = || repeater((self.scale.scale() / 2).to_string(), West, false, false);
         match (self.scale, self.branch, local_x, pos.y, local_z) {
@@ -382,18 +374,9 @@ impl ScaleMode {
     }
 
     fn cell_slot(self, tick: Tick) -> (usize, bool) {
-        if matches!(self, Self::Scale1) {
-            return match tick % 2 {
-                0 => (tick as usize / 2 + 1, false),
-                _ => (tick as usize / 2, true),
-            };
-        }
-        assert_eq!(
-            tick % self.scale(),
-            0,
-            "tick {tick} is incompatible with {self:?}"
-        );
         let tick = tick / self.scale();
-        (tick as usize / 2, tick % 2 == 1)
+        let branch = tick % 2 == 1;
+        let cell = tick as usize / 2 + usize::from(self == Self::Scale1 && !branch);
+        (cell, branch)
     }
 }
