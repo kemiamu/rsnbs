@@ -5,7 +5,7 @@ use super::{WithFloor, air, chain_block, inst_block, note_block};
 use super::{redstone_block, redstone_wire, repeater, sticky_piston};
 use crate::note::Tone;
 use crate::schematic::{WireConn, wire_state};
-use crate::types::{Index, LayerAnchor, Position, Tick, TimeAnchor};
+use crate::types::{Index, LayerAnchor, Tick};
 use mcdata::{GenericBlockState, util::BlockPos};
 use std::num::NonZero;
 
@@ -18,19 +18,20 @@ pub struct MultiLinearLayout(EvenlyArranged<LinearLayout>);
 
 impl MultiLinearLayout {
     /// Create a linear layout from per-track notes.
-    pub fn new<Trks, Trk, T>(tracks: Trks, gap: u32) -> Self
+    pub fn new<Trks, Trk, Chord, T>(tracks: Trks, gap: u32) -> Self
     where
         Trks: IntoIterator<Item = Trk>,
-        Trk: IntoIterator<Item = (Position, T)>,
+        Trk: IntoIterator<Item = (Tick, Chord)>,
+        Chord: IntoIterator<Item = T>,
         T: Into<Tone>,
         for<'a> &'a Trks: IntoIterator<Item = &'a Trk>,
-        for<'a> &'a Trk: IntoIterator<Item = (&'a Position, &'a T)>,
+        for<'a> &'a Trk: IntoIterator<Item = (&'a Tick, &'a Chord)>,
     {
         let scale = ScaleMode::from_tracks(&tracks);
         let layouts = tracks
             .into_iter()
             .map(|notes| LinearLayout::new(notes, scale, None, 0));
-        let pitch = BlockPos::new(LinearLayout::cell(scale.scale()) + gap as i32, 0, 0);
+        let pitch = BlockPos::new(scale.width() + gap as i32, 0, 0);
         Self(EvenlyArranged::new(layouts, pitch))
     }
 }
@@ -54,7 +55,7 @@ pub struct StackedLinearLayout(EvenlyArranged<WithFloor<LinearLayout>>);
 
 impl StackedLinearLayout {
     /// Create a stacked linear layout from per-track notes.
-    pub fn new<Trks, Trk, T>(
+    pub fn new<Trks, Trk, Chord, T>(
         tracks: Trks,
         wrap_length: Option<NonZero<Tick>>,
         gap: u32,
@@ -62,10 +63,11 @@ impl StackedLinearLayout {
     ) -> Self
     where
         Trks: IntoIterator<Item = Trk>,
-        Trk: IntoIterator<Item = (Position, T)>,
+        Trk: IntoIterator<Item = (Tick, Chord)>,
+        Chord: IntoIterator<Item = T>,
         T: Into<Tone>,
         for<'a> &'a Trks: IntoIterator<Item = &'a Trk>,
-        for<'a> &'a Trk: IntoIterator<Item = (&'a Position, &'a T)>,
+        for<'a> &'a Trk: IntoIterator<Item = (&'a Tick, &'a Chord)>,
     {
         let scale = ScaleMode::from_tracks(&tracks);
         let layouts = tracks.into_iter().map(|notes| {
@@ -96,14 +98,15 @@ pub struct LinearLayout {
 }
 
 impl LinearLayout {
-    pub fn new<Trk, T>(
+    pub fn new<Trk, Chord, T>(
         notes: Trk,
         scale: ScaleMode,
         wrap_length: Option<NonZero<Tick>>,
         gap: u32,
     ) -> Self
     where
-        Trk: IntoIterator<Item = (Position, T)>,
+        Trk: IntoIterator<Item = (Tick, Chord)>,
+        Chord: IntoIterator<Item = T>,
         T: Into<Tone>,
     {
         todo!()
@@ -238,10 +241,7 @@ impl Layout for Template {
         use Facing::*;
         use ScaleMode::*;
         let local_z = if self.north_bound { pos.z } else { 2 - pos.z };
-        let local_x = match self.scale {
-            Scale4 | Scale2 => 4 - pos.x,
-            Scale3 | Scale1 => 5 - pos.x,
-        };
+        let local_x = self.scale.width() - pos.x - 1;
         let facing = if self.north_bound { North } else { South };
         let main_repeater = || repeater(self.scale.scale().to_string(), facing, false, false);
         let branch_repeater = || repeater((self.scale.scale() / 2).to_string(), West, false, false);
@@ -274,10 +274,7 @@ impl Layout for Template {
     }
 
     fn size(&self) -> BlockPos {
-        match self.scale {
-            ScaleMode::Scale4 | ScaleMode::Scale2 => BlockPos::new(5, 2, 3),
-            ScaleMode::Scale3 | ScaleMode::Scale1 => BlockPos::new(6, 2, 3),
-        }
+        BlockPos::new(self.scale.width(), 2, 3)
     }
 }
 
@@ -296,14 +293,14 @@ pub enum ScaleMode {
 impl ScaleMode {
     const SCALE_MODES: [Tick; 3] = [4, 2, 3];
 
-    pub fn from_tracks<'a, Trks, Trk: 'a, T: 'a>(tracks: &'a Trks) -> Self
+    pub fn from_tracks<'a, Trks, Trk: 'a, Chord: 'a>(tracks: &'a Trks) -> Self
     where
         &'a Trks: IntoIterator<Item = &'a Trk>,
-        &'a Trk: IntoIterator<Item = (&'a Position, &'a T)>,
+        &'a Trk: IntoIterator<Item = (&'a Tick, &'a Chord)>,
     {
         let ticks = tracks
             .into_iter()
-            .flat_map(|track| track.into_iter().map(|(pos, _)| pos.into_tick()));
+            .flat_map(|track| track.into_iter().map(|(tick, _)| *tick));
         Self::new(ticks)
     }
 
@@ -327,6 +324,13 @@ impl ScaleMode {
             Self::Scale2 => 2,
             Self::Scale3 => 3,
             Self::Scale1 => 1,
+        }
+    }
+
+    pub const fn width(self) -> i32 {
+        match self {
+            Self::Scale4 | Self::Scale2 => 5,
+            Self::Scale3 | Self::Scale1 => 6,
         }
     }
 }
