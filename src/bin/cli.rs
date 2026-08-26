@@ -281,7 +281,7 @@ enum Floor {
 impl Floor {
     /// Full-coverage flag for layouts that always carry a floor.
     fn full(self) -> bool {
-        matches!(self, Floor::Full | Floor::None)
+        matches!(self, Floor::Full)
     }
 }
 

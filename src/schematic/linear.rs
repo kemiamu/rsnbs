@@ -122,7 +122,7 @@ impl LinearLayout {
         }
 
         let row_length = wrap_length.map_or(cells.len(), |length| length.get() as usize);
-        let width = scale.width() + gap as i32;
+        let width = scale.width() + gap as i32 + 1;
         let mut rows = Vec::new();
         while !cells.is_empty() {
             let index = rows.len();
@@ -185,14 +185,14 @@ impl Layout for Row {
         let turning = self.leading_turn
             && ((self.south_bound && pos.z == 0) || (!self.south_bound && pos.z == inner.z));
         match (turning, pos.y, self.width - pos.x, self.south_bound) {
-            (true, 1, 2, true) => Some(wire_state(Side, None, Side, None, "0")),
-            (true, 1, 2, false) => Some(wire_state(Side, None, None, Side, "0")),
+            (true, 1, 2, true) => Some(wire_state(Side, None, None, Side, "0")),
+            (true, 1, 2, false) => Some(wire_state(Side, None, Side, None, "0")),
             (true, 1, 2.., _) => Some(wire_state(Side, Side, None, None, "0")),
             (true, 0, 2.., _) => Some(chain_block()),
             (true, _, _, _) => Option::None,
 
-            (false, _, _, true) => self.cells.try_get_block(pos + BlockPos::new(offset, 0, 0)),
-            (false, _, _, false) => self.cells.try_get_block(pos + BlockPos::new(offset, 0, 1)),
+            (false, _, _, true) => self.cells.try_get_block(pos + BlockPos::new(offset, 0, -1)),
+            (false, _, _, false) => self.cells.try_get_block(pos + BlockPos::new(offset, 0, 0)),
         }
     }
 
