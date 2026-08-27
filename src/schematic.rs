@@ -28,7 +28,7 @@ pub trait Layout {
 
     /// Block at the given world position; panics on out-of-bounds access.
     fn get_block(&self, pos: BlockPos) -> Option<GenericBlockState> {
-        debug_assert!(self.contains(pos), "block out of bounds");
+        debug_assert!(self.contains(pos), "block out of bounds: {pos:?}");
         self.block_at(pos)
     }
 
@@ -336,11 +336,13 @@ impl<L: Layout> WithFloor<L> {
 
 impl<L: Layout> Layout for WithFloor<L> {
     fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
-        let local_pos = || BlockPos::new(pos.x, pos.y - 1, pos.z);
+        let inner = |pos: BlockPos| self.layout.get_block(pos);
         match pos.y {
             0 if self.full => Some(floor_block()),
-            0 if self.layout.get_block(pos).is_some_and(|b| b.needs_floor()) => Some(floor_block()),
-            _ => self.layout.get_block(local_pos()),
+            0 => inner(pos)
+                .filter(|b| b.needs_floor())
+                .map(|_| floor_block()),
+            _ => inner(BlockPos::new(pos.x, pos.y - 1, pos.z)),
         }
     }
 
