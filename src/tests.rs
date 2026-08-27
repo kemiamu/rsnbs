@@ -1,8 +1,7 @@
 use crate::note::{Note, Notes, Tone};
-use crate::schematic::MultiCompactLayout;
-use crate::schematic::{SchematicBuilder, TappedLayout};
+use crate::schematic::{Layout, MultiCompactLayout};
 use crate::song::Song;
-use crate::types::{GameTick, Index, LayerAnchor, Position, Tick, TimeAnchor, Version};
+use crate::types::{LayerAnchor, Position, Tick, TimeAnchor, Version};
 use crate::util::MatchedGroups;
 use counter::Counter;
 use ordered_float::OrderedFloat;
@@ -241,7 +240,7 @@ fn test_sectional_matching() {
             (notes, NonZero::new(track_coarse))
         });
     let layout = MultiCompactLayout::new(tracks, NonZero::new(wrap_length), 0);
-    let litematic = SchematicBuilder(layout).build("Sectional from source.nbs", "Planet");
+    let litematic = layout.as_litematic("Sectional from source.nbs", "Planet");
     litematic
         .write_file("fixtures/generated_sectional.litematic")
         .unwrap();
@@ -777,10 +776,10 @@ fn dump_litematic() {
 #[test]
 fn test_linear_layout() {
     use crate::schematic::MultiLinearLayout;
-    use crate::schematic::SchematicBuilder;
 
     let song = Song::open_nbs("fixtures/source.nbs").unwrap();
     let scale = (20.0 / song.header.tempo).round() as u32;
+    let song_length = song.header.song_length * scale.max(1);
     let notes: Notes = song
         .notes
         .into_iter()
@@ -792,9 +791,9 @@ fn test_linear_layout() {
             (Position::new(tick, pos.into_layer()), note)
         })
         .collect();
-    let n: Vec<Notes> = notes.split_by_layer_gaps();
-    let layout = MultiLinearLayout::new::<Vec<Notes>, _, _>(n, 0);
-    let litematic = SchematicBuilder(layout).build("Linear from source.nbs", "rustnbs");
+    let tracks = notes.split_by_layer_gaps();
+    let layout = MultiLinearLayout::new(tracks, 0, song_length);
+    let litematic = layout.as_litematic("Linear from source.nbs", "rustnbs");
     litematic
         .write_file("fixtures/generated_linear.litematic")
         .unwrap();

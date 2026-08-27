@@ -1,7 +1,7 @@
 //! Compact note block layouts for NBS song projection.
 
 use super::{Arranged, Axis, Layout, chain_block, inst_block};
-use super::{air, note_block, redstone_wire, repeater};
+use super::{Facing, air, note_block, redstone_wire, repeater};
 use crate::note::{Notes, Tone};
 use crate::types::{GameTick, RedStoneTick, Tick};
 use mcdata::{GenericBlockState, util::BlockPos};
@@ -63,12 +63,12 @@ impl MultiCompactLayout {
 }
 
 impl Layout for MultiCompactLayout {
-    fn size(&self) -> BlockPos {
-        self.0.size()
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        self.0.get_block(pos)
     }
 
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
-        self.0.get_block(pos)
+    fn size(&self) -> BlockPos {
+        self.0.size()
     }
 }
 
@@ -116,19 +116,12 @@ impl CompactLayout {
 }
 
 impl Layout for CompactLayout {
-    fn size(&self) -> BlockPos {
-        BlockPos::new(self.easting, Self::ELEVATION, self.southing)
-    }
-
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
         let BlockPos {
             x: easting,
             y: elevation,
             z: southing,
         } = pos;
-        debug_assert!((0..Self::ELEVATION).contains(&elevation), "y out of range");
-        debug_assert!((0..self.easting).contains(&easting), "x out of range");
-        debug_assert!((0..self.southing).contains(&southing), "z out of range");
 
         let tile_col = |s: i32, row: i32| match row & 1 {
             0 => s + 1,
@@ -142,7 +135,7 @@ impl Layout for CompactLayout {
             let row = easting / 4 * 2;
             let col = group as usize / 2;
             let layout_idx = (elevation + (group & 1) * 3) as u8;
-            self.track.block_at(row, col, layout_idx)
+            self.track.tile_block(row, col, layout_idx)
         } else if southing + 1 == self.southing {
             // South edge turn
             let easting = easting + 3;
@@ -150,12 +143,12 @@ impl Layout for CompactLayout {
             let row = easting / 4 * 2 - 1;
             let col = group as usize / 2;
             let layout_idx = (elevation + (group & 1) * 3) as u8;
-            self.track.block_at(row, col, layout_idx)
+            self.track.tile_block(row, col, layout_idx)
         } else if easting & 1 == 1 {
             // Trunk row
             let row = easting / 2;
             let col = tile_col(southing, row) as usize;
-            self.track.block_at(row, col, elevation as u8)
+            self.track.tile_block(row, col, elevation as u8)
         } else {
             // Tooth row
             let cell = easting / 2;
@@ -163,8 +156,12 @@ impl Layout for CompactLayout {
             let row = cell - zig;
             let col = tile_col(southing, row) as usize;
             let layout_idx = (elevation + 3 + zig * 3) as u8;
-            self.track.block_at(row, col, layout_idx)
+            self.track.tile_block(row, col, layout_idx)
         }
+    }
+
+    fn size(&self) -> BlockPos {
+        BlockPos::new(self.easting, Self::ELEVATION, self.southing)
     }
 }
 
@@ -304,14 +301,14 @@ impl Track {
             .get(row.try_into().ok()? * self.cols_or_len() + offset)
     }
 
-    fn block_at(&self, row: i32, col: usize, layout_idx: u8) -> GenericBlockState {
+    fn tile_block(&self, row: i32, col: usize, layout_idx: u8) -> Option<GenericBlockState> {
         let repeater_facing = match ((row & 1) == 0, col < 2) {
-            (_, true) => "west",
-            (true, false) => "north",
-            (false, false) => "south",
+            (_, true) => Facing::East,
+            (true, false) => Facing::South,
+            (false, false) => Facing::North,
         };
         self.get_tile(row, col)
-            .map_or_else(air, |t| t.get_block(layout_idx, repeater_facing))
+            .and_then(|t| t.get_block(layout_idx, repeater_facing))
     }
 
     fn at_row_start(&self) -> bool {
@@ -377,41 +374,45 @@ impl Tile {
         }
     }
 
-    fn get_block(&self, layout_index: u8, repeater_facing: &'static str) -> GenericBlockState {
+    fn get_block(&self, layout_index: u8, repeater_facing: Facing) -> Option<GenericBlockState> {
         // The repeater facing direction is reversed.
         match (self, layout_index) {
             // main straight track
-            (Self::Delay(_), 0) => chain_block(),
-            (Self::Delay(delay), 1) => repeater(delay.to_string(), repeater_facing, false),
-            (Self::Link, 0) => chain_block(),
-            (Self::Link, 1) => redstone_wire(),
-            (Self::Terminal(center, _, _), 0) => inst_block(center.as_ref(), chain_block),
-            (Self::Terminal(center, _, _), 1) => note_block(center.as_ref(), chain_block),
-            (Self::Terminal(_, left, _), 3) => inst_block(left.as_ref(), air),
-            (Self::Terminal(_, left, _), 4) => note_block(left.as_ref(), air),
-            (Self::Terminal(_, _, right), 6) => inst_block(right.as_ref(), air),
-            (Self::Terminal(_, _, right), 7) => note_block(right.as_ref(), air),
-            (Self::Node(_, _), 0 | 1) => chain_block(),
-            (Self::Node(_, _), 2) => redstone_wire(),
-            (Self::Node(left, _), 3) => inst_block(left.as_ref(), air),
-            (Self::Node(left, _), 4) => note_block(left.as_ref(), air),
-            (Self::Node(_, right), 6) => inst_block(right.as_ref(), air),
-            (Self::Node(_, right), 7) => note_block(right.as_ref(), air),
+            (Self::Delay(_), 0) => Some(chain_block()),
+            (Self::Delay(delay), 1) => {
+                Some(repeater(delay.to_string(), repeater_facing, false, false))
+            }
+            (Self::Link, 0) => Some(chain_block()),
+            (Self::Link, 1) => Some(redstone_wire()),
+            (Self::Terminal(center, _, _), 0) => Some(inst_block(center.as_ref(), chain_block)),
+            (Self::Terminal(center, _, _), 1) => Some(note_block(center.as_ref(), chain_block)),
+            (Self::Terminal(_, left, _), 3) => Some(inst_block(left.as_ref(), air)),
+            (Self::Terminal(_, left, _), 4) => Some(note_block(left.as_ref(), air)),
+            (Self::Terminal(_, _, right), 6) => Some(inst_block(right.as_ref(), air)),
+            (Self::Terminal(_, _, right), 7) => Some(note_block(right.as_ref(), air)),
+            (Self::Node(_, _), 0 | 1) => Some(chain_block()),
+            (Self::Node(_, _), 2) => Some(redstone_wire()),
+            (Self::Node(left, _), 3) => Some(inst_block(left.as_ref(), air)),
+            (Self::Node(left, _), 4) => Some(note_block(left.as_ref(), air)),
+            (Self::Node(_, right), 6) => Some(inst_block(right.as_ref(), air)),
+            (Self::Node(_, right), 7) => Some(note_block(right.as_ref(), air)),
             // turning variants
-            (Self::TurningDelay(_), 0 | 3) => chain_block(),
-            (Self::TurningDelay(_), 1) => redstone_wire(),
-            (Self::TurningDelay(delay), 4) => repeater(delay.to_string(), repeater_facing, false),
-            (Self::TurningLink, 0 | 3) => chain_block(),
-            (Self::TurningLink, 1 | 4) => redstone_wire(),
-            (Self::TurningTerminal(center, _), 0) => inst_block(center.as_ref(), chain_block),
-            (Self::TurningTerminal(center, _), 1) => note_block(center.as_ref(), chain_block),
-            (Self::TurningTerminal(_, side), 3) => inst_block(side.as_ref(), air),
-            (Self::TurningTerminal(_, side), 4) => note_block(side.as_ref(), air),
-            (Self::TurningNode(_), 0 | 1) => chain_block(),
-            (Self::TurningNode(_), 2) => redstone_wire(),
-            (Self::TurningNode(side), 3) => inst_block(side.as_ref(), air),
-            (Self::TurningNode(side), 4) => note_block(side.as_ref(), air),
-            _ => air(),
+            (Self::TurningDelay(_), 0 | 3) => Some(chain_block()),
+            (Self::TurningDelay(_), 1) => Some(redstone_wire()),
+            (Self::TurningDelay(delay), 4) => {
+                Some(repeater(delay.to_string(), repeater_facing, false, false))
+            }
+            (Self::TurningLink, 0 | 3) => Some(chain_block()),
+            (Self::TurningLink, 1 | 4) => Some(redstone_wire()),
+            (Self::TurningTerminal(center, _), 0) => Some(inst_block(center.as_ref(), chain_block)),
+            (Self::TurningTerminal(center, _), 1) => Some(note_block(center.as_ref(), chain_block)),
+            (Self::TurningTerminal(_, side), 3) => Some(inst_block(side.as_ref(), air)),
+            (Self::TurningTerminal(_, side), 4) => Some(note_block(side.as_ref(), air)),
+            (Self::TurningNode(_), 0 | 1) => Some(chain_block()),
+            (Self::TurningNode(_), 2) => Some(redstone_wire()),
+            (Self::TurningNode(side), 3) => Some(inst_block(side.as_ref(), air)),
+            (Self::TurningNode(side), 4) => Some(note_block(side.as_ref(), air)),
+            _ => None,
         }
     }
 }

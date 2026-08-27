@@ -1,47 +1,18 @@
 //! Generate Minecraft litematic projections from NBS songs.
 
-pub use self::blocks::*;
-pub use self::compact::*;
-pub use self::linear::*;
-pub use self::tapped::*;
 use itertools::iproduct;
 use mcdata::{BlockState, GenericBlockState, util::BlockPos};
 use rustmatica::{Litematic, Region};
 use std::borrow::Cow;
 
+pub use self::blocks::*;
+pub use self::compact::*;
+pub use self::linear::*;
+pub use self::tapped::*;
 mod blocks;
 mod compact;
 mod linear;
 mod tapped;
-
-// SchematicBuilder
-//
-// ++++++++++++============++++++++++++============++++++++++++============
-
-/// Output a [`Layout`] as a litematic file.
-///
-/// Example: `SchematicBuilder(layout).build("Song", "Me")`
-pub struct SchematicBuilder<L: Layout>(pub L);
-
-impl<L: Layout> SchematicBuilder<L> {
-    /// Iterate every position in the layout's bounding box and produce a litematic.
-    pub fn build(
-        self,
-        description: impl Into<Cow<'static, str>>,
-        author: impl Into<Cow<'static, str>>,
-    ) -> Litematic {
-        let SchematicBuilder(layout) = self;
-        let size = layout.size();
-        const NAME: &str = "Note Block Track Schematic";
-        let mut region: Region<GenericBlockState> = Region::new(NAME, BlockPos::ORIGIN, size);
-
-        for (y, z, x) in iproduct!(0..size.y, 0..size.z, 0..size.x) {
-            let pos = BlockPos::new(x, y, z);
-            region.set_block(pos, layout.get_block(pos));
-        }
-        region.as_litematic(description, author)
-    }
-}
 
 // Layout trait
 //
@@ -49,10 +20,61 @@ impl<L: Layout> SchematicBuilder<L> {
 
 /// A queryable projection layout.
 pub trait Layout {
+    /// Block at the given world position, assumed to be in bounds.
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState>;
+
     /// Total size of the bounding box.
     fn size(&self) -> BlockPos;
-    /// Block at the given world position.
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState;
+
+    /// Block at the given world position; panics on out-of-bounds access.
+    fn get_block(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        debug_assert!(self.contains(pos), "block out of bounds: {pos:?}");
+        self.block_at(pos)
+    }
+
+    /// Block at the given world position; `None` when it misses the bounding box.
+    fn try_get_block(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        match self.contains(pos) {
+            true => self.block_at(pos),
+            false => None,
+        }
+    }
+
+    /// Whether `pos` is inside the bounding box.
+    fn contains(&self, pos: BlockPos) -> bool {
+        let size = self.size();
+        (0..size.x).contains(&pos.x) && (0..size.y).contains(&pos.y) && (0..size.z).contains(&pos.z)
+    }
+
+    /// Build a litematic projection of this layout.
+    fn as_litematic(
+        &self,
+        description: impl Into<Cow<'static, str>>,
+        author: impl Into<Cow<'static, str>>,
+    ) -> Litematic
+    where
+        Self: Sized,
+    {
+        const NAME: &str = "Note Block Track Schematic";
+        let size = self.size();
+        let mut region: Region<GenericBlockState> = Region::new(NAME, BlockPos::ORIGIN, size);
+
+        for (y, z, x) in iproduct!(0..size.y, 0..size.z, 0..size.x) {
+            let pos = BlockPos::new(x, y, z);
+            region.set_block(pos, self.get_block(pos).unwrap_or_else(air));
+        }
+        region.as_litematic(description, author)
+    }
+}
+
+impl Layout for Box<dyn Layout + '_> {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        self.as_ref().block_at(pos)
+    }
+
+    fn size(&self) -> BlockPos {
+        self.as_ref().size()
+    }
 }
 
 // EdgeArranged
@@ -75,12 +97,12 @@ impl<L: Layout> EdgeArranged<L> {
 }
 
 impl<L: Layout> Layout for EdgeArranged<L> {
-    fn size(&self) -> BlockPos {
-        self.inner.size()
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        self.inner.get_block(pos)
     }
 
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
-        self.inner.get_block(pos)
+    fn size(&self) -> BlockPos {
+        self.inner.size()
     }
 }
 
@@ -89,6 +111,10 @@ impl<L: Layout> Layout for EdgeArranged<L> {
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// A layout wrapper that arranges sub-layouts along an [`Axis`].
+///
+/// Query cost is O(log n) with `n` the number of sub-layouts: [`Layout::block_at`]
+/// locates the containing band via a binary search over the anchors, which are
+/// sorted along the arrangement axis.
 pub struct Arranged<L: Layout> {
     bands: Vec<(L, BlockPos)>,
     size: BlockPos,
@@ -105,43 +131,93 @@ impl<L: Layout> Arranged<L> {
             let size: BlockPos = layout.size();
             let anchor: BlockPos = cursor + gap_vec;
             cursor = anchor + unit * size;
-            extent = Self::_max(extent, size);
+            extent = include(extent, size);
             (layout, anchor)
         });
 
         let bands = placed.collect();
-        let size = Self::_max(Self::_max(cursor, BlockPos::ORIGIN), extent);
+        let size = include(include(cursor, BlockPos::ORIGIN), extent);
         Self { bands, size }
-    }
-
-    fn _max(a: BlockPos, b: BlockPos) -> BlockPos {
-        BlockPos::new(a.x.max(b.x), a.y.max(b.y), a.z.max(b.z))
     }
 }
 
 impl<L: Layout> Layout for Arranged<L> {
-    fn size(&self) -> BlockPos {
-        self.size
-    }
-
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
-        debug_assert!((0..self.size.x).contains(&pos.x), "x out of range");
-        debug_assert!((0..self.size.y).contains(&pos.y), "y out of range");
-        debug_assert!((0..self.size.z).contains(&pos.z), "z out of range");
-
-        let found = self
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        let index = self
             .bands
             .partition_point(|(_, a)| a.y <= pos.y && a.z <= pos.z && a.x <= pos.x)
-            .checked_sub(1);
-        let Some(index) = found else { return air() };
+            .checked_sub(1)?;
 
         let (layout, anchor) = &self.bands[index];
         let local = BlockPos::new(pos.x - anchor.x, pos.y - anchor.y, pos.z - anchor.z);
-        let size = layout.size();
-        let hit = (0..size.x).contains(&local.x)
-            && (0..size.y).contains(&local.y)
-            && (0..size.z).contains(&local.z);
-        if hit { layout.get_block(local) } else { air() }
+        layout.try_get_block(local)
+    }
+
+    fn size(&self) -> BlockPos {
+        self.size
+    }
+}
+
+// EvenlyArranged
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// Evenly arranges sub-layouts along the direction of `pitch`: item `i` is
+/// anchored at `i * pitch`, a monotone linear lattice of equal spacing.
+///
+/// Query cost is O(k) with `k` the candidate window width, independent of
+/// the item count. `pitch` must be non-zero.
+pub struct EvenlyArranged<L: Layout> {
+    items: Vec<L>,
+    pitch: BlockPos,
+    extent: BlockPos,
+    anchor: BlockPos,
+    window: (i32, i32, i32),
+}
+
+impl<L: Layout> EvenlyArranged<L> {
+    pub fn new<I: IntoIterator<Item = L>>(items: I, pitch: BlockPos) -> Self {
+        assert!(pitch != BlockPos::ORIGIN, "pitch must be non-zero");
+        let items: Vec<L> = FromIterator::from_iter(items);
+        let extent = items
+            .iter()
+            .map(Layout::size)
+            .fold(BlockPos::ORIGIN, include);
+
+        let spacing = pitch.dot(pitch);
+        let hi = include(pitch, BlockPos::ORIGIN).dot(extent);
+        let lo = pitch.dot(extent) - hi;
+        let far = items.len() as i32 - 1;
+
+        let anchor = BlockPos::new(
+            pitch.x.min(0) * far,
+            pitch.y.min(0) * far,
+            pitch.z.min(0) * far,
+        );
+        Self {
+            items,
+            pitch,
+            extent,
+            anchor,
+            window: (spacing, lo, hi),
+        }
+    }
+}
+
+impl<L: Layout> Layout for EvenlyArranged<L> {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        let local_pos = pos + self.anchor;
+        let (spacing, lo, hi) = self.window;
+        let offset = self.pitch.dot(local_pos);
+        let top = ((offset - lo).div_euclid(spacing)).min(self.items.len() as i32 - 1);
+        let bottom = (-(hi - offset).div_euclid(spacing)).max(0);
+        (bottom..=top).rev().find_map(|index| {
+            self.items[index as usize].try_get_block(local_pos - self.pitch * index)
+        })
+    }
+
+    fn size(&self) -> BlockPos {
+        self.pitch.abs() * (self.items.len() as i32 - 1) + self.extent
     }
 }
 
@@ -150,51 +226,63 @@ impl<L: Layout> Layout for Arranged<L> {
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// A layout wrapper that places sub-layouts at explicit anchor positions.
-#[deprecated(note = "is too slow for hot paths; use `Arranged` instead")]
-pub struct Anchored<L: Layout> {
-    entries: Vec<(L, BlockPos)>,
+///
+/// Queries probe every entry in order via dynamic dispatch, so the cost is
+/// O(n) in the entry count and comparatively heavy; suited to small fixed
+/// groupings.
+pub struct Anchored {
+    entries: Vec<(Box<dyn Layout>, BlockPos)>,
     size: BlockPos,
 }
 
-#[allow(deprecated)]
-impl<L: Layout> Anchored<L> {
-    pub fn new<I: IntoIterator<Item = (L, BlockPos)>>(entries: I) -> Self {
-        let mut extent = BlockPos::ORIGIN;
+impl Anchored {
+    /// Build from initial entries; [`Self::push`] appends more later.
+    pub fn new(entries: impl IntoIterator<Item = (Box<dyn Layout>, BlockPos)>) -> Self {
+        let mut anchored = Self {
+            entries: Vec::new(),
+            size: BlockPos::ORIGIN,
+        };
+        for (layout, anchor) in entries {
+            anchored.push(layout, anchor);
+        }
+        anchored
+    }
 
-        let placed = entries.into_iter().map(|(layout, anchor)| {
-            let size = layout.size();
-            let far = anchor + size;
-            extent = _component_max(extent, far);
-            (layout, anchor)
-        });
-
-        let entries = placed.collect();
-        let size = extent;
-        Self { entries, size }
+    pub fn push(&mut self, layout: impl Into<Box<dyn Layout>>, anchor: BlockPos) {
+        let layout = layout.into();
+        let far = anchor + layout.size();
+        self.size = include(self.size, far);
+        self.entries.push((layout, anchor));
     }
 }
 
-#[allow(deprecated)]
-impl<L: Layout> Layout for Anchored<L> {
+impl Layout for Anchored {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        self.entries
+            .iter()
+            .find_map(|(layout, anchor)| layout.try_get_block(pos - *anchor))
+    }
+
     fn size(&self) -> BlockPos {
         self.size
     }
+}
 
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
-        debug_assert!((0..self.size.x).contains(&pos.x), "x out of range");
-        debug_assert!((0..self.size.y).contains(&pos.y), "y out of range");
-        debug_assert!((0..self.size.z).contains(&pos.z), "z out of range");
+// Overlap
+//
+// ++++++++++++============++++++++++++============++++++++++++============
 
-        let found = self.entries.iter().find_map(|(layout, anchor)| {
-            let local = pos - *anchor;
-            let size = layout.size();
-            let hit = (0..size.x).contains(&local.x)
-                && (0..size.y).contains(&local.y)
-                && (0..size.z).contains(&local.z);
-            hit.then(|| layout.get_block(local))
-        });
+/// Overlaps two positioned sub-layouts.
+impl<A: Layout, B: Layout> Layout for (BlockPos, A, BlockPos, B) {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        let (first_anchor, first, second_anchor, second) = self;
+        let upper = first.try_get_block(pos - *first_anchor);
+        upper.or_else(|| second.try_get_block(pos - *second_anchor))
+    }
 
-        found.unwrap_or_else(air)
+    fn size(&self) -> BlockPos {
+        let (first_anchor, first, second_anchor, second) = self;
+        include(*first_anchor + first.size(), *second_anchor + second.size())
     }
 }
 
@@ -202,7 +290,9 @@ impl<L: Layout> Layout for Anchored<L> {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// Mirror-reverse a layout along given axes. Block facing unchanged.
+/// Mirror-reverse a layout along given axes. Block facing unchanged:
+/// the layout has no block-internal facing transform, so the block's own
+/// orientation state is never dictated by it.
 pub struct Reverse<L: Layout> {
     layout: L,
     sign: Mask,
@@ -215,17 +305,14 @@ impl<L: Layout> Reverse<L> {
 }
 
 impl<L: Layout> Layout for Reverse<L> {
-    fn size(&self) -> BlockPos {
-        self.layout.size()
-    }
-
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
         let size = self.layout.size();
         let orig = pos + self.sign * (size - BlockPos::new(1, 1, 1) - pos * 2);
-        debug_assert!((0..size.x).contains(&orig.x));
-        debug_assert!((0..size.y).contains(&orig.y));
-        debug_assert!((0..size.z).contains(&orig.z));
         self.layout.get_block(orig)
+    }
+
+    fn size(&self) -> BlockPos {
+        self.layout.size()
     }
 }
 
@@ -248,27 +335,20 @@ impl<L: Layout> WithFloor<L> {
 }
 
 impl<L: Layout> Layout for WithFloor<L> {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        let inner = |pos: BlockPos| self.layout.get_block(pos);
+        match pos.y {
+            0 if self.full => Some(floor_block()),
+            0 => inner(pos)
+                .filter(|b| b.needs_floor())
+                .map(|_| floor_block()),
+            _ => inner(BlockPos::new(pos.x, pos.y - 1, pos.z)),
+        }
+    }
+
     fn size(&self) -> BlockPos {
         let size = self.layout.size();
         BlockPos::new(size.x, size.y + 1, size.z)
-    }
-
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
-        debug_assert!((0..self.size().x).contains(&pos.x), "x out of range");
-        debug_assert!((0..self.size().y).contains(&pos.y), "y out of range");
-        debug_assert!((0..self.size().z).contains(&pos.z), "z out of range");
-
-        let floor = || match self.full {
-            true => floor_block(),
-            false if self.layout.get_block(pos).needs_floor() => floor_block(),
-            false => air(),
-        };
-        let local_pos = || BlockPos::new(pos.x, pos.y - 1, pos.z);
-
-        match pos.y {
-            0 => floor(),
-            _ => self.layout.get_block(local_pos()),
-        }
     }
 }
 
@@ -281,6 +361,44 @@ pub trait NeedsFloor {
 impl NeedsFloor for GenericBlockState {
     fn needs_floor(&self) -> bool {
         self.name == "minecraft:sand"
+    }
+}
+
+// Clipped
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// A layout wrapper that clips the inner layout along each axis by `pos`.
+///
+/// A non-negative component `n` shifts the inner layout by `n` and shrinks
+/// the size by `n`; a negative component keeps the inner layout in place and
+/// shrinks the size by `-n`.
+pub struct Clipped<L: Layout> {
+    layout: L,
+    anchor: BlockPos,
+    size: BlockPos,
+}
+
+impl<L: Layout> Clipped<L> {
+    pub fn new(layout: L, pos: BlockPos) -> Self {
+        let anchor = include(pos, BlockPos::ORIGIN);
+        let size = layout.size() - pos.abs();
+
+        Self {
+            layout,
+            anchor,
+            size,
+        }
+    }
+}
+
+impl<L: Layout> Layout for Clipped<L> {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        self.layout.get_block(pos + self.anchor)
+    }
+
+    fn size(&self) -> BlockPos {
+        self.size
     }
 }
 
@@ -330,11 +448,10 @@ impl Mask {
             false => None,
         }
     }
-}
 
-impl From<Mask> for BlockPos {
-    fn from(s: Mask) -> Self {
-        s.0
+    /// Unwrap into the underlying [`BlockPos`].
+    pub fn into_inner(self) -> BlockPos {
+        self.0
     }
 }
 
@@ -354,12 +471,33 @@ impl std::ops::Mul<i32> for Mask {
     }
 }
 
+// Dot
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// The scalar projection of `v` onto `self`, treating both as vectors.
+trait Dot {
+    fn dot(self, v: BlockPos) -> i32;
+}
+
+impl Dot for BlockPos {
+    fn dot(self, v: BlockPos) -> i32 {
+        self.x * v.x + self.y * v.y + self.z * v.z
+    }
+}
+
+impl Dot for Mask {
+    fn dot(self, v: BlockPos) -> i32 {
+        self.into_inner().dot(v)
+    }
+}
+
 // Helpers
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// Component-wise maximum of two [`BlockPos`].
-fn _component_max(a: BlockPos, b: BlockPos) -> BlockPos {
+fn include(a: BlockPos, b: BlockPos) -> BlockPos {
     BlockPos::new(a.x.max(b.x), a.y.max(b.y), a.z.max(b.z))
 }
 

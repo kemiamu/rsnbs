@@ -1,122 +1,92 @@
 //! Linear time-proportional layout for NBS song projection.
 
-use super::{Arranged, Axis, Layout, WithFloor, air, chain_block, inst_block, note_block};
-use super::{redstone_block, redstone_wire, repeater, sticky_piston};
+use super::{EvenlyArranged, Facing, Layout};
+use super::{WithFloor, air, chain_block, inst_block, note_block};
+use super::{redstone_block, repeater, sticky_piston};
 use crate::note::Tone;
-use crate::types::{Index, Position, Tick, TimeAnchor};
+use crate::schematic::{WireConn, wire_state};
+use crate::types::{Tick, TimeAnchor};
 use mcdata::{GenericBlockState, util::BlockPos};
-use std::collections::BTreeMap;
-use std::num::NonZero;
+use std::{collections::VecDeque, num::NonZero};
 
-//  MultiLinearLayout
+// MultiLinearLayout
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// Multi-line linear noteblocks layout.
-pub struct MultiLinearLayout(Arranged<LinearLayout>);
+pub struct MultiLinearLayout(EvenlyArranged<LinearLayout>);
 
 impl MultiLinearLayout {
     /// Create a linear layout from per-track notes.
-    pub fn new<Trks, Trk, T>(tracks: Trks, gap: u32) -> Self
+    pub fn new<Trks, Trk, A, T>(tracks: Trks, gap: u32, song_length: Tick) -> Self
     where
         Trks: IntoIterator<Item = Trk>,
-        Trk: IntoIterator<Item = (Position, T)>,
+        Trk: IntoIterator<Item = (A, T)>,
+        A: TimeAnchor,
         T: Into<Tone>,
         for<'a> &'a Trks: IntoIterator<Item = &'a Trk>,
-        for<'a> &'a Trk: IntoIterator<Item = (&'a Position, &'a T)>,
+        for<'a> &'a Trk: IntoIterator<Item = (&'a A, &'a T)>,
     {
-        let meta = Meta::new(&tracks);
+        let scale = ScaleMode::from_tracks(&tracks);
         let layouts = tracks
             .into_iter()
-            .map(|notes| LinearLayout::new(notes, meta, None, 0));
-        Self(Arranged::new(layouts, Axis::Easting, gap))
+            .map(|notes| LinearLayout::new(notes, scale, song_length, None, 0));
+        let pitch = BlockPos::new(scale.width() + gap as i32, 0, 0);
+        Self(EvenlyArranged::new(layouts, pitch))
     }
 }
 
 impl Layout for MultiLinearLayout {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        self.0.get_block(pos)
+    }
+
     fn size(&self) -> BlockPos {
         self.0.size()
     }
-
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
-        self.0.get_block(pos)
-    }
 }
 
-//  StackedLinearLayout
+// StackedLinearLayout
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
 /// Multi-track linear layout stacked vertically, each with a floor platform below.
-pub struct StackedLinearLayout(Arranged<WithFloor<LinearLayout>>);
+pub struct StackedLinearLayout(EvenlyArranged<WithFloor<LinearLayout>>);
 
 impl StackedLinearLayout {
     /// Create a stacked linear layout from per-track notes.
-    pub fn new<Trks, Trk, T>(
+    pub fn new<Trks, Trk, A, T>(
         tracks: Trks,
         wrap_length: Option<NonZero<Tick>>,
         gap: u32,
         full: bool,
+        song_length: Tick,
     ) -> Self
     where
         Trks: IntoIterator<Item = Trk>,
-        Trk: IntoIterator<Item = (Position, T)>,
+        Trk: IntoIterator<Item = (A, T)>,
+        A: TimeAnchor,
         T: Into<Tone>,
         for<'a> &'a Trks: IntoIterator<Item = &'a Trk>,
-        for<'a> &'a Trk: IntoIterator<Item = (&'a Position, &'a T)>,
+        for<'a> &'a Trk: IntoIterator<Item = (&'a A, &'a T)>,
     {
-        let meta = Meta::new(&tracks);
+        let scale = ScaleMode::from_tracks(&tracks);
         let layouts = tracks.into_iter().map(|notes| {
-            let layout = LinearLayout::new(notes, meta, wrap_length, gap);
+            let layout = LinearLayout::new(notes, scale, song_length, wrap_length, gap);
             WithFloor::new(layout, full)
         });
-        Self(Arranged::new(layouts, Axis::Elevation, 1))
+        let pitch = BlockPos::new(0, 4, 0);
+        Self(EvenlyArranged::new(layouts, pitch))
     }
 }
 
 impl Layout for StackedLinearLayout {
-    fn size(&self) -> BlockPos {
-        self.0.size()
-    }
-
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
         self.0.get_block(pos)
     }
-}
 
-// LinearLayoutMeta
-//
-// ++++++++++++============++++++++++++============++++++++++++============
-
-type Meta = LinearLayoutMeta;
-
-/// Metadata for constructing a [`LinearLayout`], derived from a tick stream.
-#[derive(Clone, Copy)]
-pub struct LinearLayoutMeta {
-    song_length: Tick,
-    scale: Tick,
-}
-
-impl LinearLayoutMeta {
-    /// Compute metadata from a stream of tick positions.
-    pub fn new<'a, Trks, Trk: 'a, T: 'a>(tracks: &'a Trks) -> Self
-    where
-        &'a Trks: IntoIterator<Item = &'a Trk>,
-        &'a Trk: IntoIterator<Item = (&'a Position, &'a T)>,
-    {
-        let found_scale = Track::TEMPL.into_iter().find(|&templ| {
-            tracks
-                .into_iter()
-                .flat_map(|n| n.into_iter().map(|(pos, _)| pos.into_tick()))
-                .all(|t| t % templ == 0)
-        });
-        let scale = found_scale.unwrap_or(1);
-        let song_length = tracks
-            .into_iter()
-            .flat_map(|n| n.into_iter().map(|(pos, _)| pos.into_tick()))
-            .max()
-            .map_or(0, |t| t + 1);
-        Self { song_length, scale }
+    fn size(&self) -> BlockPos {
+        self.0.size()
     }
 }
 
@@ -124,208 +94,288 @@ impl LinearLayoutMeta {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// A single linear track layout.
-pub struct LinearLayout {
-    track: Track,
-    easting: i32,
-    southing: i32,
-}
+/// A zigzag linear layout for one track.
+pub struct LinearLayout(EvenlyArranged<Row>);
 
 impl LinearLayout {
-    pub fn new<Trk, T>(notes: Trk, meta: Meta, wrap_length: Option<NonZero<Tick>>, gap: u32) -> Self
+    /// Builds a layout from timestamped note events.
+    ///
+    /// Events with the same timestamp share a cell. `wrap_length` limits the
+    /// number of cells in each row; `gap` widens every row uniformly;
+    /// `song_length` keeps the line running to the end of the song even
+    /// when the last notes come early.
+    pub fn new<Trk, A, T>(
+        notes: Trk,
+        scale: ScaleMode,
+        song_length: Tick,
+        wrap_length: Option<NonZero<Tick>>,
+        gap: u32,
+    ) -> Self
     where
-        Trk: IntoIterator<Item = (Position, T)>,
+        Trk: IntoIterator<Item = (A, T)>,
+        A: TimeAnchor,
         T: Into<Tone>,
     {
-        let track = Track::new(notes, meta, wrap_length, gap);
-        let easting = (track.width() + gap as i32) * track.wrap_rows() as i32 - gap as i32 + 1;
-        let southing = track.cols_per_row() as i32 * Track::SOUTHING + 2;
-        Self {
-            track,
-            easting,
-            southing,
+        let mut cells: VecDeque<(Vec<Tone>, Vec<Tone>)> = Default::default();
+        for (anchor, note) in notes {
+            let (index, is_branch) = scale.cell_slot(anchor.into_tick());
+            cells.resize_with(index + 1, Default::default);
+            let (main, branch) = &mut cells[index];
+            let notes = if is_branch { branch } else { main };
+            notes.push(note.into());
         }
-    }
 
-    fn turn_block(idx: i32) -> GenericBlockState {
-        match idx {
-            0 => chain_block(),
-            1 => redstone_wire(),
-            _ => air(),
+        if song_length > 0 {
+            let (end, _) = scale.cell_slot(song_length - 1);
+            cells.resize_with(end + 1, Default::default);
         }
+
+        let row_length = wrap_length.map_or(cells.len(), |length| length.get() as usize);
+        let width = scale.width() + gap as i32 + 1;
+        let mut rows = Vec::new();
+        while !cells.is_empty() {
+            let index = rows.len();
+            let south_bound = index % 2 == 0;
+            let templates = cells
+                .drain(..row_length.min(cells.len()))
+                .map(|(main, branch)| Template::from_notes(scale, main, branch, south_bound));
+            rows.push(Row::new(
+                templates,
+                width,
+                index > 0,
+                south_bound,
+                row_length,
+            ));
+        }
+        Self(EvenlyArranged::new(rows, BlockPos::new(width - 2, 0, 0)))
     }
 }
 
 impl Layout for LinearLayout {
-    fn size(&self) -> BlockPos {
-        BlockPos::new(self.easting, Track::ELEVATION, self.southing)
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        self.0.get_block(pos)
     }
 
-    fn get_block(&self, pos: BlockPos) -> GenericBlockState {
-        let width = self.track.width();
-        let pitch = width + self.track.gap as i32;
-        let gap = self.track.gap as i32;
-        let BlockPos { x, y, z } = pos;
-
-        // Turn blocks at front (0) and back (self.southing-1) zigzag edges
-        let at_turn = |x: i32| (x + 1 + gap).rem_euclid(pitch * 2) <= pitch;
-        if z == 0 && at_turn(x) || z + 1 == self.southing && at_turn(x + pitch) {
-            return Self::turn_block(y);
-        }
-
-        let mut cell_x = x.rem_euclid(pitch);
-        let mut cell = x.div_euclid(pitch);
-        let interior = z > 0 && z + 1 < self.southing;
-        let overlap = cell_x < 1;
-        let zig = (cell + z).rem_euclid(2);
-
-        // Inline relative offset
-        let forward = match overlap {
-            true => z.rem_euclid(2) == 0,
-            false => cell.rem_euclid(2) == 0,
-        };
-        let offset = if forward { z } else { self.southing - 1 - z };
-
-        // overlapping region
-        if overlap && interior && zig == 0 {
-            let col = (offset - 1).div_euclid(Track::SOUTHING);
-            let local_pos = BlockPos::new(0, y, 1);
-            return self.track.get_block(cell, col, local_pos);
-        } else if overlap {
-            cell_x += width + gap;
-            cell -= 1;
-        }
-
-        // Not in overlapping region
-        if cell_x == 1 && offset >= 2 {
-            let col = (offset - 2).div_euclid(Track::SOUTHING);
-            let local_z = (offset - 2).rem_euclid(Track::SOUTHING) + 1;
-            let local_pos = BlockPos::new(1, y, local_z);
-            return self.track.get_block(cell, col, local_pos);
-        } else if interior && cell_x > 1 {
-            let col = (offset - 1).div_euclid(Track::SOUTHING);
-            let local_z = (offset - 1).rem_euclid(Track::SOUTHING);
-            let local_pos = BlockPos::new(cell_x, y, local_z);
-            return self.track.get_block(cell, col, local_pos);
-        }
-
-        air()
+    fn size(&self) -> BlockPos {
+        self.0.size()
     }
 }
 
-// Track
+// Row & Turn
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-struct Track {
-    notes: BTreeMap<Position, Tone>,
-    meta: Meta,
-    wrap_length: Option<NonZero<Tick>>,
-    gap: u32,
+/// One directional row of template cells.
+pub struct Row {
+    cells: EvenlyArranged<Template>,
+    leading_turn: bool,
+    south_bound: bool,
+    size: BlockPos,
 }
 
-impl Track {
-    pub const SOUTHING: i32 = 2;
-    pub const ELEVATION: i32 = 2;
-    pub const TEMPL: [Tick; 3] = [4, 2, 3];
-
-    pub fn new<Trk, T>(notes: Trk, meta: Meta, wrap_length: Option<NonZero<Tick>>, gap: u32) -> Self
-    where
-        Trk: IntoIterator<Item = (Position, T)>,
-        T: Into<Tone>,
-    {
-        let notes = notes.into_iter().map(|(pos, t)| (pos, t.into())).collect();
+impl Row {
+    /// Arranges cells in the row direction.
+    ///
+    /// `row_length` is the shared cell count of every row: south-bound rows
+    /// grow from the south end, north-bound rows from the north end, so the
+    /// zigzag turns always line up regardless of the last row's length.
+    pub fn new<I: IntoIterator<Item = Template>>(
+        cells: I,
+        width: i32,
+        leading_turn: bool,
+        south_bound: bool,
+        row_length: usize,
+    ) -> Self {
+        let pitch = BlockPos::new(0, 0, if south_bound { 2 } else { -2 });
+        let cells = EvenlyArranged::new(cells, pitch);
+        let size = BlockPos::new(width, cells.size().y, 2 * row_length as i32 + 2);
 
         Self {
-            notes,
-            meta,
-            wrap_length,
-            gap,
+            cells,
+            leading_turn,
+            south_bound,
+            size,
+        }
+    }
+}
+
+impl Layout for Row {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        use self::WireConn::*;
+        let inner = self.cells.size();
+        let offset = match self.south_bound {
+            true => BlockPos::new(inner.x - self.size.x, 0, -1),
+            false => BlockPos::new(inner.x - self.size.x, 0, self.size.z - 1 - inner.z),
+        };
+        let turn_z = if self.south_bound { 0 } else { self.size.z - 1 };
+        let turning = self.leading_turn && pos.z == turn_z;
+        match (turning, pos.y, self.size.x - pos.x, self.south_bound) {
+            (true, 1, 2, true) => Some(wire_state(Side, None, None, Side, "0")),
+            (true, 1, 2, false) => Some(wire_state(Side, None, Side, None, "0")),
+            (true, 1, 2.., _) => Some(wire_state(Side, Side, None, None, "0")),
+            (true, 0, 2.., _) => Some(chain_block()),
+            (true, _, _, _) => Option::None,
+            (false, _, _, _) => self.cells.try_get_block(pos + offset),
         }
     }
 
-    fn get_block(&self, row: i32, col: i32, local_pos: BlockPos) -> GenericBlockState {
-        let BlockPos {
-            x: easting,
-            y: elevation,
-            z: southing,
-        } = local_pos;
+    fn size(&self) -> BlockPos {
+        self.size
+    }
+}
 
-        let is_piston = self.is_piston();
-        let scale = self.meta.scale;
-        let branch_tick = if is_piston { 3 } else { scale };
+// Template
+//
+// ++++++++++++============++++++++++++============++++++++++++============
 
-        let easting = match is_piston || easting < 2 {
-            true => easting,
-            false => easting + 1,
+/// Template cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Template {
+    pub main: [Option<Tone>; 2],
+    pub branch: Branch,
+    pub scale: ScaleMode,
+    pub south_bound: bool,
+}
+
+/// Notes outside the two fixed main-line slots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Branch {
+    /// The third main-line note.
+    Unbranched(Option<Tone>),
+    /// The two branch-line notes.
+    Branched([Option<Tone>; 2]),
+}
+
+impl Template {
+    fn from_notes<M, B>(scale: ScaleMode, main: M, branch: B, south_bound: bool) -> Self
+    where
+        M: IntoIterator<Item = Tone>,
+        B: IntoIterator<Item = Tone>,
+    {
+        let (mut main_notes, mut branch_notes) = (main.into_iter(), branch.into_iter());
+        let main = [main_notes.next(), main_notes.next()];
+        let branch = match branch_notes.next() {
+            Some(first) => Branch::Branched([Some(first), branch_notes.next()]),
+            None => Branch::Unbranched(main_notes.next()),
         };
-        let repeater_facing = match row.rem_euclid(2) == 0 {
-            true => "north",
-            false => "south",
-        };
-        let note = move |tick: Tick, layer: Index| -> Option<&Tone> {
-            let group = row * self.cols_per_row() as i32 + col;
-            let head = if scale == 1 { 1 } else { 0 };
-            let base_tick = (group - head) * scale as i32 * 2;
-            let tick = (tick as i32 + base_tick).try_into().ok()?;
-            self.notes.get(&Position::new(tick, layer))
-        };
-        let has_branch = note(branch_tick, 0)
-            .or_else(|| note(branch_tick, 1))
-            .is_some();
 
-        match (has_branch, is_piston, easting, southing, elevation) {
-            (true, true, 3, 1, 1) => sticky_piston("west"),
-            (true, true, 2, 1, 1) => redstone_block(),
-            (true, true, 1, 2, 0) => inst_block(note(branch_tick, 0), air),
-            (true, true, 1, 2, 1) => note_block(note(branch_tick, 0), air),
-            (true, true, 0, 1, 0) => inst_block(note(branch_tick, 1), air),
-            (true, true, 0, 1, 1) => note_block(note(branch_tick, 1), air),
+        Self {
+            main,
+            branch,
+            scale,
+            south_bound,
+        }
+    }
+}
 
-            (true, false, 3, 1, 0) => chain_block(),
-            (true, false, 3, 1, 1) => repeater((scale / 2).to_string(), "east", false),
-            (true, false, 1, 1, 0) => inst_block(note(branch_tick, 0), chain_block),
-            (true, false, 1, 1, 1) => note_block(note(branch_tick, 0), chain_block),
-            (true, false, 0, 1, 0) => inst_block(note(branch_tick, 1), air),
-            (true, false, 0, 1, 1) => note_block(note(branch_tick, 1), air),
+impl Layout for Template {
+    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
+        use self::{Branch::*, Facing::*, ScaleMode::*};
+        let local_z = if self.south_bound { pos.z } else { 2 - pos.z };
+        let local_x = self.scale.width() - pos.x - 1;
+        let facing = if self.south_bound { South } else { North };
+        let main_repeater = || repeater(self.scale.scale().to_string(), facing, false, false);
+        let branch_repeater = || repeater((self.scale.scale() / 2).to_string(), West, false, false);
+        match (self.scale, self.branch, local_x, pos.y, local_z) {
+            (_any_scale, _any_branch, 1, 0, 0) => Some(chain_block()),
+            (_any_scale, _any_branch, 1, 1, 0) => Some(main_repeater()),
+            (_any_scale, _any_branch, 1, 0, 1) => Some(inst_block(self.main[0], chain_block)),
+            (_any_scale, _any_branch, 1, 1, 1) => Some(note_block(self.main[0], chain_block)),
+            (_any_scale, _any_branch, 0, 0, 1) => Some(inst_block(self.main[1], air)),
+            (_any_scale, _any_branch, 0, 1, 1) => Some(note_block(self.main[1], air)),
+            (_any_scale, Unbranched(note), 2, 0, 1) => Some(inst_block(note, air)),
+            (_any_scale, Unbranched(note), 2, 1, 1) => Some(note_block(note, air)),
 
-            (_, _, 4, 0, 0) => chain_block(),
-            (_, _, 4, 0, 1) => repeater(scale.to_string(), repeater_facing, false),
-            (_, _, 4, 1, 0) => inst_block(note(0, 0), chain_block),
-            (_, _, 4, 1, 1) => note_block(note(0, 0), chain_block),
-            (_, _, 5, 1, 0) => inst_block(note(0, 1), air),
-            (_, _, 5, 1, 1) => note_block(note(0, 1), air),
-            (false, _, 3, 1, 0) => inst_block(note(0, 2), air),
-            (false, _, 3, 1, 1) => note_block(note(0, 2), air),
+            (Scale4 | Scale2, Branched(_), 2, 0, 1) => Some(chain_block()),
+            (Scale4 | Scale2, Branched(_), 2, 1, 1) => Some(branch_repeater()),
+            (Scale4 | Scale2, Branched(b), 3, 0, 1) => Some(inst_block(b[0], chain_block)),
+            (Scale4 | Scale2, Branched(b), 3, 1, 1) => Some(note_block(b[0], chain_block)),
+            (Scale4 | Scale2, Branched(b), 4, 0, 1) => Some(inst_block(b[1], air)),
+            (Scale4 | Scale2, Branched(b), 4, 1, 1) => Some(note_block(b[1], air)),
 
-            _ => air(),
+            (Scale3 | Scale1, Branched(_), 2, 1, 1) => Some(sticky_piston("west")),
+            (Scale3 | Scale1, Branched(_), 3, 1, 1) => Some(redstone_block()),
+            (Scale3 | Scale1, Branched(b), 5, 0, 1) => Some(inst_block(b[0], air)),
+            (Scale3 | Scale1, Branched(b), 5, 1, 1) => Some(note_block(b[0], air)),
+            (Scale3 | Scale1, Branched(b), 4, 0, 2) => Some(inst_block(b[1], air)),
+            (Scale3 | Scale1, Branched(b), 4, 1, 2) => Some(note_block(b[1], air)),
+
+            _ => None,
         }
     }
 
-    fn is_piston(&self) -> bool {
-        match self.meta.scale {
-            4 | 2 => false,
-            3 | 1 => true,
-            _ => unreachable!(),
+    fn size(&self) -> BlockPos {
+        BlockPos::new(self.scale.width(), 2, 3)
+    }
+}
+
+// ScaleMode
+//
+// ++++++++++++============++++++++++++============++++++++++++============
+
+/// Time scale used by linear cells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScaleMode {
+    Scale4,
+    Scale2,
+    Scale3,
+    Scale1,
+}
+
+impl ScaleMode {
+    const SCALE_MODES: [Tick; 3] = [4, 3, 2];
+
+    /// Selects the coarsest scale compatible with every event timestamp.
+    pub fn from_tracks<'a, Trks, Trk: 'a, A: 'a, T: 'a>(tracks: &'a Trks) -> Self
+    where
+        &'a Trks: IntoIterator<Item = &'a Trk>,
+        &'a Trk: IntoIterator<Item = (&'a A, &'a T)>,
+        A: TimeAnchor,
+    {
+        let ticks = tracks
+            .into_iter()
+            .flat_map(|track| track.into_iter().map(|(anchor, _)| (*anchor).into_tick()));
+        Self::new(ticks)
+    }
+
+    /// Selects the coarsest scale compatible with all timestamps.
+    ///
+    /// The fallback is [`ScaleMode::Scale1`].
+    pub fn new<I: IntoIterator<Item = Tick>>(ticks: I) -> Self {
+        let applicable = ticks.into_iter().fold([true; 3], |applicable, tick| {
+            let divisible = Self::SCALE_MODES.map(|scale| tick % scale == 0);
+            std::array::from_fn(|index| applicable[index] && divisible[index])
+        });
+        match applicable.iter().position(|&is_applicable| is_applicable) {
+            Some(0) => Self::Scale4,
+            Some(1) => Self::Scale3,
+            Some(2) => Self::Scale2,
+            _ => Self::Scale1,
         }
     }
 
-    fn width(&self) -> i32 {
-        if self.is_piston() { 5 } else { 4 }
+    /// Returns the scale in game ticks.
+    pub const fn scale(self) -> Tick {
+        match self {
+            Self::Scale4 => 4,
+            Self::Scale2 => 2,
+            Self::Scale3 => 3,
+            Self::Scale1 => 1,
+        }
     }
 
-    fn length_in_units(&self, multiplier: NonZero<Tick>) -> Tick {
-        let head = if self.meta.scale == 1 { 2 } else { 0 };
-        (self.meta.song_length + head).div_ceil(self.meta.scale * 2 * multiplier.get())
+    /// Returns the cell width in blocks.
+    pub const fn width(self) -> i32 {
+        match self {
+            Self::Scale4 | Self::Scale2 => 5,
+            Self::Scale3 | Self::Scale1 => 6,
+        }
     }
 
-    fn wrap_rows(&self) -> Tick {
-        self.wrap_length
-            .map_or(1, |wrap| self.length_in_units(wrap))
-    }
-
-    fn cols_per_row(&self) -> Tick {
-        let all_cols = self.length_in_units(NonZero::<Tick>::MIN);
-        self.wrap_length.map_or(all_cols, |wrap| wrap.get())
+    fn cell_slot(self, tick: Tick) -> (usize, bool) {
+        let tick = tick / self.scale();
+        let branch = tick % 2 == 1;
+        let cell = tick as usize / 2 + usize::from(self == Self::Scale1 && !branch);
+        (cell, branch)
     }
 }

@@ -199,56 +199,105 @@ pub fn chain_block() -> GenericBlockState {
     }
 }
 
-pub fn redstone_wire() -> GenericBlockState {
-    let properties = HashMap::from([
-        ("power".into(), "0".into()),
-        ("north".into(), "side".into()),
-        ("south".into(), "side".into()),
-        ("east".into(), "side".into()),
-        ("west".into(), "side".into()),
-    ]);
-    GenericBlockState {
-        name: "minecraft:redstone_wire".into(),
-        properties,
+/// Connection state of a redstone wire on one side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WireConn {
+    None,
+    Side,
+    Up,
+}
+
+impl WireConn {
+    /// Minecraft property value of this connection state.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Side => "side",
+            Self::Up => "up",
+        }
     }
 }
 
-/// Redstone wire with explicit connection states
-/// (east/north/south/west: none|side|up) and signal strength.
+pub fn redstone_wire() -> GenericBlockState {
+    wire_state(
+        WireConn::Side,
+        WireConn::Side,
+        WireConn::Side,
+        WireConn::Side,
+        "0",
+    )
+}
+
+/// Redstone wire with explicit connection states and signal strength.
 ///
 /// These are the post-update states a placed wire settles into.
 pub fn wire_state(
-    east: &'static str,
-    north: &'static str,
-    south: &'static str,
-    west: &'static str,
-    power: &'static str,
+    west: WireConn,
+    east: WireConn,
+    north: WireConn,
+    south: WireConn,
+    power: impl Into<Cow<'static, str>>,
 ) -> GenericBlockState {
     GenericBlockState {
         name: "minecraft:redstone_wire".into(),
         properties: HashMap::from([
             ("power".into(), power.into()),
-            ("north".into(), north.into()),
-            ("south".into(), south.into()),
-            ("east".into(), east.into()),
-            ("west".into(), west.into()),
+            ("north".into(), north.name().into()),
+            ("south".into(), south.name().into()),
+            ("east".into(), east.name().into()),
+            ("west".into(), west.name().into()),
         ]),
+    }
+}
+
+/// In-game facing of a directional block.
+///
+/// Note: repeaters store the reverse of this value as their property.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Facing {
+    East,
+    West,
+    North,
+    South,
+}
+
+impl Facing {
+    /// The opposite facing.
+    pub fn invert(self) -> Self {
+        match self {
+            Self::East => Self::West,
+            Self::West => Self::East,
+            Self::North => Self::South,
+            Self::South => Self::North,
+        }
+    }
+
+    /// Minecraft property value of this facing.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::East => "east",
+            Self::West => "west",
+            Self::North => "north",
+            Self::South => "south",
+        }
     }
 }
 
 /// Repeater block with delay, facing, and powered state.
 pub fn repeater(
     delay: impl Into<Cow<'static, str>>,
-    facing: impl Into<Cow<'static, str>>,
+    facing: Facing,
     powered: bool,
+    locked: bool,
 ) -> GenericBlockState {
     let powered = if powered { "true" } else { "false" };
+    let locked = if locked { "true" } else { "false" };
     GenericBlockState {
         name: "minecraft:repeater".into(),
         properties: HashMap::from([
             ("delay".into(), delay.into()),
-            ("facing".into(), facing.into()),
-            ("locked".into(), "false".into()),
+            ("facing".into(), facing.invert().name().into()),
+            ("locked".into(), locked.into()),
             ("powered".into(), powered.into()),
         ]),
     }
