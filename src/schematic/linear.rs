@@ -1,6 +1,6 @@
 //! Linear time-proportional layout for NBS song projection.
 
-use super::{Axis, EvenlyArranged, Facing, Layout, Reverse};
+use super::{EvenlyArranged, Facing, Layout};
 use super::{WithFloor, air, chain_block, inst_block, note_block};
 use super::{redstone_block, repeater, sticky_piston};
 use crate::note::Tone;
@@ -167,7 +167,7 @@ impl Layout for LinearLayout {
 
 /// One directional row of template cells.
 pub struct Row {
-    cells: Cells,
+    cells: EvenlyArranged<Template>,
     leading_turn: bool,
     south_bound: bool,
     size: BlockPos,
@@ -186,7 +186,8 @@ impl Row {
         south_bound: bool,
         row_length: usize,
     ) -> Self {
-        let cells = Cells::new(cells, south_bound);
+        let pitch = BlockPos::new(0, 0, if south_bound { 2 } else { -2 });
+        let cells = EvenlyArranged::new(cells, pitch);
         let size = BlockPos::new(width, cells.size().y, 2 * row_length as i32 + 2);
 
         Self {
@@ -220,45 +221,6 @@ impl Layout for Row {
 
     fn size(&self) -> BlockPos {
         self.size
-    }
-}
-
-// Cells
-//
-// ++++++++++++============++++++++++++============++++++++++++============
-
-enum Cells {
-    South(EvenlyArranged<Template>),
-    North(Reverse<EvenlyArranged<Reverse<Template>>>),
-}
-
-impl Cells {
-    fn new<I: IntoIterator<Item = Template>>(cells: I, south_bound: bool) -> Self {
-        let pitch = BlockPos::new(0, 0, 2);
-        if south_bound {
-            return Self::South(EvenlyArranged::new(cells, pitch));
-        }
-        let rev = cells
-            .into_iter()
-            .map(|cell| Reverse::new(cell, Axis::Southing.unit()));
-        let cells = EvenlyArranged::new(rev, pitch);
-        Self::North(Reverse::new(cells, Axis::Southing.unit()))
-    }
-}
-
-impl Layout for Cells {
-    fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
-        match self {
-            Self::South(cells) => cells.block_at(pos),
-            Self::North(cells) => cells.block_at(pos),
-        }
-    }
-
-    fn size(&self) -> BlockPos {
-        match self {
-            Self::South(cells) => cells.size(),
-            Self::North(cells) => cells.size(),
-        }
     }
 }
 
