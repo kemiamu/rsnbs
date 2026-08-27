@@ -166,49 +166,58 @@ impl<L: Layout> Layout for Arranged<L> {
 /// anchored at `i * pitch`, a monotone linear lattice of equal spacing.
 ///
 /// Query cost is O(k) with `k` the candidate window width, independent of
-/// the item count. `pitch` must be component-wise non-negative and not all zero.
+/// the item count. `pitch` must be non-zero.
 pub struct EvenlyArranged<L: Layout> {
     items: Vec<L>,
     pitch: BlockPos,
-    spacing: i32,
-    cell: i32,
-    size: BlockPos,
+    extent: BlockPos,
+    anchor: BlockPos,
+    window: (i32, i32, i32),
 }
 
 impl<L: Layout> EvenlyArranged<L> {
     pub fn new<I: IntoIterator<Item = L>>(items: I, pitch: BlockPos) -> Self {
+        assert!(pitch != BlockPos::ORIGIN, "pitch must be non-zero");
         let items: Vec<L> = FromIterator::from_iter(items);
         let extent = items
             .iter()
             .map(Layout::size)
             .fold(BlockPos::ORIGIN, include);
-        let spacing = pitch.dot(pitch);
-        let cell = pitch.dot(extent);
-        let size = include(pitch * (items.len() as i32 - 1) + extent, BlockPos::ORIGIN);
 
-        assert!(spacing > 0 && pitch == pitch.abs());
+        let spacing = pitch.dot(pitch);
+        let hi = include(pitch, BlockPos::ORIGIN).dot(extent);
+        let lo = pitch.dot(extent) - hi;
+        let far = items.len() as i32 - 1;
+
+        let anchor = BlockPos::new(
+            pitch.x.min(0) * far,
+            pitch.y.min(0) * far,
+            pitch.z.min(0) * far,
+        );
         Self {
             items,
             pitch,
-            spacing,
-            cell,
-            size,
+            extent,
+            anchor,
+            window: (spacing, lo, hi),
         }
     }
 }
 
 impl<L: Layout> Layout for EvenlyArranged<L> {
     fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
-        let offset = self.pitch.dot(pos);
-        let start = (offset / self.spacing).min(self.items.len() as i32 - 1);
-        let low = 0.max((offset - self.cell).div_euclid(self.spacing) + 1);
-        (low..=start)
-            .rev()
-            .find_map(|index| self.items[index as usize].try_get_block(pos - self.pitch * index))
+        let local_pos = pos + self.anchor;
+        let (spacing, lo, hi) = self.window;
+        let offset = self.pitch.dot(local_pos);
+        let top = ((offset - lo).div_euclid(spacing)).min(self.items.len() as i32 - 1);
+        let bottom = (-(hi - offset).div_euclid(spacing)).max(0);
+        (bottom..=top).rev().find_map(|index| {
+            self.items[index as usize].try_get_block(local_pos - self.pitch * index)
+        })
     }
 
     fn size(&self) -> BlockPos {
-        self.size
+        self.pitch.abs() * (self.items.len() as i32 - 1) + self.extent
     }
 }
 
