@@ -18,7 +18,7 @@ pub struct MultiLinearLayout(EvenlyArranged<LinearLayout>);
 
 impl MultiLinearLayout {
     /// Create a linear layout from per-track notes.
-    pub fn new<Trks, Trk, A, T>(tracks: Trks, gap: u32) -> Self
+    pub fn new<Trks, Trk, A, T>(tracks: Trks, gap: u32, song_length: Tick) -> Self
     where
         Trks: IntoIterator<Item = Trk>,
         Trk: IntoIterator<Item = (A, T)>,
@@ -30,7 +30,7 @@ impl MultiLinearLayout {
         let scale = ScaleMode::from_tracks(&tracks);
         let layouts = tracks
             .into_iter()
-            .map(|notes| LinearLayout::new(notes, scale, None, 0));
+            .map(|notes| LinearLayout::new(notes, scale, song_length, None, 0));
         let pitch = BlockPos::new(scale.width() + gap as i32, 0, 0);
         Self(EvenlyArranged::new(layouts, pitch))
     }
@@ -60,6 +60,7 @@ impl StackedLinearLayout {
         wrap_length: Option<NonZero<Tick>>,
         gap: u32,
         full: bool,
+        song_length: Tick,
     ) -> Self
     where
         Trks: IntoIterator<Item = Trk>,
@@ -71,7 +72,7 @@ impl StackedLinearLayout {
     {
         let scale = ScaleMode::from_tracks(&tracks);
         let layouts = tracks.into_iter().map(|notes| {
-            let layout = LinearLayout::new(notes, scale, wrap_length, gap);
+            let layout = LinearLayout::new(notes, scale, song_length, wrap_length, gap);
             WithFloor::new(layout, full)
         });
         let pitch = BlockPos::new(0, 4, 0);
@@ -100,10 +101,13 @@ impl LinearLayout {
     /// Builds a layout from timestamped note events.
     ///
     /// Events with the same timestamp share a cell. `wrap_length` limits the
-    /// number of cells in each row; `gap` widens every row uniformly.
+    /// number of cells in each row; `gap` widens every row uniformly;
+    /// `song_length` keeps the line running to the end of the song even
+    /// when the last notes come early.
     pub fn new<Trk, A, T>(
         notes: Trk,
         scale: ScaleMode,
+        song_length: Tick,
         wrap_length: Option<NonZero<Tick>>,
         gap: u32,
     ) -> Self
@@ -121,6 +125,11 @@ impl LinearLayout {
             notes.push(note.into());
         }
 
+        if song_length > 0 {
+            let (end, _) = scale.cell_slot(song_length - 1);
+            cells.resize_with(end + 1, Default::default);
+        }
+
         let row_length = wrap_length.map_or(cells.len(), |length| length.get() as usize);
         let width = scale.width() + gap as i32 + 1;
         let mut rows = Vec::new();
@@ -130,7 +139,13 @@ impl LinearLayout {
             let templates = cells
                 .drain(..row_length.min(cells.len()))
                 .map(|(main, branch)| Template::from_notes(scale, main, branch, south_bound));
-            rows.push(Row::new(templates, width, index > 0, south_bound));
+            rows.push(Row::new(
+                templates,
+                width,
+                index > 0,
+                south_bound,
+                row_length,
+            ));
         }
         Self(EvenlyArranged::new(rows, BlockPos::new(width - 2, 0, 0)))
     }
@@ -153,26 +168,32 @@ impl Layout for LinearLayout {
 /// One directional row of template cells.
 pub struct Row {
     cells: Cells,
-    width: i32,
     leading_turn: bool,
     south_bound: bool,
+    size: BlockPos,
 }
 
 impl Row {
     /// Arranges cells in the row direction.
+    ///
+    /// `row_length` is the shared cell count of every row: south-bound rows
+    /// grow from the south end, north-bound rows from the north end, so the
+    /// zigzag turns always line up regardless of the last row's length.
     pub fn new<I: IntoIterator<Item = Template>>(
         cells: I,
         width: i32,
         leading_turn: bool,
         south_bound: bool,
+        row_length: usize,
     ) -> Self {
         let cells = Cells::new(cells, south_bound);
+        let size = BlockPos::new(width, cells.size().y, 2 * row_length as i32 + 2);
 
         Self {
             cells,
-            width,
             leading_turn,
             south_bound,
+            size,
         }
     }
 }
@@ -181,24 +202,24 @@ impl Layout for Row {
     fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
         use self::WireConn::*;
         let inner = self.cells.size();
-        let offset = inner.x - self.width;
-        let turning = self.leading_turn
-            && ((self.south_bound && pos.z == 0) || (!self.south_bound && pos.z == inner.z));
-        match (turning, pos.y, self.width - pos.x, self.south_bound) {
+        let offset = match self.south_bound {
+            true => BlockPos::new(inner.x - self.size.x, 0, -1),
+            false => BlockPos::new(inner.x - self.size.x, 0, self.size.z - 1 - inner.z),
+        };
+        let turn_z = if self.south_bound { 0 } else { self.size.z - 1 };
+        let turning = self.leading_turn && pos.z == turn_z;
+        match (turning, pos.y, self.size.x - pos.x, self.south_bound) {
             (true, 1, 2, true) => Some(wire_state(Side, None, None, Side, "0")),
             (true, 1, 2, false) => Some(wire_state(Side, None, Side, None, "0")),
             (true, 1, 2.., _) => Some(wire_state(Side, Side, None, None, "0")),
             (true, 0, 2.., _) => Some(chain_block()),
             (true, _, _, _) => Option::None,
-
-            (false, _, _, true) => self.cells.try_get_block(pos + BlockPos::new(offset, 0, -1)),
-            (false, _, _, false) => self.cells.try_get_block(pos + BlockPos::new(offset, 0, 0)),
+            (false, _, _, _) => self.cells.try_get_block(pos + offset),
         }
     }
 
     fn size(&self) -> BlockPos {
-        let inner = self.cells.size();
-        BlockPos::new(self.width, inner.y, inner.z + 1)
+        self.size
     }
 }
 

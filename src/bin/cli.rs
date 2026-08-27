@@ -107,6 +107,7 @@ struct Linear {
 impl Linear {
     fn run(self) {
         let song = open_song(&self.input);
+        let song_length = game_tick_length(song.header.tempo, song.header.song_length);
         let tracks: Vec<Notes> = song
             .notes
             .rescale_to_game_tick(song.header.tempo)
@@ -118,10 +119,16 @@ impl Linear {
         let description = format!("Sectional from {}", self.input);
 
         let litematic = if let Some(wrap) = NonZero::new(self.wrap) {
-            let layout = StackedLinearLayout::new(tracks, Some(wrap), self.gap, self.floor.full());
+            let layout = StackedLinearLayout::new(
+                tracks,
+                Some(wrap),
+                self.gap,
+                self.floor.full(),
+                song_length,
+            );
             build_schematic(layout, Floor::None, description)
         } else {
-            let layout = MultiLinearLayout::new(tracks, self.gap);
+            let layout = MultiLinearLayout::new(tracks, self.gap, song_length);
             build_schematic(layout, self.floor, description)
         };
         write_output(&self.output, litematic);
@@ -288,6 +295,21 @@ impl Floor {
 /// Loads the input song.
 fn open_song(input: &str) -> Song {
     Song::open_nbs(input).unwrap()
+}
+
+/// Rescales the NBS song length to game ticks, matching `Notes::rescale_to_game_tick`.
+fn game_tick_length(tempo: f32, song_length: Tick) -> Tick {
+    // tempo outside (0, 30): assume NBS tick == game tick
+    let scale = match (0.0..30.0).contains(&tempo) {
+        true => 20.0 / tempo,
+        false => 1.0,
+    };
+    // approximate scale to {z, 1/z} as (num, den), keeping tick transforms integral
+    let (num, den) = match scale >= 1.0 {
+        true => (scale.round() as u32, 1),
+        false => (1, (1.0 / scale).round() as u32),
+    };
+    song_length * num / den
 }
 
 /// Ensures the parent directory exists, writes the litematic, and reports it.

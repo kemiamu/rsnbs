@@ -779,6 +779,7 @@ fn test_linear_layout() {
 
     let song = Song::open_nbs("fixtures/source.nbs").unwrap();
     let scale = (20.0 / song.header.tempo).round() as u32;
+    let song_length = song.header.song_length * scale.max(1);
     let notes: Notes = song
         .notes
         .into_iter()
@@ -791,7 +792,7 @@ fn test_linear_layout() {
         })
         .collect();
     let tracks = notes.split_by_layer_gaps();
-    let layout = MultiLinearLayout::new(tracks, 0);
+    let layout = MultiLinearLayout::new(tracks, 0, song_length);
     let litematic = layout.as_litematic("Linear from source.nbs", "rustnbs");
     litematic
         .write_file("fixtures/generated_linear.litematic")
