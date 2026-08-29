@@ -107,15 +107,12 @@ struct Linear {
 impl Linear {
     fn run(self) {
         let song = open_song(&self.input);
-        let song_length = game_tick_length(song.header.tempo, song.header.song_length);
-        let tracks: Vec<Notes> = song
-            .notes
-            .rescale_to_game_tick(song.header.tempo)
-            .collect::<Notes>()
-            .split_by_layer_gaps()
-            .into_iter()
-            .flat_map(|notes| notes.split_by_layer_count(NonZero::new(3)))
-            .collect();
+        let notes: Notes = song.notes.rescale_to_game_tick(song.header.tempo).collect();
+        let song_length = notes
+            .last_key_value()
+            .map(|(pos, _)| pos.into_tick() + 1)
+            .unwrap_or(0);
+        let tracks: Vec<Notes> = notes.split_by_layer_gaps();
         let description = format!("Sectional from {}", self.input);
 
         let litematic = if let Some(wrap) = NonZero::new(self.wrap) {
@@ -295,21 +292,6 @@ impl Floor {
 /// Loads the input song.
 fn open_song(input: &str) -> Song {
     Song::open_nbs(input).unwrap()
-}
-
-/// Rescales the NBS song length to game ticks, matching `Notes::rescale_to_game_tick`.
-fn game_tick_length(tempo: f32, song_length: Tick) -> Tick {
-    // tempo outside (0, 30): assume NBS tick == game tick
-    let scale = match (0.0..30.0).contains(&tempo) {
-        true => 20.0 / tempo,
-        false => 1.0,
-    };
-    // approximate scale to {z, 1/z} as (num, den), keeping tick transforms integral
-    let (num, den) = match scale >= 1.0 {
-        true => (scale.round() as u32, 1),
-        false => (1, (1.0 / scale).round() as u32),
-    };
-    song_length * num / den
 }
 
 /// Ensures the parent directory exists, writes the litematic, and reports it.
