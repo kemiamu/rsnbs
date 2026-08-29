@@ -112,11 +112,7 @@ impl Linear {
             .last_key_value()
             .map(|(pos, _)| pos.into_tick() + 1)
             .unwrap_or(0);
-        let tracks: Vec<Notes> = notes
-            .split_by_layer_gaps()
-            .into_iter()
-            .flat_map(|notes| notes.split_by_layer_count(NonZero::new(3)))
-            .collect();
+        let tracks: Vec<Notes> = notes.split_by_layer_gaps();
         let description = format!("Sectional from {}", self.input);
 
         let litematic = if let Some(wrap) = NonZero::new(self.wrap) {
