@@ -141,7 +141,7 @@ impl TapLine {
         let port_wire = || {
             let switch_south = if self.switch { None } else { Side };
             let switch_west = if self.switch { Side } else { None };
-            wire_state(Side, None, switch_south, switch_west, "0")
+            wire_state(switch_west, Side, None, switch_south, "0")
         };
         let button = || {
             let tone = Tone::new(Instrument::BassDrum, Key::from_minecraft_note(0).unwrap());
@@ -222,10 +222,10 @@ impl Layout for Tap {
             (3.., 1, 1, 2) => Some(repeater(cycle(3, 8), Facing::East, false, false)),
             (2, 1, 0, 2) if delay < 11 => Some(redstone_wire()),
             (2, 1, 0, 2) => Some(repeater(decay(10), Facing::East, false, false)),
-            (2, 2.., 0, 2) if phase() < 4 => Some(wire_state(Side, None, None, Side, "15")),
+            (2, 2.., 0, 2) if phase() < 4 => Some(wire_state(Side, Side, None, None, "15")),
             (2, 2.., 0, 2) => Some(repeater(cycle(3, 8), Facing::West, true, false)),
             (3.., 1, 0, 2) => Some(repeater("3", Facing::West, true, false)),
-            (0, _, 1, 2) => Some(wire_state(None, Side, Side, None, "0")),
+            (0, _, 1, 2) => Some(wire_state(None, None, Side, Side, "0")),
             (0, _, 0, 2) => Some(repeater(decay(3), Facing::North, false, false)),
             _ => Option::None,
         }
