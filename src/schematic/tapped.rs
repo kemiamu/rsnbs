@@ -101,6 +101,7 @@ impl Layout for TappedLayout {
 /// A single TEC's tapped delay line.
 pub struct TapLine {
     delays: EdgeArranged<Tap>,
+    anchor: BlockPos,
     size: BlockPos,
 }
 
@@ -119,8 +120,13 @@ impl TapLine {
         let inner = delays.size();
         let width = inner.x.max(5);
         let size = BlockPos::new(width, Tap::ELEVATION, inner.z + 1);
+        let anchor = BlockPos::new(width - inner.x, 0, 1);
 
-        Self { size, delays }
+        Self {
+            anchor,
+            size,
+            delays,
+        }
     }
 
     fn port(&self, pos: BlockPos) -> Option<GenericBlockState> {
@@ -168,10 +174,9 @@ impl TapLine {
 
 impl Layout for TapLine {
     fn block_at(&self, pos: BlockPos) -> Option<GenericBlockState> {
-        const INNER_ANCHOR: BlockPos = BlockPos::new(0, 0, 1);
         match pos.z == 0 {
             true => self.port(pos),
-            false => self.delays.get_block(pos - INNER_ANCHOR),
+            false => self.delays.get_block(pos - self.anchor),
         }
     }
 
