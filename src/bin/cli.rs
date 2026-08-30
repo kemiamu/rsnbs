@@ -49,7 +49,7 @@ struct Compact {
     /// Path to output litematic file
     #[arg(default_value = "out/generated_compact.litematic")]
     output: String,
-    /// Max tiles per row before wrapping (0 = no wrap)
+    /// Max columns per row before wrapping (0 = no wrap)
     #[arg(short, long, default_value_t = 16)]
     wrap: usize,
     /// Repeater delay coarseness 1-4 (0 = unlimited)
@@ -59,7 +59,7 @@ struct Compact {
     #[arg(short, long, default_value_t = 0)]
     gap: u32,
     /// Floor platform mode
-    #[arg(short, long, value_enum, default_value_t = Floor::None)]
+    #[arg(short, long, value_enum, default_value_t)]
     floor: Floor,
 }
 
@@ -85,7 +85,7 @@ impl Compact {
 //
 // ++++++++++++============++++++++++++============++++++++++++============
 
-/// Linear time-proportional layout
+/// Linear layout
 #[derive(clap::Args)]
 struct Linear {
     /// Path to input NBS file
@@ -100,7 +100,7 @@ struct Linear {
     #[arg(short, long, default_value_t = 0)]
     wrap: u32,
     /// Floor platform mode
-    #[arg(short, long, value_enum, default_value_t = Floor::None)]
+    #[arg(short, long, value_enum, default_value_t)]
     floor: Floor,
 }
 
@@ -149,12 +149,12 @@ struct Decompose {
     /// Max number of layers (TECs) to generate; 0 = no budget
     #[arg(short, long, default_value_t = 2)]
     layers: usize,
-    /// Max tiles per row before wrapping (0 = no wrap)
+    /// Max columns per row before wrapping (0 = no wrap)
     #[arg(short, long, default_value_t = 16)]
     wrap: usize,
-    /// Add a full floor platform below the build (default: floor only below gravity blocks)
+    /// Add a full floor platform below the build
     #[arg(short, long)]
-    floor: bool,
+    full_floor: bool,
 }
 
 impl Decompose {
@@ -178,7 +178,7 @@ impl Decompose {
         let layout = TappedLayout::new(
             tecs.into_iter().map(BoundedTec::new),
             NonZero::new(self.wrap),
-            self.floor,
+            self.full_floor,
         );
         let description = format!("Tapped from {}", self.input);
         let litematic = build_schematic(layout, Floor::None, description);
@@ -204,9 +204,9 @@ struct Match {
     /// Max tiles per row before wrapping (0 = no wrap)
     #[arg(short, long, default_value_t = 16)]
     wrap: usize,
-    /// Add a full floor platform below the build (default: floor only below gravity blocks)
+    /// Add a full floor platform below the build
     #[arg(short, long)]
-    floor: bool,
+    full_floor: bool,
 }
 
 impl Match {
@@ -235,7 +235,7 @@ impl Match {
             tecs.push(BoundedTec::new(TransEqClass::new(offsets, residual)));
         }
 
-        let layout = TappedLayout::new(tecs, NonZero::new(self.wrap), self.floor);
+        let layout = TappedLayout::new(tecs, NonZero::new(self.wrap), self.full_floor);
         let description = format!("Match from {}", self.input);
         let litematic = build_schematic(layout, Floor::None, description);
         write_output(&self.output, litematic);
