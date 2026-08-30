@@ -29,6 +29,8 @@ impl TappedLayout {
         wrap_length: Option<NonZero<usize>>,
         full: bool,
     ) -> Self {
+        let tecs: Vec<BoundedTec<Tone>> = tecs.into_iter().collect();
+        let count = tecs.len();
         let mut tap_lines = Vec::new();
         let mut layouts = Vec::new();
 
@@ -42,7 +44,9 @@ impl TappedLayout {
                 .collect::<Notes<RedStoneTick, Vec<Tone>>>();
             let layout = CompactLayout::new(notes, repeater_coarse, wrap_length);
 
-            tap_lines.push(TapLine::new(tec.scatter, repeater_coarse));
+            // the bottom line carries the switch
+            let switch = lyr + 1 == count;
+            tap_lines.push(TapLine::new(tec.scatter, repeater_coarse, switch));
             layouts.push(WithFloor::new(layout, full));
         }
 
@@ -100,6 +104,7 @@ impl Layout for TappedLayout {
 pub struct TapLine {
     delays: EdgeArranged<Tap>,
     anchor: BlockPos,
+    switch: bool,
     size: BlockPos,
 }
 
@@ -107,6 +112,7 @@ impl TapLine {
     pub fn new<I: IntoIterator<Item = NonZero<RedStoneTick>>>(
         ticks: I,
         repeater_coarse: Option<NonZero<RedStoneTick>>,
+        switch: bool,
     ) -> Self {
         let ticks: Vec<NonZero<RedStoneTick>> = FromIterator::from_iter(ticks);
         let taps = ticks.into_iter().scan(0, |prev, tick| {
@@ -116,12 +122,13 @@ impl TapLine {
         });
         let delays = EdgeArranged::new(taps, Axis::Southing, 0, Axis::Easting.unit());
         let inner = delays.size();
-        let width = inner.x.max(5);
+        let width = inner.x.max(if switch { 5 } else { 2 });
         let size = BlockPos::new(width, Tap::ELEVATION, inner.z + 1);
         let anchor = BlockPos::new(width - inner.x, 0, 1);
 
         Self {
             anchor,
+            switch,
             size,
             delays,
         }
@@ -131,10 +138,9 @@ impl TapLine {
         use WireConn::*;
         let local_easting = self.size.x - pos.x - 1;
         let local_elevation = pos.y;
-        let switch = self.delays.size().x == 0;
         let port_wire = || {
-            let switch_south = if switch { None } else { Side };
-            let switch_west = if switch { Side } else { None };
+            let switch_south = if self.switch { None } else { Side };
+            let switch_west = if self.switch { Side } else { None };
             wire_state(Side, None, switch_south, switch_west, "0")
         };
         let button = || {
@@ -146,12 +152,12 @@ impl TapLine {
             (1, 3) => Some(redstone_torch(Option::None::<&'static str>, true)),
             (0, 1) | (1, 2) => Some(chain_block()),
             (0, 2) => Some(port_wire()),
-            (1..=4, 1) if switch => Some(chain_block()),
-            (2, 2) if switch => Some(repeater("4", Facing::East, false, false)),
-            (3, 2) if switch => Some(observer("west")),
-            (4, 2) if switch => Some(button()),
-            (1, 0) if !switch => Some(chain_block()),
-            (1, 1) if !switch => Some(redstone_torch(Option::None::<&'static str>, false)),
+            (1..=4, 1) if self.switch => Some(chain_block()),
+            (2, 2) if self.switch => Some(repeater("4", Facing::East, false, false)),
+            (3, 2) if self.switch => Some(observer("west")),
+            (4, 2) if self.switch => Some(button()),
+            (1, 0) if !self.switch => Some(chain_block()),
+            (1, 1) if !self.switch => Some(redstone_torch(Option::None::<&'static str>, false)),
             _ => Option::None,
         }
     }
