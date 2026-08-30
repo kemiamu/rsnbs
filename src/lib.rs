@@ -7,7 +7,6 @@ mod tests;
 pub mod analysis;
 pub mod note;
 pub mod schematic;
-pub mod util;
 
 // song
 //

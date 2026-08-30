@@ -1,4 +1,4 @@
-use crate::types::{Index, LayerAnchor, Panning, Position, TimeAnchor, Volume};
+use crate::types::{Index, LayerAnchor, Panning, Position, Tick, TimeAnchor, Volume};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Display, Formatter};
 use std::num::NonZero;
@@ -93,6 +93,28 @@ impl<A: TimeAnchor, E> Notes<A, E> {
         self.into_iter().map(move |(anchor, event)| {
             let tick = anchor.into_tick() * num / den;
             (anchor.with_tick(tick), event)
+        })
+    }
+}
+
+impl<A, E> Notes<A, E>
+where
+    A: TimeAnchor + LayerAnchor + Default,
+{
+    /// Packs a time-anchored stream into this anchor type, assigning
+    /// successive layers to same-tick events so none is lost.
+    pub fn pack_layers<S, I>(notes: I) -> impl IntoIterator<Item = (A, E)>
+    where
+        S: TimeAnchor,
+        I: IntoIterator<Item = (S, E)>,
+    {
+        let mut layers: BTreeMap<Tick, Index> = BTreeMap::new();
+        notes.into_iter().map(move |(anchor, event)| {
+            let tick = anchor.into_tick();
+            let layer = layers.entry(tick).or_default();
+            let pos = A::default().with_tick(tick).with_layer(*layer);
+            *layer += 1;
+            (pos, event)
         })
     }
 }

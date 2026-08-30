@@ -1,14 +1,13 @@
 use crate::note::{Note, Notes, Tone};
-use crate::schematic::{Layout, MultiCompactLayout};
+use crate::schematic::Layout;
 use crate::song::Song;
 use crate::types::{LayerAnchor, Position, Tick, TimeAnchor, Version};
-use crate::util::MatchedGroups;
+
 use counter::Counter;
 use ordered_float::OrderedFloat;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::iter::repeat;
 use std::num::NonZero;
-use std::ops::Range;
 
 //
 //
@@ -98,153 +97,7 @@ fn test_v6_to_v5_conversion() {
     assert_eq!(back.notes.len(), song_v6.notes.len());
 }
 
-// cargo test test_sectional_matching && cargo test analyze_tones
-
-#[test]
-#[allow(deprecated)]
-fn test_sectional_matching() {
-    let mut song = Song::open_nbs("fixtures/source.nbs").unwrap();
-    let notes = song.notes.clone();
-
-    let song_length: Tick = Tick::MAX;
-    // let song_length: Tick = notes.iter().map(|(pos, _)| pos.tick()).max().unwrap_or(0) + 1;
-    let min_notes: usize = 0;
-    let wrap_length: usize = 24;
-
-    // 匹配+回退包装：匹配音符数不足时回退所有匹配
-    let try_match = |notes: Notes, pattern: &[Tick]| -> (MatchedGroups, Notes) {
-        let saved = notes.clone();
-        let (matched, unmatched) = notes.group_match(pattern, song_length, |a, b| a.tone == b.tone);
-        if matched.matched_len() >= min_notes || pattern.len() == 1 {
-            (matched, unmatched)
-        } else {
-            (MatchedGroups::empty(), saved)
-        }
-    };
-
-    // let global_patterns: &[&[Tick]] = &[
-    //     &[0, 32, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480],
-    //     &[0, 32, 64, 96, 192, 256, 288, 320, 352, 384, 416, 448, 480],
-    //     &[0, 192, 256, 288, 320, 352, 384, 416],
-    // ];
-    // let sectional_patterns: &[&[Tick]] = &[&[0, 16, 32, 48], &[0, 16], &[0]];
-    // let sections: &[Range<Tick>] = &[0..256, 256..512];
-    let global_patterns: &[(&[Tick], Tick)] = &[
-        // (
-        //     &[
-        //         0,
-        //         32,
-        //         32 * 2,
-        //         32 * 3,
-        //         32 * 4,
-        //         32 * 5,
-        //         32 * 6,
-        //         32 * 7,
-        //         32 * 8,
-        //         32 * 9,
-        //         32 * 10,
-        //         32 * 11,
-        //         32 * 12,
-        //         32 * 13,
-        //         32 * 14,
-        //         32 * 15,
-        //     ],
-        //     0,
-        // ),
-        // (&[0, 64, 64 * 2, 64 * 3, 64 * 4, 64 * 5, 64 * 6, 64 * 7], 0),
-        // (
-        //     &[
-        //         0,
-        //         128,
-        //         128 * 2,
-        //         128 * 3,
-        //         128 * 4,
-        //         128 * 5,
-        //         128 * 6,
-        //         128 * 7,
-        //         128 * 8,
-        //     ],
-        //     0,
-        // ),
-        (&[0, 64, 64 * 2, 64 * 3], 0),
-        (&[0, 128], 0),
-        // (&[0, 256], 0),
-        (&[0], 0), // any
-    ];
-    let sectional_patterns: &[(&[Tick], Tick)] = &[];
-    let sections: &[Range<Tick>] = &[];
-
-    let mut all_matched: Vec<(MatchedGroups, Tick)> = vec![];
-
-    // 第一步：全局匹配
-    let mut remaining = notes.clone();
-    for &(pattern, coarse) in global_patterns {
-        let (matched, unmatched) = try_match(remaining, pattern);
-        all_matched.push((matched, coarse));
-        remaining = unmatched;
-    }
-
-    // 第二步：未匹配上的进入章节匹配
-    for section_range in sections {
-        let section_notes: Notes = remaining
-            .clone()
-            .into_iter()
-            .filter(|(p, _)| section_range.contains(&p.into_tick()))
-            .collect();
-
-        if section_notes.is_empty() {
-            continue;
-        }
-
-        let mut remaining_in_section = section_notes;
-        for &(pattern, coarse) in sectional_patterns {
-            let (matched, unmatched) = try_match(remaining_in_section, pattern);
-            all_matched.push((matched, coarse));
-            remaining_in_section = unmatched;
-        }
-    }
-
-    // 输出 nbs
-    song.notes = Notes::reassign_layers(
-        all_matched.iter().map(|(mg, _coarse)| {
-            mg.groups()
-                .iter()
-                .flat_map(|g| g.iter().map(|(p, n)| (p.into_tick(), n.clone())))
-        }),
-        1,
-    );
-    song.header.is_loop = true;
-    song.save_nbs("fixtures/out_sectional.nbs").unwrap();
-
-    // 输出 litematic
-    let projection_clusters: Vec<(Notes, Tick)> = all_matched
-        .iter()
-        .map(|(mg, coarse)| (mg.templates(), *coarse))
-        .collect();
-
-    let tempo = song.header.tempo;
-    let scale = (20.0 / tempo).round() as u32;
-
-    let tracks = projection_clusters
-        .into_iter()
-        .map(|(cluster, track_coarse)| {
-            let mut notes: BTreeMap<Tick, Vec<Note>> = BTreeMap::new();
-            for (pos, note) in cluster {
-                let tick = if scale > 1 {
-                    pos.into_tick() * scale
-                } else {
-                    pos.into_tick()
-                };
-                notes.entry(tick).or_default().push(note);
-            }
-            (notes, NonZero::new(track_coarse))
-        });
-    let layout = MultiCompactLayout::new(tracks, NonZero::new(wrap_length), 0);
-    let litematic = layout.as_litematic("Sectional from source.nbs", "Planet");
-    litematic
-        .write_file("fixtures/generated_sectional.litematic")
-        .unwrap();
-}
+// cargo test analyze_tones
 
 #[test]
 fn analyze_tones() {
@@ -256,12 +109,7 @@ fn analyze_tones() {
     }
     let slices: Vec<Notes> = by_tone.into_values().map(|v| Notes::from_iter(v)).collect();
 
-    song.notes = Notes::reassign_layers(
-        slices
-            .into_iter()
-            .map(|m| m.into_iter().map(|(p, n)| (p.into_tick(), n))),
-        0,
-    );
+    song.notes = Notes::from_iter(Notes::concat(slices));
     song.header.is_loop = true;
     song.save_nbs("fixtures/analyzed.nbs").unwrap();
 }
@@ -422,7 +270,10 @@ fn test_analyze_transposition_equivalence() {
         remaining_notes.push((tick, note));
     }
 
-    song.notes = Notes::reassign_layers(vec![matched_notes, remaining_notes], 1);
+    song.notes = Notes::from_iter(Notes::concat([
+        Notes::from_iter(Notes::pack_layers(matched_notes)),
+        Notes::from_iter(Notes::pack_layers(remaining_notes)),
+    ]));
     song.header.is_loop = true;
     song.save_nbs("fixtures/transposition.nbs").unwrap();
 }
@@ -604,7 +455,10 @@ pub fn test_deconvolve_d1() {
         }
     }
 
-    song.notes = Notes::reassign_layers(vec![matched, remaining], 1);
+    song.notes = Notes::from_iter(Notes::concat([
+        Notes::from_iter(Notes::pack_layers(matched)),
+        Notes::from_iter(Notes::pack_layers(remaining)),
+    ]));
     song.header.is_loop = true;
     song.save_nbs("fixtures/deconvolve.nbs").unwrap();
 }
@@ -736,7 +590,10 @@ pub fn test_deconvolve() {
         }
     }
 
-    song.notes = Notes::reassign_layers(vec![matched, remaining], 1);
+    song.notes = Notes::from_iter(Notes::concat([
+        Notes::from_iter(Notes::pack_layers(matched)),
+        Notes::from_iter(Notes::pack_layers(remaining)),
+    ]));
     song.header.is_loop = true;
     song.save_nbs("fixtures/deconvolve.nbs").unwrap();
 }
