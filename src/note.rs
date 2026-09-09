@@ -224,11 +224,6 @@ impl Tone {
     pub fn new(instrument: Instrument, key: Key) -> Self {
         Self { instrument, key }
     }
-
-    /// whether this tone is renderable: built-in instrument with a minecraft note.
-    pub(crate) fn is_valid(&self) -> bool {
-        !matches!(self.instrument, Instrument::Custom(_)) && self.key.minecraft_note().is_some()
-    }
 }
 
 impl From<Note> for Tone {

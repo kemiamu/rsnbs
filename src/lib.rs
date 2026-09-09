@@ -4,9 +4,7 @@ mod codec;
 #[cfg(test)]
 mod tests;
 
-pub mod analysis;
 pub mod note;
-pub mod schematic;
 
 // song
 //
@@ -333,9 +331,6 @@ pub mod types {
     pub type Index = u32;
     /// Represents the time step
     pub type Tick = u32;
-
-    pub(crate) type RedStoneTick = Tick;
-    pub(crate) type GameTick = Tick;
 
     // error
     //
